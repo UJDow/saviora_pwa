@@ -1,11 +1,10 @@
-// src/features/auth/useAuth.ts
 import { useState } from 'react';
 import * as api from '../../utils/api';
 
 const JWT_KEY = 'saviora_jwt';
 
 export function useAuth() {
-  const [user, setUser] = useState<string | null>(null);
+  const [user, setUser] = useState<api.User | null>(null);
   const [token, setToken] = useState<string | null>(
     localStorage.getItem(JWT_KEY)
   );
@@ -18,8 +17,8 @@ export function useAuth() {
     if (!jwt) return false;
     setLoading(true);
     try {
-      const me = await api.getMe(jwt);
-      setUser(me.email);
+      const me = await api.getMe();
+      setUser(me);
       setToken(jwt);
       setError(null);
       return true;
@@ -49,6 +48,21 @@ export function useAuth() {
     }
   };
 
+  // Регистрация
+  const register = async (email: string, password: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await api.register(email, password);
+      return await login(email, password);
+    } catch (e: any) {
+      setError(e.message || 'Ошибка регистрации');
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Выход
   const logout = () => {
     localStorage.removeItem(JWT_KEY);
@@ -64,5 +78,6 @@ export function useAuth() {
     login,
     logout,
     tryAutoLogin,
+    register,
   };
 }

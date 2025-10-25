@@ -1,12 +1,12 @@
-console.log('App.tsx загружен!');
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthForm } from './features/auth/AuthForm';
+import { RegisterForm } from './features/auth/RegisterForm';
 import { useAuth } from './features/auth/useAuth';
 import { CircularProgress, Box, Typography, Button, Paper, Alert } from '@mui/material';
-import { DreamsList } from './features/dreams/DreamsList';
 
-const App: React.FC = () => {
+function App() {
   const { user, loading, error, tryAutoLogin, logout } = useAuth();
+  const [showRegister, setShowRegister] = useState(false);
 
   useEffect(() => {
     tryAutoLogin();
@@ -35,7 +35,11 @@ const App: React.FC = () => {
           borderRadius: 3,
         }}
       >
-        <AuthForm />
+        {showRegister ? (
+          <RegisterForm onSwitch={() => setShowRegister(false)} />
+        ) : (
+          <AuthForm onSwitch={() => setShowRegister(true)} />
+        )}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
       </Box>
     );
@@ -63,9 +67,9 @@ const App: React.FC = () => {
       <Button variant="outlined" color="secondary" onClick={logout} sx={{ mt: 2 }}>
         Выйти
       </Button>
-      <DreamsList />
+      {/* Здесь можно добавить DreamsList или другой контент */}
     </Box>
   );
-};
+}
 
 export default App;

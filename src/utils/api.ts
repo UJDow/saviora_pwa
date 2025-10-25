@@ -1,10 +1,5 @@
 const API_URL = import.meta.env.VITE_API_URL as string;
 
-export interface ApiResponse<T> {
-  data?: T;
-  error?: string;
-}
-
 export interface User {
   email: string;
   trialDaysLeft: number;
@@ -41,34 +36,31 @@ async function request<T>(
   return data;
 }
 
-export const api = {
-  login(email: string, password: string) {
-    return request<{ token: string }>('/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-  },
-  register(email: string, password: string) {
-    return request<{ message: string }>('/register', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-  },
-  getMe() {
-    return request<User>('/me', {}, true);
-  },
-  getDreams() {
-    return request<Dream[]>('/dreams', {}, true);
-  },
-  addDream(text: string) {
-    return request<Dream>('/dreams', {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    }, true);
-  },
-  deleteDream(id: string) {
-    return request<{ message: string }>(`/dreams/${id}`, {
-      method: 'DELETE',
-    }, true);
-  },
-};
+export const login = (email: string, password: string) =>
+  request<{ token: string }>('/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+
+export const register = (email: string, password: string) =>
+  request<{ message: string }>('/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+
+export const getMe = () =>
+  request<User>('/me', {}, true);
+
+export const getDreams = () =>
+  request<Dream[]>('/dreams', {}, true);
+
+export const addDream = (text: string) =>
+  request<Dream>('/dreams', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  }, true);
+
+export const deleteDream = (id: string) =>
+  request<{ message: string }>(`/dreams/${id}`, {
+    method: 'DELETE',
+  }, true);
