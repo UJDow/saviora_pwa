@@ -1,4 +1,4 @@
-// src/main.tsx
+console.log('main.tsx загружен!');
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
@@ -7,7 +7,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 
 const theme = createTheme({
   palette: {
-    mode: 'light', // или 'dark'
+    mode: 'light', // Можно поменять на 'dark' если нужно
     primary: {
       main: '#1976d2',
     },

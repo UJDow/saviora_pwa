@@ -3,8 +3,9 @@ import React, { useEffect } from 'react';
 import { AuthForm } from './features/auth/AuthForm';
 import { useAuth } from './features/auth/useAuth';
 import { CircularProgress, Box, Typography, Button, Paper, Alert } from '@mui/material';
+import { DreamsList } from './features/dreams/DreamsList';
 
-function App() {
+const App: React.FC = () => {
   const { user, loading, error, tryAutoLogin, logout } = useAuth();
 
   useEffect(() => {
@@ -62,9 +63,9 @@ function App() {
       <Button variant="outlined" color="secondary" onClick={logout} sx={{ mt: 2 }}>
         Выйти
       </Button>
-      {/* Здесь можно добавить DreamsList или другой контент */}
+      <DreamsList />
     </Box>
   );
-}
+};
 
 export default App;
