@@ -1,3 +1,4 @@
+console.log('App.tsx загружен!');
 import React, { useEffect } from 'react';
 import { AuthForm } from './features/auth/AuthForm';
 import { useAuth } from './features/auth/useAuth';
