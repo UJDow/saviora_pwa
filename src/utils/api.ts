@@ -1,36 +1,74 @@
-// src/utils/api.ts
-const API_URL = import.meta.env.VITE;
+const API_URL = import.meta.env.VITE_API_URL as string;
 
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
 }
 
+export interface User {
+  email: string;
+  trialDaysLeft: number;
+}
+
+export interface Dream {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  withAuth = false
+): Promise<T> {
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (withAuth) {
+    const token = localStorage.getItem('saviora_jwt');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers,
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
+}
+
 export const api = {
-  async login(email: string, password: string) {
-    const res = await fetch(`${API_URL}/login`, {
+  login(email: string, password: string) {
+    return request<{ token: string }>('/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Ошибка входа');
-    return res.json();
   },
-  async register(email: string, password: string) {
-    const res = await fetch(`${API_URL}/register`, {
+  register(email: string, password: string) {
+    return request<{ message: string }>('/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    if (!res.ok) throw new Error((await res.json()).error || 'Ошибка регистрации');
-    return res.json();
   },
-  async getMe(token: string) {
-    const res = await fetch(`${API_URL}/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) throw new Error((await res.json()).error || 'Ошибка');
-    return res.json();
+  getMe() {
+    return request<User>('/me', {}, true);
   },
-  // ... другие методы
+  getDreams() {
+    return request<Dream[]>('/dreams', {}, true);
+  },
+  addDream(text: string) {
+    return request<Dream>('/dreams', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }, true);
+  },
+  deleteDream(id: string) {
+    return request<{ message: string }>(`/dreams/${id}`, {
+      method: 'DELETE',
+    }, true);
+  },
 };
