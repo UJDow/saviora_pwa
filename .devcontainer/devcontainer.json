@@ -1,0 +1,14 @@
+{
+  "name": "Node.js & TypeScript Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:latest",
+  "postCreateCommand": "yarn install || npm install",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-typescript-next"
+      ]
+    }
+  }
+}
