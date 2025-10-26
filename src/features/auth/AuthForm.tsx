@@ -1,6 +1,6 @@
 // src/features/auth/AuthForm.tsx
 import React, { useState } from 'react';
-import { useAuth } from './useAuth';
+import { useAuth } from './AuthProvider';
 import { useNavigate } from 'react-router-dom';
 import { Box, Button, TextField, Typography, Alert } from '@mui/material';
 
