@@ -1,8 +1,23 @@
 import React, { useState } from 'react';
 import { Box, TextField, Button, Typography } from '@mui/material';
 
-export const DreamEditor: React.FC<{ onSave: (text: string) => void }> = ({ onSave }) => {
+interface DreamEditorProps {
+  onSave: (text: string) => Promise<void>;
+}
+
+export const DreamEditor: React.FC<DreamEditorProps> = ({ onSave }) => {
   const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      await onSave(text);
+      setText('');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <Box>
@@ -19,10 +34,10 @@ export const DreamEditor: React.FC<{ onSave: (text: string) => void }> = ({ onSa
         variant="contained"
         color="primary"
         sx={{ mt: 2 }}
-        onClick={() => onSave(text)}
-        disabled={!text.trim()}
+        onClick={handleSave}
+        disabled={!text.trim() || loading}
       >
-        Сохранить сон
+        {loading ? 'Сохраняем...' : 'Сохранить сон'}
       </Button>
     </Box>
   );

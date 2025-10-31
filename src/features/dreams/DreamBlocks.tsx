@@ -1,28 +1,24 @@
 import React from 'react';
-import { Box, Chip, Typography, Button } from '@mui/material';
+import type { Block } from './types';
 
-type Block = { id: string; text: string };
-
-export const DreamBlocks: React.FC<{
+interface DreamBlocksProps {
   blocks: Block[];
   onSelect: (block: Block) => void;
   onAdd: () => void;
   onRemove: (id: string) => void;
-}> = ({ blocks, onSelect, onAdd, onRemove }) => (
-  <Box>
-    <Typography variant="h6" gutterBottom>Блоки сна</Typography>
-    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+}
+
+export const DreamBlocks: React.FC<DreamBlocksProps> = ({ blocks, onSelect, onAdd, onRemove }) => {
+  return (
+    <div>
       {blocks.map(block => (
-        <Chip
-          key={block.id}
-          label={block.text}
-          onClick={() => onSelect(block)}
-          onDelete={() => onRemove(block.id)}
-          color="primary"
-          variant="outlined"
-        />
+        <div key={block.id} style={{ marginBottom: 8, border: '1px solid #ccc', padding: 8 }}>
+          <p>{block.text}</p>
+          <button onClick={() => onSelect(block)}>Выбрать</button>
+          <button onClick={() => onRemove(block.id)}>Удалить</button>
+        </div>
       ))}
-    </Box>
-    <Button variant="outlined" onClick={onAdd}>Добавить блок</Button>
-  </Box>
-);
+      <button onClick={onAdd}>Добавить блок</button>
+    </div>
+  );
+};

@@ -7,7 +7,6 @@ import { useDreams } from './useDreams';
 
 export const DreamsScreen: React.FC = () => {
   const {
-    dreamText,
     blocks,
     selectedBlock,
     messages,

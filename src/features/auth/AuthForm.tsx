@@ -14,7 +14,7 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
     e.preventDefault();
     const ok = await login(email, password);
     if (ok) {
-      navigate('/dreams');
+      navigate('/'); // Теперь после логина попадёшь на ProfileScreen
     }
   };
 

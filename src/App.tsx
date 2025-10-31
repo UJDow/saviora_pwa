@@ -1,50 +1,35 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthScreen } from './features/auth/AuthScreen';
 import { DreamsScreen } from './features/dreams/DreamsScreen';
 import { PrivateRoute } from './features/auth/PrivateRoute';
-import { Box, Typography, Button, Paper } from '@mui/material';
-import { useAuth } from './features/auth/AuthProvider';
+import { DreamBlocks } from './features/dreams/DreamBlocks';
+import { DreamChat } from './features/dreams/DreamChat';
+import { DreamEditor } from './features/dreams/DreamEditor';
+import { DreamFinalDialog } from './features/dreams/DreamFinalDialog';
+import { ProfileScreen } from './features/profile/ProfileScreen';
+import { useDreams } from './features/dreams/useDreams';
+import { DreamsByDateScreen } from './features/dreams/DreamsByDateScreen';
+import { MonthDashboardScreen } from './features/profile/MonthDashboardScreen';
+import { DreamDetail } from './features/dreams/DreamDetail'; // <-- импортируем новый компонент
 
-function Home() {
-  const { user, logout, tryAutoLogin } = useAuth();
+function DreamChatWrapper() {
+  const { id } = useParams<{ id: string }>();
+  const {
+    blocks,
+    messages,
+    handleSendMessage,
+    selectedBlock,
+  } = useDreams();
 
-  React.useEffect(() => {
-    tryAutoLogin();
-    // eslint-disable-next-line
-  }, []);
+  const blockText = blocks.find(b => b.id === selectedBlock)?.text || 'Выберите блок';
 
   return (
-    <Box
-      component={Paper}
-      elevation={4}
-      sx={{
-        p: 4,
-        mt: 8,
-        maxWidth: 400,
-        mx: 'auto',
-        background: 'rgba(255,255,255,0.85)',
-        borderRadius: 3,
-      }}
-    >
-      <Typography variant="h4" gutterBottom>
-        Привет, {user?.email}!
-      </Typography>
-      <Typography variant="body1" gutterBottom>
-        Осталось дней пробного периода: {user?.trialDaysLeft}
-      </Typography>
-      <Button variant="outlined" color="secondary" onClick={logout} sx={{ mt: 2 }}>
-        Выйти
-      </Button>
-      <Button
-        variant="contained"
-        color="primary"
-        sx={{ mt: 2 }}
-        href="/dreams"
-      >
-        Перейти к снам
-      </Button>
-    </Box>
+    <DreamChat
+      blockText={blockText}
+      messages={messages}
+      onSend={handleSendMessage}
+    />
   );
 }
 
@@ -57,7 +42,7 @@ function App() {
           path="/"
           element={
             <PrivateRoute>
-              <Home />
+              <ProfileScreen />
             </PrivateRoute>
           }
         />
@@ -66,6 +51,68 @@ function App() {
           element={
             <PrivateRoute>
               <DreamsScreen />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dreams/new"
+          element={
+            <PrivateRoute>
+              <DreamEditor />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dreams/:id/blocks"
+          element={
+            <PrivateRoute>
+              <DreamBlocks />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dreams/:id/chat"
+          element={
+            <PrivateRoute>
+              <DreamChatWrapper />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dreams/:id/final"
+          element={
+            <PrivateRoute>
+              <DreamFinalDialog
+                open={false}
+                onClose={() => {}}
+                interpretation=""
+              />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dreams/date/:date"
+          element={
+            <PrivateRoute>
+              <DreamsByDateScreen />
+            </PrivateRoute>
+          }
+        />
+        {/* Новый роут для детального просмотра сна */}
+        <Route
+          path="/dreams/:id"
+          element={
+            <PrivateRoute>
+              <DreamDetail />
+            </PrivateRoute>
+          }
+        />
+        {/* Новый роут для экрана с месячным календарём и дашбордом */}
+        <Route
+          path="/calendar/month"
+          element={
+            <PrivateRoute>
+              <MonthDashboardScreen />
             </PrivateRoute>
           }
         />

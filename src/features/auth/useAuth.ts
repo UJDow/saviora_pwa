@@ -1,20 +1,23 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as api from '../../utils/api';
 
 const JWT_KEY = 'saviora_jwt';
 
 export function useAuth() {
   const [user, setUser] = useState<api.User | null>(null);
-  const [token, setToken] = useState<string | null>(
-    localStorage.getItem(JWT_KEY)
-  );
-  const [loading, setLoading] = useState(false);
+  const [token, setToken] = useState<string | null>(localStorage.getItem(JWT_KEY));
+  const [loading, setLoading] = useState(!!localStorage.getItem(JWT_KEY));
   const [error, setError] = useState<string | null>(null);
 
   // Автоматический вход по токену
   const tryAutoLogin = async () => {
     const jwt = localStorage.getItem(JWT_KEY);
-    if (!jwt) return false;
+    if (!jwt) {
+      setUser(null);
+      setToken(null);
+      setLoading(false);
+      return false;
+    }
     setLoading(true);
     try {
       const me = await api.getMe();
@@ -29,6 +32,16 @@ export function useAuth() {
       setLoading(false);
     }
   };
+
+  // Вызов авто-логина при первом рендере, если есть токен
+  useEffect(() => {
+    if (token) {
+      tryAutoLogin();
+    } else {
+      setLoading(false);
+    }
+    // eslint-disable-next-line
+  }, []);
 
   // Вход
   const login = async (email: string, password: string) => {
@@ -68,6 +81,7 @@ export function useAuth() {
     localStorage.removeItem(JWT_KEY);
     setUser(null);
     setToken(null);
+    setLoading(false);
   };
 
   return {
@@ -77,7 +91,7 @@ export function useAuth() {
     error,
     login,
     logout,
-    tryAutoLogin,
+    tryAutoLogin, // не вызывай вручную в компонентах!
     register,
   };
 }

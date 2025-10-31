@@ -1,0 +1,16 @@
+name = "deepseek-api-key"
+main = "worker.js"
+compatibility_date = "2024-06-01"
+
+[[kv_namespaces]]
+binding = "USERS_KV"
+id = "633f61558d924751b0cc535edb74192f"
+
+[[kv_namespaces]]
+binding = "DREAMS_KV"
+id = "805353c9b2d74903a7c73da3a63eef4d"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "saviora_dreams_database"
+database_id = "7de5946b-5bb2-4da2-9956-b4a9276a090a"
