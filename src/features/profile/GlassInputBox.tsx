@@ -12,7 +12,7 @@ interface GlassInputBoxProps {
   onChange: (val: string) => void;
   onSend: () => void;
   disabled?: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   containerStyle?: React.CSSProperties;
 }
 
@@ -56,9 +56,9 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      onChange((prev) => (prev ? prev + ' ' + transcript : transcript));
-    };
+  const transcript = event.results[0][0].transcript;
+  onChange(value ? value + ' ' + transcript : transcript);
+};
 
     recognition.onend = () => {
       setListening(false);
@@ -73,13 +73,14 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
   }, [onChange]);
 
   const handleClickOutside = (e: MouseEvent) => {
-    if (
-      containerRef.current &&
-      !containerRef.current.contains(e.target as Node)
-    ) {
-      onClose();
-    }
-  };
+  if (
+    containerRef.current &&
+    !containerRef.current.contains(e.target as Node) &&
+    onClose
+  ) {
+    onClose(); // <-- вызываем только если передан
+  }
+};
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);

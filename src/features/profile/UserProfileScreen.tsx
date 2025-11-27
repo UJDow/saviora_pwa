@@ -1,0 +1,307 @@
+// UserProfileScreen.tsx
+import React, { useState } from 'react';
+import {
+  Box,
+  Avatar,
+  Typography,
+  IconButton,
+  Menu,
+  MenuItem,
+  Snackbar,
+  Alert,
+  CircularProgress,
+} from '@mui/material';
+import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import { useNavigate } from 'react-router-dom';
+import { useProfile } from './ProfileContext';
+import { AVATAR_OPTIONS } from './ProfileEditForm';
+import { MoodSlider } from './mood/MoodSlider';
+import { setMoodForDate } from 'src/utils/api';
+import RecentInsightsGrid from 'src/features/insights/RecentInsightsGrid';
+
+export function UserProfileScreen() {
+  const navigate = useNavigate();
+  const {
+    profile,
+    getIconComponent,
+    refreshProfile,
+    updateProfile,
+  } = useProfile();
+
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+  const [moodSaving, setMoodSaving] = useState(false);
+
+  const open = Boolean(anchorEl);
+
+  const shareUrl = window.location.origin + '/auth';
+  const shareText = `👋 Привет! Я веду дневник сновидений в "Saviora". Присоединяйся — это реально интересно! 🌙✨
+
+Регистрируйся по ссылке: ${shareUrl}`;
+
+  const handleMenuClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => setAnchorEl(null);
+
+  const handleEdit = () => {
+    handleMenuClose();
+    navigate('/profile/edit');
+  };
+
+  const handleShare = async () => {
+    handleMenuClose();
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Сны — приложение для ведения дневника снов',
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch (err) {
+        // ignore
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setSnackbarMessage('Текст приглашения скопирован в буфер обмена.');
+      setSnackbarSeverity('success');
+    } catch (err) {
+      setSnackbarMessage('Не удалось скопировать текст.');
+      setSnackbarSeverity('error');
+    } finally {
+      setSnackbarOpen(true);
+    }
+  };
+
+  // Обработчик сохранения — использует тот же метод, что и на главном экране
+  const handleSaveMood = async (moodId: string) => {
+    setMoodSaving(true);
+    try {
+      if (!moodId) {
+        throw new Error('Не выбрано настроение для сохранения.');
+      }
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      // 1) Сохранение в БД
+      await setMoodForDate(todayStr, moodId);
+
+      // 2) Обновляем контекст оптимистично
+      updateProfile?.({ todayMood: moodId });
+
+      // 3) Перезапрашиваем профиль из БД для полной синхронизации
+      await refreshProfile();
+
+      setSnackbarMessage('Настроение сохранено.');
+      setSnackbarSeverity('success');
+    } catch (err: any) {
+      console.error('[UserProfile] Ошибка сохранения настроения:', err);
+      setSnackbarMessage(err?.message || 'Ошибка при сохранении настроения.');
+      setSnackbarSeverity('error');
+      throw err;
+    } finally {
+      setMoodSaving(false);
+      setSnackbarOpen(true);
+    }
+  };
+
+  const IconComp = getIconComponent(profile.avatarIcon ?? 'Pets');
+  const avatarColor =
+    AVATAR_OPTIONS.find((o) => o.icon === (profile.avatarIcon ?? 'Pets'))?.color ?? '#f0f0f0';
+
+  const accentColor = 'rgba(88,120,255,0.95)';
+  const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+  const glassBorder = 'rgba(255,255,255,0.06)';
+
+  return (
+    <Box
+      sx={{
+        minHeight: '100vh',
+        background: screenGradient,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        position: 'relative',
+        overflow: 'hidden',
+        p: { xs: 2, sm: 4 },
+      }}
+    >
+      <Box
+        sx={{
+          width: '100%',
+          maxWidth: 840,
+          borderRadius: 3,
+          background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          border: `1px solid ${glassBorder}`,
+          boxShadow: '0 12px 60px rgba(24,32,80,0.28)',
+          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '78vh',
+          overflow: 'hidden',
+          color: '#fff',
+          p: { xs: 2, sm: 3 },
+        }}
+      >
+        <IconButton
+          aria-label="Назад"
+          onClick={() => navigate(-1)}
+          sx={{
+            position: 'absolute',
+            top: 16,
+            left: 16,
+            color: '#fff',
+            bgcolor: 'transparent',
+            borderRadius: '50%',
+            p: 1,
+            zIndex: 10,
+          }}
+        >
+          <ArrowBackIosNewIcon fontSize="small" />
+        </IconButton>
+
+        <IconButton
+          aria-label="дополнительные опции"
+          onClick={handleMenuClick}
+          sx={{
+            position: 'absolute',
+            top: 16,
+            right: 16,
+            color: '#fff',
+            bgcolor: 'transparent',
+            borderRadius: '50%',
+            p: 1,
+            zIndex: 10,
+          }}
+        >
+          <MoreVertIcon fontSize="small" />
+        </IconButton>
+
+        <Menu
+          anchorEl={anchorEl}
+          open={open}
+          onClose={handleMenuClose}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{
+            sx: {
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
+              color: '#fff',
+              border: `1px solid ${glassBorder}`,
+              backdropFilter: 'blur(8px)',
+            },
+          }}
+        >
+          <MenuItem onClick={handleEdit}>Изменить</MenuItem>
+          <MenuItem onClick={handleShare}>Поделиться</MenuItem>
+        </Menu>
+
+        {/* Header: avatar + name (left) and MoodSlider (right) */}
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: '1fr minmax(240px, 420px)' },
+            alignItems: 'center',
+            gap: 2,
+            mt: 4,
+            px: { xs: 0, sm: 1 },
+            width: '100%',
+          }}
+        >
+          {/* Left: avatar + name */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Avatar
+              sx={{
+                width: { xs: 72, sm: 92 },
+                height: { xs: 72, sm: 92 },
+                bgcolor: avatarColor,
+                color: '#fff',
+                boxShadow: '0 6px 20px rgba(24,32,80,0.18)',
+                border: `2px solid rgba(255,255,255,0.06)`,
+              }}
+            >
+              {IconComp ? <IconComp /> : null}
+            </Avatar>
+
+            <Box>
+              <Typography variant="h5" fontWeight="bold" sx={{ color: '#fff' }}>
+                {profile.name || 'Пользователь'}
+              </Typography>
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.85)' }}>
+                Пользователь
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Right: single MoodSlider — в grid правой колонке, выровнен по центру */}
+          <Box
+            sx={{
+              justifySelf: { xs: 'stretch', sm: 'end' },
+              alignSelf: 'center',
+              width: { xs: '100%', sm: 360, md: 420 },
+              maxWidth: '48vw',
+            }}
+          >
+            {moodSaving ? (
+              <CircularProgress size={24} sx={{ color: 'rgba(255,255,255,0.7)' }} />
+            ) : (
+              <MoodSlider
+                value={profile.todayMood ?? null}
+                onChange={handleSaveMood}
+                closeOnSelect="confirmed"
+                transferToProfileOnSelect={false}
+                startCollapsed={Boolean(profile.todayMood)}
+                disabled={profile.loading || moodSaving}
+                ready={!profile.loading}
+              />
+            )}
+          </Box>
+        </Box>
+
+        {/* Остальная разметка профиля (списки, статистика и т.д.) */}
+        <Box sx={{ mt: 4, px: { xs: 0, sm: 1 }, pb: 6 }}>
+          {/* Здесь: ProfileCard, StatsTiles, список снов и т.д. */}
+
+          {/* === ВСТАВЛЕННЫЙ БЛОК: Последние инсайты === */}
+          <Box sx={{ mt: 3 }}>
+            <Typography variant="h6" sx={{ color: '#fff', mb: 1 }}>
+              Последние инсайты
+            </Typography>
+
+            {/* Показываем недавние инсайты (компонент RecentInsightsGrid) */}
+            <RecentInsightsGrid maxItems={12} />
+          </Box>
+        </Box>
+
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={4000}
+          onClose={() => setSnackbarOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert
+            onClose={() => setSnackbarOpen(false)}
+            severity={snackbarSeverity}
+            sx={{
+              width: '100%',
+              alignItems: 'center',
+              bgcolor: 'rgba(0,0,0,0.35)',
+              color: '#fff',
+              border: `1px solid ${glassBorder}`,
+            }}
+          >
+            {snackbarMessage}
+          </Alert>
+        </Snackbar>
+      </Box>
+    </Box>
+  );
+}

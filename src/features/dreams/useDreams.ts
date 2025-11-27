@@ -1,4 +1,3 @@
-// src/features/dreams/useDreams.ts
 import { useState, useCallback } from 'react';
 import { request } from 'src/utils/api';
 import type { Block, Message, Dream } from './types';
@@ -12,6 +11,7 @@ export function useDreams() {
   const [interpretation, setInterpretation] = useState('');
   const [dreamsHistory, setDreamsHistory] = useState<Dream[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentDreamId, setCurrentDreamId] = useState<string | null>(null);
 
   const fetchDreams = useCallback(async () => {
     setLoading(true);
@@ -25,108 +25,172 @@ export function useDreams() {
     }
   }, []);
 
-  const handleSaveDream = useCallback(async (text: string) => {
-    setDreamText(text);
+  const loadDreamById = useCallback(async (id: string) => {
     setLoading(true);
     try {
-      const rawBlocks = text
-        .split('.')
-        .map(t => t.trim())
-        .filter(Boolean);
-      const blocksArr = rawBlocks.map(t => ({ id: crypto.randomUUID(), text: t }));
-      setBlocks(blocksArr);
-
-      const dream = await request<Dream>('/dreams', {
-        method: 'POST',
-        body: JSON.stringify({
-          dreamText: text,
-          blocks: blocksArr,
-        }),
-      }, true);
-
-      setDreamsHistory(prev => [dream, ...prev]);
+      const dream = await request<Dream>(`/dreams/${id}`, {}, true);
+      setCurrentDreamId(dream.id);
+      setDreamText(dream.dreamText || '');
+      setBlocks(Array.isArray(dream.blocks) ? dream.blocks : []);
       setSelectedBlock(null);
       setMessages([]);
       setInterpretation('');
     } catch (error) {
-      console.error('Ошибка сохранения сна', error);
+      console.error('Ошибка загрузки сна', error);
     } finally {
       setLoading(false);
     }
   }, []);
 
+  const handleSaveDream = useCallback(
+    async (text: string) => {
+      setDreamText(text);
+      setLoading(true);
+      try {
+        const rawBlocks = text
+          .split('.')
+          .map((t) => t.trim())
+          .filter(Boolean);
+        const blocksArr: Block[] = rawBlocks.map((t, idx) => ({
+          id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `auto-${idx}`,
+          text: t,
+          start: idx,
+          end: idx,
+        }));
+        setBlocks(blocksArr);
+
+        const dream = await request<Dream>(
+          '/dreams',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              dreamText: text,
+              blocks: blocksArr,
+            }),
+          },
+          true
+        );
+
+        setDreamsHistory((prev) => [dream, ...prev]);
+        setSelectedBlock(dream.blocks?.[0]?.id ?? null);
+        setMessages([]);
+        setInterpretation('');
+        setCurrentDreamId(dream.id);
+      } catch (error) {
+        console.error('Ошибка сохранения сна', error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
   const deleteDream = useCallback(async (id: string) => {
     setLoading(true);
     try {
-      await request(`/dreams/${id}`, {
-        method: 'DELETE',
-      }, true);
-      setDreamsHistory(prev => prev.filter(d => d.id !== id));
+      await request(`/dreams/${id}`, { method: 'DELETE' }, true);
+      setDreamsHistory((prev) => prev.filter((d) => d.id !== id));
+      if (currentDreamId === id) {
+        setCurrentDreamId(null);
+        setDreamText('');
+        setBlocks([]);
+        setSelectedBlock(null);
+        setMessages([]);
+        setInterpretation('');
+      }
     } catch (error) {
       console.error('Ошибка удаления сна', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentDreamId]);
 
   const handleAddBlock = useCallback(() => {
-    setBlocks(prev => [...prev, { id: crypto.randomUUID(), text: 'Новый блок' }]);
+    setBlocks((prev) => [
+      ...prev,
+      {
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+        text: 'Новый блок',
+      },
+    ]);
   }, []);
 
-  const handleRemoveBlock = useCallback((id: string) => {
-    setBlocks(prev => prev.filter(b => b.id !== id));
-    setMessages([]);
-    if (selectedBlock === id) setSelectedBlock(null);
-  }, [selectedBlock]);
+  const handleRemoveBlock = useCallback(
+    (id: string) => {
+      setBlocks((prev) => prev.filter((b) => b.id !== id));
+      setMessages([]);
+      if (selectedBlock === id) setSelectedBlock(null);
+    },
+    [selectedBlock]
+  );
 
   const handleSelectBlock = useCallback((block: Block) => {
     setSelectedBlock(block.id);
     setMessages([]);
   }, []);
 
-  const handleSendMessage = useCallback(async (msg: string) => {
-    const userMsg: Message = { id: crypto.randomUUID(), text: msg, sender: 'user' };
-    setMessages(prev => [...prev, userMsg]);
-    setLoading(true);
-    try {
-      const blockText = blocks.find(b => b.id === selectedBlock)?.text || '';
-      const data = await request<any>('/analyze', {
-        method: 'POST',
-        body: JSON.stringify({
-          blockText,
-          lastTurns: [
-            ...messages.map(m => ({
-              role: m.sender === 'user' ? 'user' : 'assistant',
-              content: m.text,
-            })),
-            { role: 'user', content: msg },
-          ],
-        }),
-      }, true);
+  const handleSendMessage = useCallback(
+    async (msg: string) => {
+      if (!selectedBlock) {
+        console.warn('Блок не выбран для диалога');
+        return;
+      }
 
-      const aiText = data?.choices?.[0]?.message?.content || 'Нет ответа';
-      const aiMsg: Message = { id: crypto.randomUUID(), text: aiText, sender: 'bot' };
-      setMessages(prev => [...prev, aiMsg]);
-    } catch (error) {
-      console.error('Ошибка анализа блока', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [blocks, selectedBlock, messages]);
+      const userMsg: Message = { id: crypto.randomUUID(), text: msg, sender: 'user' };
+      setMessages((prev) => [...prev, userMsg]);
+      setLoading(true);
+
+      try {
+        const blockText = blocks.find((b) => b.id === selectedBlock)?.text || '';
+        const conversation = [
+          ...messages.map((m) => ({
+            role: m.sender === 'user' ? 'user' : 'assistant',
+            content: m.text,
+          })),
+          { role: 'user', content: msg },
+        ];
+
+        const data = await request<any>(
+          '/analyze',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              blockText,
+              lastTurns: conversation,
+            }),
+          },
+          true
+        );
+
+        const aiText = data?.choices?.[0]?.message?.content || 'Нет ответа';
+        const aiMsg: Message = { id: crypto.randomUUID(), text: aiText, sender: 'bot' };
+        setMessages((prev) => [...prev, aiMsg]);
+      } catch (error) {
+        console.error('Ошибка анализа блока', error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [blocks, selectedBlock, messages]
+  );
 
   const handleShowFinal = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await request<{ summary: string }>('/summarize', {
-        method: 'POST',
-        body: JSON.stringify({
-          history: messages.map(m => ({
-            role: m.sender === 'user' ? 'user' : 'assistant',
-            content: m.text,
-          })),
-          blockText: dreamText,
-        }),
-      }, true);
+      const data = await request<{ summary: string }>(
+        '/summarize',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            history: messages.map((m) => ({
+              role: m.sender === 'user' ? 'user' : 'assistant',
+              content: m.text,
+            })),
+            blockText: dreamText,
+          }),
+        },
+        true
+      );
 
       setInterpretation(data.summary || 'Нет итогового толкования');
       setFinalDialogOpen(true);
@@ -157,6 +221,7 @@ export function useDreams() {
     dreamsHistory,
     loading,
     fetchDreams,
+    loadDreamById,
     handleSaveDream,
     deleteDream,
     handleAddBlock,

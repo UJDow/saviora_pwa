@@ -1,124 +1,166 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useParams,
+} from 'react-router-dom';
 import { AuthScreen } from './features/auth/AuthScreen';
 import { DreamsScreen } from './features/dreams/DreamsScreen';
 import { PrivateRoute } from './features/auth/PrivateRoute';
-import { DreamBlocks } from './features/dreams/DreamBlocks';
 import { DreamChat } from './features/dreams/DreamChat';
 import { DreamEditor } from './features/dreams/DreamEditor';
 import { DreamFinalDialog } from './features/dreams/DreamFinalDialog';
 import { ProfileScreen } from './features/profile/ProfileScreen';
-import { useDreams } from './features/dreams/useDreams';
 import { DreamsByDateScreen } from './features/dreams/DreamsByDateScreen';
 import { MonthDashboardScreen } from './features/profile/MonthDashboardScreen';
-import { DreamDetail } from './features/dreams/DreamDetail'; // <-- импортируем новый компонент
+import { MetricDetailScreen } from './features/profile/MetricDetailScreen';
+import { DreamDetail } from './features/dreams/DreamDetail';
+import { UserProfileScreen } from './features/profile/UserProfileScreen';
+import { ProfileEditForm } from './features/profile/ProfileEditForm';
+import { ProfileProvider } from './features/profile/ProfileContext';
+import { SimilarArtworksScreen } from './features/dreams/SimilarArtworksScreen';
+import { ArtworkChat } from './features/dreams/ArtworkChat';
 
-function DreamChatWrapper() {
+function DreamBlocksRedirect() {
   const { id } = useParams<{ id: string }>();
-  const {
-    blocks,
-    messages,
-    handleSendMessage,
-    selectedBlock,
-  } = useDreams();
+  if (!id) {
+    return <Navigate to="/dreams" replace />;
+  }
+  return <Navigate to={`/dreams/${id}?view=blocks`} replace />;
+}
 
-  const blockText = blocks.find(b => b.id === selectedBlock)?.text || 'Выберите блок';
+function DreamEditorWrapper() {
+  const handleSave = async (_text: string): Promise<void> => {
+    // Логика сохранения
+  };
 
-  return (
-    <DreamChat
-      blockText={blockText}
-      messages={messages}
-      onSend={handleSendMessage}
-    />
-  );
+  return <DreamEditor onSave={handleSave} />;
 }
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/auth" element={<AuthScreen />} />
-        <Route
-          path="/"
-          element={
-            <PrivateRoute>
-              <ProfileScreen />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/dreams"
-          element={
-            <PrivateRoute>
-              <DreamsScreen />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/dreams/new"
-          element={
-            <PrivateRoute>
-              <DreamEditor />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/dreams/:id/blocks"
-          element={
-            <PrivateRoute>
-              <DreamBlocks />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/dreams/:id/chat"
-          element={
-            <PrivateRoute>
-              <DreamChatWrapper />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/dreams/:id/final"
-          element={
-            <PrivateRoute>
-              <DreamFinalDialog
-                open={false}
-                onClose={() => {}}
-                interpretation=""
-              />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/dreams/date/:date"
-          element={
-            <PrivateRoute>
-              <DreamsByDateScreen />
-            </PrivateRoute>
-          }
-        />
-        {/* Новый роут для детального просмотра сна */}
-        <Route
-          path="/dreams/:id"
-          element={
-            <PrivateRoute>
-              <DreamDetail />
-            </PrivateRoute>
-          }
-        />
-        {/* Новый роут для экрана с месячным календарём и дашбордом */}
-        <Route
-          path="/calendar/month"
-          element={
-            <PrivateRoute>
-              <MonthDashboardScreen />
-            </PrivateRoute>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <ProfileProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/auth" element={<AuthScreen />} />
+          <Route
+            path="/"
+            element={
+              <PrivateRoute>
+                <ProfileScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams"
+            element={
+              <PrivateRoute>
+                <DreamsScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/new"
+            element={
+              <PrivateRoute>
+                <DreamEditorWrapper />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/:id/blocks"
+            element={
+              <PrivateRoute>
+                <DreamBlocksRedirect />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/:id/chat"
+            element={
+              <PrivateRoute>
+                <DreamChat />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/:id/final"
+            element={
+              <PrivateRoute>
+                <DreamFinalDialog open={false} onClose={() => {}} interpretation="" />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/date/:date"
+            element={
+              <PrivateRoute>
+                <DreamsByDateScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/:id"
+            element={
+              <PrivateRoute>
+                <DreamDetail />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/:id/similar"
+            element={
+              <PrivateRoute>
+                <SimilarArtworksScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/dreams/:id/artwork-chat/:artworkIdx"
+            element={
+              <PrivateRoute>
+                <ArtworkChat />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/calendar/month"
+            element={
+              <PrivateRoute>
+                <MonthDashboardScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/stats/:metricKey"
+            element={
+              <PrivateRoute>
+                <MetricDetailScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/profile/user"
+            element={
+              <PrivateRoute>
+                <UserProfileScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/profile/edit"
+            element={
+              <PrivateRoute>
+                <ProfileEditForm />
+              </PrivateRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ProfileProvider>
   );
 }
 

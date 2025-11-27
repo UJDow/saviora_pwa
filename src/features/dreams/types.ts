@@ -4,6 +4,9 @@ import type { Dream as ApiDream } from 'src/utils/api';
 export interface Block {
   id: string;
   text: string;
+  start?: number; // начало диапазона слов (если есть)
+  end?: number;   // конец диапазона
+  label?: string; // отображаемая подпись (опционально)
 }
 
 export interface Message {

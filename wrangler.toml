@@ -14,3 +14,8 @@ id = "805353c9b2d74903a7c73da3a63eef4d"
 binding = "DB"
 database_name = "saviora_dreams_database"
 database_id = "7de5946b-5bb2-4da2-9956-b4a9276a090a"
+
+[[r2_buckets]]
+binding = "AVATARS"
+bucket_name = "avatars-bucket"
+preview_bucket_name = "avatars-bucket-preview"

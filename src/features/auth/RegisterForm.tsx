@@ -1,4 +1,3 @@
-// src/features/auth/RegisterForm.tsx
 import React, { useState } from 'react';
 import { useAuth } from './AuthProvider';
 import { useNavigate } from 'react-router-dom';
@@ -20,7 +19,18 @@ export const RegisterForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) =
 
   return (
     <form onSubmit={handleSubmit}>
-      <Typography variant="h5" gutterBottom>Регистрация</Typography>
+      <Typography
+        variant="h5"
+        gutterBottom
+        sx={{
+          color: '#fff',
+          fontWeight: 700,
+          fontSize: { xs: 20, sm: 22 },
+          mb: 1.5,
+        }}
+      >
+        Регистрация
+      </Typography>
       <TextField
         label="Email"
         type="email"
@@ -30,6 +40,41 @@ export const RegisterForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) =
         margin="normal"
         required
         autoFocus
+        variant="outlined"
+        InputLabelProps={{
+          sx: {
+            color: '#fff !important',
+            '&.Mui-focused': {
+              color: '#fff !important',
+            }
+          }
+        }}
+        InputProps={{
+          sx: {
+            bgcolor: 'rgba(255,255,255,0.22)',
+            borderRadius: 2,
+            backdropFilter: 'blur(4px)',
+            color: '#fff',
+            fontWeight: 500,
+            input: { color: '#fff', fontWeight: 500 },
+            '& .MuiOutlinedInput-notchedOutline': {
+              borderColor: 'rgba(255,255,255,0.4)',
+              borderWidth: '1px',
+            },
+            '&:hover .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#fff',
+              borderWidth: '1px',
+            },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#fff',
+              borderWidth: '1px',
+              boxShadow: 'none',
+            },
+            '&.Mui-focused': {
+              bgcolor: 'rgba(255,255,255,0.22)',
+            },
+          }
+        }}
       />
       <TextField
         label="Пароль"
@@ -39,6 +84,41 @@ export const RegisterForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) =
         fullWidth
         margin="normal"
         required
+        variant="outlined"
+        InputLabelProps={{
+          sx: {
+            color: '#fff !important',
+            '&.Mui-focused': {
+              color: '#fff !important',
+            }
+          }
+        }}
+        InputProps={{
+          sx: {
+            bgcolor: 'rgba(255,255,255,0.22)',
+            borderRadius: 2,
+            backdropFilter: 'blur(4px)',
+            color: '#fff',
+            fontWeight: 500,
+            input: { color: '#fff', fontWeight: 500 },
+            '& .MuiOutlinedInput-notchedOutline': {
+              borderColor: 'rgba(255,255,255,0.4)',
+              borderWidth: '1px',
+            },
+            '&:hover .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#fff',
+              borderWidth: '1px',
+            },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#fff',
+              borderWidth: '1px',
+              boxShadow: 'none',
+            },
+            '&.Mui-focused': {
+              bgcolor: 'rgba(255,255,255,0.22)',
+            },
+          }
+        }}
       />
       {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
       <Button
@@ -46,13 +126,37 @@ export const RegisterForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) =
         variant="contained"
         color="primary"
         fullWidth
-        sx={{ mt: 2 }}
+        sx={{
+          mt: 2,
+          bgcolor: 'rgba(88,120,255,0.95)',
+          color: '#fff',
+          fontWeight: 600,
+          fontSize: 16,
+          letterSpacing: 0.5,
+          py: 1,
+          borderRadius: 2,
+          boxShadow: '0 2px 8px 0 rgba(31, 38, 135, 0.10)',
+          '&:hover': {
+            bgcolor: 'rgba(88,120,255,1)',
+          }
+        }}
         disabled={loading}
       >
         {loading ? 'Регистрация...' : 'Зарегистрироваться'}
       </Button>
       <Box mt={2} textAlign="center">
-        <Button onClick={onSwitch} color="secondary">
+        <Button
+          onClick={onSwitch}
+          color="secondary"
+          sx={{
+            color: '#e0bbff',
+            fontWeight: 500,
+            fontSize: 15,
+            textTransform: 'none',
+            opacity: 0.9,
+            '&:hover': { color: '#fff', opacity: 1 }
+          }}
+        >
           Уже есть аккаунт? Войти
         </Button>
       </Box>
