@@ -3,6 +3,7 @@ const allowedOrigins = [
   'https://sakovvolfsnitko-e6deet01q-alexandr-snitkos-projects.vercel.app',
   'https://sakovvolfsnitko.vercel.app',
   'https://saviorasn.vercel.app',
+  'https://saviorasn-alexandr-snitkos-projects.vercel.app',
   'https://vercel.com/alexandr-snitkos-projects/saviora.app/deployments',
   'http://localhost:3000',
   'http://localhost:3001',
