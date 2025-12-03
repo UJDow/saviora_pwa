@@ -1,4 +1,4 @@
-// ProfileContext.tsx
+// src/features/profile/ProfileContext.tsx
 import React, {
   createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode, type FC,
 } from 'react';
@@ -11,37 +11,25 @@ import { Box, Paper, Dialog, Avatar } from '@mui/material';
 import AvatarSelector from './AvatarSelector';
 import { ProfileEditForm } from './ProfileEditForm';
 import { useAuth } from 'src/features/auth/AuthProvider';
+import { getLocalDateStr } from 'src/utils/dateUtils';
 
 // --- Types ---
 export type Achievement = { id: string; title: string; date: string };
 export type Stat = { label: string; value: number | string };
 export type Dream = { id: string; title: string; date: string };
 
-interface DashboardData {
-  totalDreams: number;
-  monthlyBlocks: number;
-  interpretedPercent: number;
-  artworksCount: number;
-  dialogDreamsCount: number;
-  streak: number;
-  improvementScore: number;
-}
-
 export type Profile = {
   id?: string;
   name: string;
   avatarIcon?: string | null;
   avatarImage?: string | null;
-  stats: Stat[];
   dreams: Dream[];
   achievements: Achievement[];
-  dashboardData?: DashboardData;
   loading: boolean;
   error?: string;
   email?: string | null;
   created?: number | null;
   trialDaysLeft?: number | null;
-  // добавлено: текущее выбранное настроение (id из MOODS)
   todayMood?: string | null;
 };
 
@@ -51,6 +39,9 @@ export type AvatarOption = {
   name: string;
   color: string;
 };
+
+// 🔥 Новый тип для тегов
+export type InsightTag = 'all' | 'dream' | 'art';
 
 // Пастельные цвета
 const BLOCK_COLORS = [
@@ -117,14 +108,6 @@ const initialProfile: Profile = {
   name: '',
   avatarIcon: null,
   avatarImage: null,
-  stats: [
-    { label: 'Всего снов', value: 0 },
-    { label: 'Диалогов с ботом', value: 0 },
-    { label: 'Проанализировано', value: '0%' },
-    { label: 'Арт-работы', value: 0 },
-    { label: 'Ежедневная серия', value: '0 дней' },
-    { label: 'Блоков за месяц', value: 0 },
-  ],
   dreams: [],
   achievements: [],
   loading: true,
@@ -145,7 +128,6 @@ type ProfileContextType = {
   updateAvatar: (avatarIdOrIcon: string) => void;
   updateAvatarImage: (imageUrl: string | null) => void;
   getIconComponent: (iconName?: string | null) => React.ComponentType<any>;
-  fetchDashboardData: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   showNextAvatarPage?: () => void;
   showPrevAvatarPage?: () => void;
@@ -155,6 +137,10 @@ type ProfileContextType = {
   openProfileEditor: () => void;
   closeProfileEditor: () => void;
   isProfileEditorOpen: boolean;
+
+  // 🔥 Новое: теги и фильтрация
+  selectedTag: InsightTag;
+  setSelectedTag: (tag: InsightTag) => void;
 };
 
 const ProfileContext = createContext<ProfileContextType | undefined>(undefined);
@@ -165,6 +151,10 @@ export const ProfileProvider = ({ children }: { children: ReactNode }) => {
   const [avatarPage, setAvatarPage] = useState(0);
   const [isAvatarSelectorOpen, setIsAvatarSelectorOpen] = useState(false);
   const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
+
+  // 🔥 Новое состояние
+  const [selectedTag, setSelectedTag] = useState<InsightTag>('all');
+
   const fetchedOnMountRef = useRef(false);
 
   const visibleAvatarOptions = useMemo(() => {
@@ -210,28 +200,6 @@ export const ProfileProvider = ({ children }: { children: ReactNode }) => {
     updateProfile({ avatarImage: imageUrl ? String(imageUrl).trim() || null : null });
   };
 
-  const fetchDashboardData = async () => {
-    updateProfile({ loading: true, error: undefined });
-    try {
-      const data = await request<DashboardData>('/dashboard', {}, true);
-      const stats = [
-        { label: 'Всего снов', value: data.totalDreams },
-        { label: 'Диалогов с ботом', value: data.dialogDreamsCount },
-        { label: 'Проанализировано', value: `${data.interpretedPercent}%` },
-        { label: 'Арт-работы', value: data.artworksCount },
-        { label: 'Ежедневная серия', value: `${data.streak} дней` },
-        { label: 'Блоков за месяц', value: data.monthlyBlocks },
-      ];
-      updateProfile({ dashboardData: data, stats, loading: false });
-    } catch (error: any) {
-      console.error('Failed to fetch dashboard data:', error);
-      updateProfile({
-        error: error?.message || 'Ошибка загрузки данных',
-        loading: false,
-      });
-    }
-  };
-
   const refreshProfile = async () => {
     updateProfile({ loading: true, error: undefined });
     try {
@@ -257,9 +225,8 @@ export const ProfileProvider = ({ children }: { children: ReactNode }) => {
       if (todayMood === undefined) todayMood = null;
 
       if (todayMood === null) {
-        // fallback: если /me не отдал todayMood — пробуем getMoodForDate
         try {
-          const todayStr = new Date().toISOString().slice(0, 10);
+          const todayStr = getLocalDateStr();
           const res = await getMoodForDate(todayStr);
           todayMood = res ?? null;
         } catch (e) {
@@ -289,6 +256,23 @@ export const ProfileProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // 👇 НОВОЕ: обновление todayMood при фокусе окна
+  useEffect(() => {
+    const onFocus = async () => {
+      if (!auth.token || auth.loading) return;
+      try {
+        const todayStr = getLocalDateStr();
+        const mood = await getMoodForDate(todayStr);
+        updateProfile?.({ todayMood: mood ?? null });
+      } catch (e) {
+        console.warn('[ProfileContext] onFocus getMoodForDate failed', e);
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [auth.token, auth.loading, updateProfile]);
+
   // локальные открыватели/закрыватели, чтобы можно было безопасно ссылаться в JSX
   const openAvatarSelector = () => setIsAvatarSelectorOpen(true);
   const closeAvatarSelector = () => setIsAvatarSelectorOpen(false);
@@ -311,7 +295,6 @@ export const ProfileProvider = ({ children }: { children: ReactNode }) => {
     updateAvatar,
     updateAvatarImage,
     getIconComponent,
-    fetchDashboardData,
     refreshProfile,
     showNextAvatarPage: () => setAvatarPage(p => Math.min(p + 1, Math.ceil(AVATAR_OPTIONS.length / AVATARS_PER_PAGE) - 1)),
     showPrevAvatarPage: () => setAvatarPage(p => Math.max(p - 1, 0)),
@@ -321,6 +304,10 @@ export const ProfileProvider = ({ children }: { children: ReactNode }) => {
     openProfileEditor,
     closeProfileEditor,
     isProfileEditorOpen,
+
+    // 🔥 Новое
+    selectedTag,
+    setSelectedTag,
   };
 
   // dialog style
@@ -423,8 +410,7 @@ type StatsTilesProps = {
 };
 
 export const StatsTiles: FC<StatsTilesProps> = ({ stats, minTilePx = 140, tileGapPx = 16 }) => {
-  const { profile } = useProfile();
-  const items = stats ?? profile.stats ?? [];
+  const items = stats ?? [];
 
   return (
     <Box sx={{ width: '100%', boxSizing: 'border-box', py: 2 }}>

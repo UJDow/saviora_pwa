@@ -23,7 +23,7 @@ export interface DayViewProps {
   calendarStyles?: CalendarStyles;
 }
 
-const MotionBox = motion(Box);
+const MotionBox = motion.create(Box);
 
 export function DayView({
   dreamDates,

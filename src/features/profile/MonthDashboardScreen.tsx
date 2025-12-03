@@ -1,4 +1,3 @@
-// MonthDashboardScreen.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
@@ -9,14 +8,17 @@ import {
   LinearProgress,
   Card,
   CardContent,
-  Tooltip as MuiTooltip,
   IconButton,
-  Chip,
   Skeleton,
   Tabs,
   Tab,
   Divider,
-  TextField
+  Avatar,
+  useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import BedtimeIcon from '@mui/icons-material/Bedtime';
 import ChatIcon from '@mui/icons-material/Chat';
@@ -27,8 +29,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import FlagIcon from '@mui/icons-material/Flag';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { MonthView } from './calendar/MonthView';
 import { YearView } from './calendar/YearView';
 import { DreamsByDateScreen } from '../dreams/DreamsByDateScreen';
@@ -42,58 +47,368 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip as RechartsTooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
+  Legend,
 } from 'recharts';
 
-// Типы
+// Swiper imports
+import { Swiper, SwiperSlide } from 'swiper/react';
+import 'swiper/css';
+
+// Mood icons/constants (user-provided)
+import MOODS from 'src/features/profile/mood/MoodIcons';
 import type { DashboardDataFromServer, ProgressPoint } from 'src/features/dashboard/types';
 type DashboardPayload = DashboardDataFromServer & Record<string, any>;
 
-// Визуальные токены
+// ===== Dark glass palette (reverted) =====
 const bgGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-const glassBg = 'rgba(255, 255, 255, 0.10)';
-const glassBorder = 'rgba(255, 255, 255, 0.20)';
+const glassBg = 'rgba(255, 255, 255, 0.06)';
+const glassBorder = 'rgba(255, 255, 255, 0.10)';
 const accentGradient = 'linear-gradient(135deg, rgba(88,120,255,0.95), rgba(139,92,246,0.95))';
-const subtleGlow = '0 8px 30px rgba(139,92,246,0.12)';
-const cardShadow = '0 8px 24px rgba(11,8,36,0.28)';
+const subtleGlow = '0 8px 30px rgba(139,92,246,0.08)';
+const cardShadow = '0 8px 24px rgba(11,8,36,0.16)';
+// ===========================================
 
-// ProgressSection
-const ProgressSection: React.FC<{ score: number }> = ({ score }) => (
-  <Box sx={{ width: '100%' }}>
-    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.78)' }}>Уровень вовлеченности</Typography>
-      <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.95)' }}>{score}%</Typography>
-    </Box>
-    <LinearProgress
-      variant="determinate"
-      value={score}
+const sumValues = (obj?: Record<string, any>): number => {
+  if (!obj) return 0;
+  return Object.values(obj).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+};
+
+// Engagement card
+type EngagementDetails = {
+  activityCount: number;
+  interpretedPct: number;
+  insightsCount: number;
+  artworkInteractions: number;
+  dialogCount: number;
+  streakDays: number;
+};
+
+const computeEngagement = (d: EngagementDetails) => {
+  const weights = { A: 0.20, B: 0.25, C: 0.18, D: 0.12, E: 0.10, F: 0.15 };
+  const targetActivity = 20;
+  const targetInsights = 8;
+  const targetArtworkInteractions = 12;
+  const targetDialogs = 10;
+  const targetStreak = 14;
+
+  const A_norm = Math.min(100, Math.round((d.activityCount / targetActivity) * 100));
+  const B = Math.max(0, Math.min(100, Math.round(d.interpretedPct)));
+  const C_norm = Math.min(100, Math.round((d.insightsCount / targetInsights) * 100));
+  const D_norm = Math.min(100, Math.round((d.artworkInteractions / targetArtworkInteractions) * 100));
+  const E_norm = Math.min(100, Math.round((d.dialogCount / targetDialogs) * 100));
+  const F_norm = Math.min(100, Math.round((d.streakDays / targetStreak) * 100));
+
+  const score = Math.round(
+    weights.A * A_norm +
+    weights.B * B +
+    weights.C * C_norm +
+    weights.D * D_norm +
+    weights.E * E_norm +
+    weights.F * F_norm
+  );
+
+  return {
+    score,
+    breakdown: {
+      activity: { value: d.activityCount, normalized: A_norm, weight: weights.A },
+      interpreted: { value: d.interpretedPct, normalized: B, weight: weights.B },
+      insights: { value: d.insightsCount, normalized: C_norm, weight: weights.C },
+      artwork: { value: d.artworkInteractions, normalized: D_norm, weight: weights.D },
+      dialogs: { value: d.dialogCount, normalized: E_norm, weight: weights.E },
+      streak: { value: d.streakDays, normalized: F_norm, weight: weights.F },
+    }
+  };
+};
+
+const EngagementCard: React.FC<{ details: EngagementDetails }> = ({ details }) => {
+  const { score, breakdown } = useMemo(() => computeEngagement(details), [details]);
+
+  return (
+    <Card sx={{ background: 'transparent', boxShadow: 'none', border: 'none' }}>
+      <CardContent sx={{ px: 0 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 800, color: '#fff' }}>{score}</Typography>
+            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>Оценка вовлечённости</Typography>
+          </Box>
+          <Box sx={{ width: 180 }}>
+            <LinearProgress
+              variant="determinate"
+              value={score}
+              sx={{
+                height: 10,
+                borderRadius: 8,
+                background: 'rgba(255,255,255,0.06)',
+                '& .MuiLinearProgress-bar': {
+                  background: 'linear-gradient(90deg, #8b5cf6, #5b21b6)',
+                }
+              }}
+            />
+          </Box>
+        </Box>
+
+        <Box sx={{ mt: 2, display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1 }}>
+          {[
+            { key: 'activity', title: 'Активность', icon: <BedtimeIcon />, data: breakdown.activity, unit: 'снов' },
+            { key: 'interpreted', title: 'Проанализировано', icon: <CheckCircleIcon />, data: breakdown.interpreted, unit: '%' },
+            { key: 'insights', title: 'Инсайты', icon: <AutoGraphIcon />, data: breakdown.insights, unit: 'шт.' },
+            { key: 'artwork', title: 'Арт-взаимодействия', icon: <PaletteIcon />, data: breakdown.artwork, unit: 'шт.' },
+            { key: 'dialogs', title: 'Диалоги', icon: <ChatIcon />, data: breakdown.dialogs, unit: 'шт.' },
+            { key: 'streak', title: 'Стрик', icon: <TrendingUpIcon />, data: breakdown.streak, unit: 'дн.' },
+          ].map((m) => (
+            <Box key={m.key} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 8, background: 'rgba(255,255,255,0.02)' }}>
+              <Box sx={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.03)' }}>{m.icon}</Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.75)', display: 'block' }}>{m.title}</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ flex: 1 }}>
+                    <Box sx={{ height: 6, background: 'rgba(255,255,255,0.04)', borderRadius: 4, overflow: 'hidden' }}>
+                      <Box sx={{ width: `${m.data.normalized}%`, height: '100%', background: 'linear-gradient(90deg,#8b5cf6,#5b21b6)' }} />
+                    </Box>
+                  </Box>
+                  <Typography variant="caption" sx={{ width: 36, textAlign: 'right', color: 'rgba(255,255,255,0.8)' }}>{m.data.value} {m.unit}</Typography>
+                </Box>
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+};
+
+// MicroGoalCard
+type MicroGoal = {
+  id: string;
+  title: string;
+  description?: string;
+  progress: number;
+  targetLabel?: string;
+  dueDate?: string | null;
+  isCompleted?: boolean;
+};
+
+const MicroGoalCard: React.FC<{
+  goal: MicroGoal;
+  onComplete?: (id: string) => void;
+  onSnooze?: (id: string) => void;
+  onOpen?: (id: string) => void;
+  onEdit?: (id: string) => void;
+  onDelete?: (id: string) => void;
+}> = ({ goal, onComplete, onSnooze, onOpen, onEdit, onDelete }) => {
+  const { id, title, description, progress = 0, targetLabel, dueDate, isCompleted } = goal;
+  return (
+    <Card
       sx={{
-        height: 10,
-        borderRadius: 6,
-        bgcolor: 'rgba(255,255,255,0.04)',
-        '& .MuiLinearProgress-bar': {
-          borderRadius: 6,
-          background: 'linear-gradient(90deg, rgba(88,120,255,0.95), rgba(139,92,246,0.95))'
-        }
+        background: glassBg,
+        border: `1px solid ${glassBorder}`,
+        borderRadius: 12,
+        boxShadow: cardShadow,
+        overflow: 'hidden',
       }}
-    />
-    <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
-      <Chip
-        label={score > 70 ? 'Высокий' : score > 40 ? 'Средний' : 'Низкий'}
-        size="small"
-        sx={{
-          fontWeight: 700,
-          color: '#0b1020',
-          background: score > 70 ? 'rgba(93, 255, 183, 0.95)' : score > 40 ? 'rgba(255, 205, 69, 0.95)' : 'rgba(255, 99, 132, 0.95)'
-        }}
-      />
-      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>Последние данные</Typography>
-    </Box>
-  </Box>
+      variant="outlined"
+    >
+      <CardContent sx={{ display: 'flex', gap: 1, alignItems: 'center', p: 1 }}>
+        <Box sx={{
+          width: 52,
+          height: 52,
+          borderRadius: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: isCompleted ? 'linear-gradient(90deg, #22c55e, #16a34a)' : accentGradient,
+          boxShadow: subtleGlow,
+          color: '#fff',
+          flexShrink: 0
+        }}>
+          <CheckCircleIcon sx={{ fontSize: 20 }} />
+        </Box>
+
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography noWrap sx={{ fontWeight: 700, color: '#fff', fontSize: 14 }}>{title}</Typography>
+          {description && <Typography noWrap variant="caption" sx={{ display: 'block', color: 'rgba(255,255,255,0.7)' }}>{description}</Typography>}
+
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+            <Box sx={{ flex: 1 }}>
+              <LinearProgress
+                variant="determinate"
+                value={Math.max(0, Math.min(100, progress))}
+                sx={{
+                  height: 8,
+                  borderRadius: 8,
+                  background: 'rgba(255,255,255,0.04)',
+                  '& .MuiLinearProgress-bar': {
+                    background: 'linear-gradient(90deg,#8b5cf6,#5b21b6)'
+                  }
+                }}
+              />
+              <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)', mt: 0.5, display: 'block' }}>
+                {targetLabel ? `${progress}% • ${targetLabel}` : `${progress}%`}
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+              <IconButton size="small" onClick={() => onSnooze?.(id)} sx={{ color: 'rgba(255,255,255,0.9)' }} title="Отложить">
+                <AccessTimeIcon fontSize="small" />
+              </IconButton>
+
+              <IconButton size="small" onClick={() => onOpen?.(id)} sx={{ color: 'rgba(255,255,255,0.9)' }} title="Открыть">
+                <OpenInNewIcon fontSize="small" />
+              </IconButton>
+
+              <Button
+                size="small"
+                variant={isCompleted ? 'outlined' : 'contained'}
+                onClick={() => onComplete?.(id)}
+                sx={{
+                  ml: 0.5,
+                  textTransform: 'none',
+                  bgcolor: isCompleted ? 'transparent' : accentGradient,
+                  color: '#fff',
+                  paddingX: 1.2,
+                  paddingY: 0.6,
+                  minWidth: 36,
+                }}
+              >
+                {isCompleted ? 'Готово' : 'Сделать'}
+              </Button>
+
+              <IconButton size="small" onClick={() => onEdit?.(id)} sx={{ color: 'rgba(255,255,255,0.85)' }} title="Редактировать">
+                <EditIcon fontSize="small" />
+              </IconButton>
+
+              <IconButton size="small" onClick={() => onDelete?.(id)} sx={{ color: 'rgba(220,38,38,0.85)' }} title="Удалить">
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          </Box>
+
+          {dueDate && (
+            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)', mt: 0.5, display: 'block' }}>
+              До: {new Date(dueDate).toLocaleDateString('ru-RU')}
+            </Typography>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+};
+
+const MetricTileCentered: React.FC<{
+  icon: React.ReactNode;
+  title: string;
+  value: string | number;
+  onClick?: () => void;
+  highlighted?: boolean;
+}> = ({ icon, title, value, onClick, highlighted = false }) => (
+  <Card
+    onClick={onClick}
+    role={onClick ? 'button' : undefined}
+    tabIndex={onClick ? 0 : undefined}
+    sx={{
+      cursor: onClick ? 'pointer' : 'default',
+      minWidth: 100,
+      maxWidth: 180,
+      height: 76,
+      background: highlighted ? accentGradient : 'rgba(255,255,255,0.04)',
+      border: `1px solid rgba(255,255,255,0.08)`,
+      backdropFilter: 'blur(12px)',
+      boxShadow: '0 6px 18px rgba(0,0,0,0.14)',
+      borderRadius: 10,
+      overflow: 'hidden',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 1
+    }}
+  >
+    <CardContent sx={{ px: 1, py: 0.75, display: 'flex', alignItems: 'center', flexDirection: 'column', gap: 0.5 }}>
+      <Box sx={{
+        width: 32,
+        height: 32,
+        borderRadius: 8,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: highlighted ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.04)'
+      }}>
+        <Box sx={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+          {icon}
+        </Box>
+      </Box>
+
+      <Typography sx={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>{value}</Typography>
+      <Typography sx={{ fontSize: 10, color: 'rgba(255,255,255,0.72)', lineHeight: 1.2 }}>{title}</Typography>
+    </CardContent>
+  </Card>
 );
 
-// MonthDashboardScreen
+// Moods panel used only in Goals view
+const MoodsPanelCompact: React.FC<{ moodCounts?: Record<string, number>, moodTotal?: number }> = ({ moodCounts = {}, moodTotal = 0 }) => {
+  const counts = (moodCounts || {}) as Record<string, number>;
+  const total = moodTotal || sumValues(counts) || 0;
+  const moodList = MOODS.map(m => ({ ...m, cnt: counts[m.id] ?? 0, pct: total > 0 ? Math.round(((counts[m.id] ?? 0) / total) * 100) : 0 }))
+    .filter(m => m.cnt > 0)
+    .sort((a,b)=>b.cnt-a.cnt)
+    .slice(0, 6);
+
+  const renderMoodIcon = (icon: any) => {
+    if (!icon) return null;
+    if (React.isValidElement(icon)) {
+      return React.cloneElement(icon as React.ReactElement, {
+        style: { ...( (icon as any).props?.style || {} ), color: '#fff', fontSize: 18 },
+        ...( (icon as any).props || {} )
+      });
+    }
+    if (typeof icon === 'function' || typeof icon === 'object') {
+      const IconComp = icon as React.ComponentType<any>;
+      try {
+        return <IconComp style={{ color: '#fff', fontSize: 18 }} />;
+      } catch { return null; }
+    }
+    return icon;
+  };
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <Typography variant="subtitle2" sx={{ color: '#fff' }}>Настроения</Typography>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        {moodList.length === 0 ? <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.65)' }}>Нет данных</Typography> :
+          moodList.map(m => (
+            <Box key={m.id} sx={{ minWidth: 120, maxWidth: 220 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Avatar sx={{ width: 36, height: 36, bgcolor: m.color }}>{renderMoodIcon(m.icon)}</Avatar>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" noWrap sx={{ color: '#fff', fontWeight: 700 }}>{m.label}</Typography>
+                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>{m.cnt} • {m.pct}%</Typography>
+                </Box>
+              </Box>
+              <Box sx={{ mt: 0.5 }}>
+                <Box sx={{ height: 8, background: 'rgba(255,255,255,0.03)', borderRadius: 6, overflow: 'hidden' }}>
+                  <Box sx={{ width: `${m.pct}%`, height: '100%', background: m.color }} />
+                </Box>
+              </Box>
+            </Box>
+          ))
+        }
+      </Box>
+    </Box>
+  );
+};
+
+// Helper: build ideal history (linear from first real point to target)
+const buildIdealHistory = (real: ProgressPoint[], target = 100) => {
+  if (!Array.isArray(real) || real.length === 0) return [];
+  const start = typeof real[0].score === 'number' ? real[0].score : 0;
+  const n = real.length;
+  const step = (target - start) / Math.max(1, n - 1);
+  return real.map((_, i) => Math.round(start + step * i));
+};
+
+// MAIN COMPONENT
 export const MonthDashboardScreen: React.FC = () => {
+  const theme = useTheme();
   const navigate = useNavigate();
   const { dreamsHistory = [], fetchDreams, loading } = useDreams();
 
@@ -107,7 +422,17 @@ export const MonthDashboardScreen: React.FC = () => {
   const [dashboardData, setDashboardData] = useState<DashboardPayload | null>(null);
   const [progressHistory, setProgressHistory] = useState<ProgressPoint[]>([]);
 
-  // periods: первый таб — Месяц (days: null -> сформируем month-дату на клиенте)
+  const [viewTab, setViewTab] = useState<'dashboard' | 'goals'>('dashboard');
+
+  const [goals, setGoals] = useState<MicroGoal[]>([
+    { id: 'g-1', title: 'Записывать сны 5 дней подряд', description: 'Записывай каждый день', progress: 40, targetLabel: '2/5', dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), isCompleted: false },
+    { id: 'g-2', title: 'Добавить 10 тегов', description: 'Теги для лучшего поиска', progress: 10, targetLabel: '1/10', dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(), isCompleted: false },
+    { id: 'g-3', title: 'Раз в неделю просматривать инсайты', progress: 60, targetLabel: '3/4', dueDate: null, isCompleted: false },
+  ]);
+
+  const [selectedPeriodIdx, setSelectedPeriodIdx] = useState<number>(0);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   const periods = [
     { label: 'Month', days: null },
     { label: '7d', days: 7 },
@@ -116,7 +441,6 @@ export const MonthDashboardScreen: React.FC = () => {
     { label: '1y', days: 365 },
     { label: 'All', days: 0 }
   ];
-  const [selectedPeriodIdx, setSelectedPeriodIdx] = useState<number>(0); // default: Month
 
   const formatDateShort = (date: Date) =>
     date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
@@ -146,135 +470,7 @@ export const MonthDashboardScreen: React.FC = () => {
     return history;
   }, []);
 
-  // MetricCard
-  const MetricCard: React.FC<{
-    icon: React.ReactNode;
-    title: string;
-    value: string | number;
-    tooltip?: string;
-    onClick?: () => void;
-  }> = ({ icon, title, value, tooltip, onClick }) => (
-    <Card
-      onClick={onClick}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={(e) => {
-        if (onClick && (e.key === 'Enter' || e.key === ' ' || e.code === 'Space')) {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-      sx={{
-        cursor: onClick ? 'pointer' : 'default',
-        height: '100%',
-        background: glassBg,
-        border: `1px solid ${glassBorder}`,
-        backdropFilter: 'blur(12px) saturate(120%)',
-        boxShadow: cardShadow,
-        transition: 'transform .18s cubic-bezier(.16,.84,.38,1), box-shadow .18s',
-        position: 'relative',
-        overflow: 'hidden',
-        '&:hover': onClick ? {
-          transform: 'translateY(-6px)',
-          boxShadow: '0 14px 40px rgba(11,8,36,0.22)'
-        } : {}
-      }}
-    >
-      <CardContent>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-          <Box
-            sx={{
-              width: 48,
-              height: 48,
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              mr: 2,
-              color: '#fff',
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
-              border: `1px solid rgba(255,255,255,0.03)`,
-              boxShadow: 'inset 0 -6px 18px rgba(139,92,246,0.06)'
-            }}
-          >
-            <Box
-              sx={{
-                width: 36,
-                height: 36,
-                borderRadius: 2,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: accentGradient,
-                boxShadow: subtleGlow
-              }}
-            >
-              {icon}
-            </Box>
-          </Box>
-
-          <Typography variant="h6" component="div" sx={{ color: '#fff' }}>
-            {value}
-          </Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.78)' }}>
-            {title}
-          </Typography>
-          {tooltip && (
-            <MuiTooltip title={tooltip}>
-              <IconButton size="small" aria-label={`${title}-help`} sx={{ color: 'rgba(255,255,255,0.9)' }}>
-                <TrendingUpIcon fontSize="small" />
-              </IconButton>
-            </MuiTooltip>
-          )}
-        </Box>
-      </CardContent>
-    </Card>
-  );
-
-  // BreakdownBar
-  const BreakdownBar: React.FC<{ counts?: Record<string, number>, percents?: Record<string, number> }> = ({ counts = {}, percents = {} }) => {
-    const order = ['interpreted', 'summarized', 'artworks'];
-    const colors: Record<string, string> = {
-      interpreted: 'rgba(93, 255, 183, 0.95)',
-      summarized: 'rgba(255, 205, 69, 0.95)',
-      artworks: 'rgba(139,92,246,0.95)'
-    };
-    const total = Object.values(counts).reduce((s, v) => s + (v || 0), 0) || 1;
-
-    return (
-      <Box sx={{ mt: 2 }}>
-        <Box sx={{ display: 'flex', height: 14, width: '100%', background: 'rgba(255,255,255,0.04)', borderRadius: 8, overflow: 'hidden' }}>
-          {order.map(k => {
-            const value = counts[k] || 0;
-            const pct = (typeof percents?.[k] === 'number') ? Math.round(percents[k]) : Math.round((value / total) * 100);
-            return (
-              <Box key={k} sx={{
-                width: `${pct}%`,
-                background: colors[k],
-                display: pct > 0 ? 'block' : 'none'
-              }} />
-            );
-          })}
-        </Box>
-
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
-          {order.map(k => (
-            <Box key={k} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <Box sx={{ width: 10, height: 10, background: colors[k], borderRadius: 1 }} />
-              <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)' }}>
-                {k === 'interpreted' ? 'Проанализировано' : k === 'summarized' ? 'Резюме' : 'Арт-работы'}: <strong>{counts[k] ?? 0}</strong>
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-      </Box>
-    );
-  };
-
-  // helpers для анализа сна (клиентская фильтрация)
+  // helpers
   const toDate = (d: any) => {
     try {
       const raw = (d as any)?.date;
@@ -296,13 +492,112 @@ export const MonthDashboardScreen: React.FC = () => {
     return false;
   };
 
-  // Fetch dashboard with period support
+  const extractMoodId = (d: any): string | null => {
+    if (!d) return null;
+    if (typeof d.mood === 'string') return d.mood;
+    if (typeof d.moodId === 'string') return d.moodId;
+    if (typeof d.dayMood === 'string') return d.dayMood;
+    if (d.mood && typeof d.mood === 'object' && typeof d.mood.id === 'string') return d.mood.id;
+    if (d.meta && d.meta.mood && typeof d.meta.mood === 'string') return d.meta.mood;
+    return null;
+  };
+
+  const extractInsightCounts = (d: any) => {
+    let dreamInsights = 0;
+    let artworkInsights = 0;
+
+    if (!d) return { dreamInsights, artworkInsights };
+
+    if (Array.isArray(d.insights)) {
+      dreamInsights += d.insights.length;
+    } else if (typeof d.insightsCount === 'number') {
+      dreamInsights += d.insightsCount;
+    } else if (typeof d.insights_count === 'number') {
+      dreamInsights += d.insights_count;
+    } else if (typeof d.insightsTotal === 'number') {
+      dreamInsights += d.insightsTotal;
+    } else if (typeof d.insights === 'string') {
+      try {
+        const parsed = JSON.parse(d.insights);
+        if (Array.isArray(parsed)) dreamInsights += parsed.length;
+      } catch {}
+    }
+
+    if (Array.isArray(d.similarArtworks)) {
+      for (const art of d.similarArtworks) {
+        if (!art) continue;
+        if (Array.isArray(art.insights)) {
+          artworkInsights += art.insights.length;
+        } else if (typeof art.insightsCount === 'number') {
+          artworkInsights += art.insightsCount;
+        } else if (typeof art.insights_count === 'number') {
+          artworkInsights += art.insights_count;
+        } else if (typeof art === 'string') {
+          try {
+            const parsed = JSON.parse(art);
+            if (Array.isArray(parsed?.insights)) artworkInsights += parsed.insights.length;
+          } catch {}
+        }
+      }
+    } else if (typeof d.similarArtworks === 'string') {
+      try {
+        const parsed = JSON.parse(d.similarArtworks);
+        if (Array.isArray(parsed)) {
+          for (const art of parsed) {
+            if (Array.isArray(art?.insights)) artworkInsights += art.insights.length;
+            else if (typeof art?.insightsCount === 'number') artworkInsights += art.insightsCount;
+          }
+        }
+      } catch {}
+    } else if (typeof d.artworkInsightsCount === 'number') {
+      artworkInsights += d.artworkInsightsCount;
+    } else if (typeof d.artwork_insights_count === 'number') {
+      artworkInsights += d.artwork_insights_count;
+    }
+
+    return { dreamInsights, artworkInsights };
+  };
+
+  const normalizeDashboardServerPayload = (data: any): DashboardPayload => {
+    if (!data || typeof data !== 'object') return data;
+
+    const insightsDreamsCount = Number(
+      data.insightsDreamsCount ??
+      data.insights_dreams_count ??
+      data.insights_count ??
+      data.insightsTotal ??
+      data.insights_total ??
+      0
+    ) || 0;
+
+    const insightsArtworksCount = Number(
+      data.insightsArtworksCount ??
+      data.insights_artworks_count ??
+      data.artworkInsightsCount ??
+      data.artwork_insights_count ??
+      data.artworks_insights_count ??
+      0
+    ) || 0;
+
+    let moodCounts = data.moodCounts;
+    if (typeof moodCounts === 'string') {
+      try { moodCounts = JSON.parse(moodCounts); } catch { moodCounts = undefined; }
+    }
+
+    return {
+      ...data,
+      insightsDreamsCount,
+      insightsArtworksCount,
+      moodCounts,
+      moodTotal: Number(data.moodTotal ?? sumValues(moodCounts) ?? 0) || 0
+    };
+  };
+
   const fetchDashboard = useCallback(async (days?: number | null) => {
     setDashboardLoading(true);
     setDashboardError(null);
 
     try {
-      // days === null -> request all => ?days=0 (worker treats days<=0 as all)
       let q = '';
       if (typeof days === 'number') {
         q = `?days=${days}`;
@@ -310,14 +605,14 @@ export const MonthDashboardScreen: React.FC = () => {
         q = '?days=0';
       }
 
-      const data = await request<DashboardPayload>(`/dashboard${q}`, {}, true);
-      if ((data as any)?.error) {
-        setDashboardError((data as any).message || 'Ошибка сервера');
+      const raw = await request<any>(`/dashboard${q}`, {}, true);
+      if (raw?.error) {
+        setDashboardError(raw.message || 'Ошибка сервера');
         setDashboardData(null);
         setProgressHistory([]);
         return;
       }
-
+      const data = normalizeDashboardServerPayload(raw);
       setDashboardData(data);
 
       if (Array.isArray(data.history) && data.history.length > 0) {
@@ -337,7 +632,6 @@ export const MonthDashboardScreen: React.FC = () => {
         setProgressHistory(generateProgressHistory(fallbackScore));
       }
     } catch (e: any) {
-      console.error('fetchDashboard error:', e);
       const msg = e && typeof e === 'object' ? (e.message ?? String(e)) : String(e);
       setDashboardError(msg || 'Ошибка загрузки данных');
       setDashboardData(null);
@@ -347,12 +641,8 @@ export const MonthDashboardScreen: React.FC = () => {
     }
   }, [generateProgressHistory]);
 
-  // load dreams list
-  useEffect(() => {
-    fetchDreams();
-  }, [fetchDreams]);
+  useEffect(() => { fetchDreams(); }, [fetchDreams]);
 
-  // dreamDates
   useEffect(() => {
     if (!Array.isArray(dreamsHistory) || dreamsHistory.length === 0) {
       setDreamDates([]);
@@ -370,56 +660,22 @@ export const MonthDashboardScreen: React.FC = () => {
     setDreamDates(dates);
   }, [dreamsHistory]);
 
-  // initial load & on period change
   useEffect(() => {
     const sel = periods[selectedPeriodIdx];
-    // For Month (days === null) request all data (so server history is available) but UI will compute month stats from dreamsHistory
     fetchDashboard(sel.days === null ? null : sel.days);
   }, [fetchDashboard, selectedPeriodIdx]);
 
   const selectedYear = selectedDate.getFullYear();
-
   const handleBackToMonth = () => setSelectedDreamDate(null);
 
-  const computeDelta = (data?: DashboardPayload, hist?: ProgressPoint[]) => {
-    if (!data) return undefined;
-    if (typeof data.scoreDelta === 'number') return data.scoreDelta;
-    if (hist && hist.length >= 2) {
-      const last = hist[hist.length - 1].score;
-      const prev = hist[hist.length - 2].score;
-      return last - prev;
-    }
-    return 0;
-  };
-
-  const computeHighest = (data?: DashboardPayload, hist?: ProgressPoint[]) => {
-    if (!data) return undefined;
-    if (data.highestScore) return data.highestScore;
-    if (data.highestRating) return data.highestRating;
-    if (hist && hist.length > 0) {
-      const best = hist.reduce((acc, p) => {
-        const score = typeof p.score === 'number' ? p.score : -Infinity;
-        if (acc.value === undefined || score > acc.value) {
-          return { value: score, date: p.date };
-        }
-        return acc;
-      }, { value: undefined as number | undefined, date: undefined as string | undefined } as any);
-      return (best.value !== undefined && best.value !== -Infinity) ? best : undefined;
-    }
-    return undefined;
-  };
-
-  // ---------- Compute displayData: if Month tab selected, compute metrics from dreamsHistory filtered by selectedDate month ----------
   const displayDashboardData = useMemo(() => {
     if (!dashboardData) return null;
 
     const sel = periods[selectedPeriodIdx];
     if (sel.days !== null) {
-      // period mode — show server data as-is
       return { dashboardData, progressHistory };
     }
 
-    // month mode — compute month-specific metrics from dreamsHistory
     const month = selectedDate.getMonth();
     const year = selectedDate.getFullYear();
 
@@ -433,12 +689,10 @@ export const MonthDashboardScreen: React.FC = () => {
     const interpretedCount = filtered.filter(hasInterpretation).length;
     const artworksCount = filtered.filter(hasSimilarArtworks).length;
     const dialogDreamsCount = filtered.filter(probablyHasDialog).length;
-    const monthlyBlocks = filtered.filter(hasBlocks).length; // blocks in selected month
+    const monthlyBlocks = filtered.filter(hasBlocks).length;
     const interpretedPercent = totalDreams > 0 ? Math.round((interpretedCount / totalDreams) * 100) : 0;
 
-    // derive a fallback score for month: use interpretedPercent as proxy (0-100)
     const fallbackScore = interpretedPercent;
-
     const monthHistory = generateProgressHistory(fallbackScore);
 
     const recentDreams = filtered
@@ -455,21 +709,26 @@ export const MonthDashboardScreen: React.FC = () => {
         date: toDate(d)?.toISOString() ?? (d.date ? String(d.date) : '')
       }));
 
-    const breakdownCounts = {
-      interpreted: interpretedCount,
-      summarized: filtered.filter((d: any) => Boolean(d.dreamSummary)).length,
-      artworks: artworksCount,
-      dialogs: dialogDreamsCount
-    };
-    const totalForPct = Math.max(1, totalDreams);
-    const breakdownPercent = {
-      interpreted: Math.round((breakdownCounts.interpreted / totalForPct) * 100),
-      summarized: Math.round((breakdownCounts.summarized / totalForPct) * 100),
-      artworks: Math.round((breakdownCounts.artworks / totalForPct) * 100),
-      dialogs: Math.round((breakdownCounts.dialogs / totalForPct) * 100)
-    };
+    // moods aggregated for month (used only in goals view)
+    const moodCounts: Record<string, number> = {};
+    let moodTotal = 0;
+    filtered.forEach((d: any) => {
+      const mid = extractMoodId(d);
+      if (mid) {
+        moodCounts[mid] = (moodCounts[mid] || 0) + 1;
+        moodTotal++;
+      }
+    });
 
-    // Merge into a copy of server's dashboardData but override month-specific fields
+    // insights fallback
+    let insightsDreamsCount = 0;
+    let insightsArtworksCount = 0;
+    filtered.forEach((d: any) => {
+      const { dreamInsights, artworkInsights } = extractInsightCounts(d);
+      insightsDreamsCount += dreamInsights;
+      insightsArtworksCount += artworkInsights;
+    });
+
     const merged: DashboardPayload = {
       ...dashboardData,
       totalDreams,
@@ -479,9 +738,10 @@ export const MonthDashboardScreen: React.FC = () => {
       dialogDreamsCount,
       monthlyBlocks,
       recentDreams,
-      breakdownCounts,
-      breakdownPercent,
-      // prefer server improvementScore if present, else fallback to interpretedPercent
+      moodCounts: dashboardData.moodCounts ?? moodCounts,
+      moodTotal: dashboardData.moodTotal ?? moodTotal,
+      insightsDreamsCount: dashboardData.insightsDreamsCount ?? insightsDreamsCount,
+      insightsArtworksCount: dashboardData.insightsArtworksCount ?? insightsArtworksCount,
       score: dashboardData.score ?? dashboardData.improvementScore ?? fallbackScore,
       lastUpdated: dashboardData.lastUpdated
     };
@@ -491,9 +751,7 @@ export const MonthDashboardScreen: React.FC = () => {
 
   const usedDashboard = displayDashboardData?.dashboardData ?? dashboardData;
   const usedHistory = displayDashboardData?.progressHistory ?? progressHistory;
-  const fallbackScore = usedDashboard ? Math.round(usedDashboard.score ?? usedDashboard.improvementScore ?? 0) : 0;
 
-  // helper to build navigation state for stats screens
   const buildStatsState = (metricKey: string) => {
     const sel = periods[selectedPeriodIdx];
     if (sel.days === null) {
@@ -516,30 +774,55 @@ export const MonthDashboardScreen: React.FC = () => {
     }
   };
 
-  // render
+  // goal handlers
+  const handleCompleteGoal = (id: string) => setGoals(prev => prev.map(g => g.id === id ? { ...g, isCompleted: true, progress: 100 } : g));
+  const handleSnoozeGoal = (id: string) => setGoals(prev => prev.map(g => {
+    if (g.id !== id) return g;
+    const nextDate = g.dueDate ? new Date(g.dueDate) : new Date();
+    nextDate.setDate(nextDate.getDate() + 1);
+    return { ...g, dueDate: nextDate.toISOString() };
+  }));
+  const handleOpenGoal = (id: string) => navigate(`/goals/${id}`);
+  const handleEditGoal = (id: string) => navigate('/goals/edit', { state: { id } });
+  const handleDeleteGoal = (id: string) => setConfirmDeleteId(id);
+  const confirmDelete = () => {
+    if (!confirmDeleteId) return;
+    setGoals(prev => prev.filter(g => g.id !== confirmDeleteId));
+    setConfirmDeleteId(null);
+  };
+  const cancelDelete = () => setConfirmDeleteId(null);
+
+  const handleAddGoal = () => {
+    const id = `g-${Date.now()}`;
+    const newGoal: MicroGoal = {
+      id,
+      title: 'Новая цель',
+      description: 'Опишите цель',
+      progress: 0,
+      targetLabel: '',
+      dueDate: null,
+      isCompleted: false
+    };
+    setGoals(prev => [newGoal, ...prev]);
+  };
+
+  // --- RENDER ---
   return (
-    <Box
-      sx={{
-        p: { xs: 2, sm: 3, md: 4 },
-        minHeight: '100vh',
-        background: bgGradient,
-        color: '#fff',
-        display: 'flex',
-        justifyContent: 'center',
-      }}
-    >
-      <Box sx={{ width: '100%', maxWidth: 1200 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+    <Box sx={{
+      p: { xs: 2, sm: 3 },
+      minHeight: '100vh',
+      background: bgGradient,
+      color: '#fff',
+      display: 'flex',
+      justifyContent: 'center',
+    }}>
+      <Box sx={{ width: '100%', maxWidth: 980 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Button
-            variant="outlined"
+            variant="text"
             onClick={() => navigate('/')}
-            sx={{
-              color: '#fff',
-              borderColor: 'rgba(255,255,255,0.06)',
-              background: 'transparent',
-              '&:hover': { background: 'rgba(255,255,255,0.02)' }
-            }}
             startIcon={<AccessTimeIcon />}
+            sx={{ color: 'rgba(255,255,255,0.9)', textTransform: 'none' }}
             disabled={loading}
           >
             Назад
@@ -547,9 +830,9 @@ export const MonthDashboardScreen: React.FC = () => {
 
           {!selectedDreamDate && !showYearView && (
             <Typography
-              variant="h5"
+              variant="h6"
               align="center"
-              sx={{ cursor: 'pointer', userSelect: 'none', color: 'rgba(255,255,255,0.95)' }}
+              sx={{ cursor: 'pointer', userSelect: 'none', color: '#fff', fontWeight: 700 }}
               onClick={() => setShowYearView(true)}
               title="Перейти к годовому обзору"
             >
@@ -576,13 +859,8 @@ export const MonthDashboardScreen: React.FC = () => {
                 })
                 .map(d => ({ ...(d as any), title: (d as any).title ?? undefined }))}
             />
-            <Box sx={{ mt: 2, textAlign: 'right' }}>
-              <Button
-                variant="outlined"
-                onClick={handleBackToMonth}
-                startIcon={<AccessTimeIcon />}
-                sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.06)' }}
-              >
+            <Box sx={{ mt: 2 }}>
+              <Button fullWidth variant="outlined" onClick={handleBackToMonth} startIcon={<AccessTimeIcon />} sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.08)' }}>
                 Назад к месяцу
               </Button>
             </Box>
@@ -595,7 +873,6 @@ export const MonthDashboardScreen: React.FC = () => {
               onMonthClick={(monthDate: Date) => {
                 setSelectedDate(monthDate);
                 setShowYearView(false);
-                // ensure Month tab is selected
                 setSelectedPeriodIdx(0);
               }}
               onBackToWeek={() => setShowYearView(false)}
@@ -609,15 +886,14 @@ export const MonthDashboardScreen: React.FC = () => {
                 hoverShadow: '0 8px 24px rgba(95,120,255,0.12)'
               }}
             />
-            <Box sx={{ mt: 2, textAlign: 'right' }}>
-              <Button variant="outlined" onClick={() => setShowYearView(false)} startIcon={<AccessTimeIcon />} sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.06)' }}>
+            <Box sx={{ mt: 2 }}>
+              <Button fullWidth variant="outlined" onClick={() => setShowYearView(false)} startIcon={<AccessTimeIcon />} sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.08)' }}>
                 Назад к месяцу
               </Button>
             </Box>
           </>
         ) : (
           <>
-            {/* Show calendar only when Month tab selected */}
             {periods[selectedPeriodIdx].days === null && (
               <MonthView
                 dreamDates={dreamDates}
@@ -639,71 +915,96 @@ export const MonthDashboardScreen: React.FC = () => {
               />
             )}
 
-            <Paper
-              sx={{
-                p: 3,
-                mt: 4,
-                borderRadius: 3,
-                background: glassBg,
-                backdropFilter: 'blur(14px) saturate(120%)',
-                border: `1px solid ${glassBorder}`,
-                boxShadow: cardShadow
-              }}
-            >
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <AutoGraphIcon />
-                  <Typography variant="h6" sx={{ color: '#fff' }}>Дашборд статистики</Typography>
+            <Paper sx={{
+              p: 2,
+              mt: 3,
+              borderRadius: 14,
+              background: glassBg,
+              backdropFilter: 'blur(12px)',
+              border: `1px solid ${glassBorder}`,
+              boxShadow: cardShadow
+            }}>
+              {/* Top controls */}
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <IconButton
+                    aria-label="dashboard"
+                    title="Дашборд"
+                    onClick={() => setViewTab('dashboard')}
+                    sx={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 2,
+                      bgcolor: viewTab === 'dashboard' ? accentGradient : 'transparent',
+                      color: '#fff',
+                      boxShadow: viewTab === 'dashboard' ? subtleGlow : 'none',
+                      border: viewTab === 'dashboard' ? 'none' : '1px solid rgba(255,255,255,0.06)'
+                    }}
+                  >
+                    <AutoGraphIcon />
+                  </IconButton>
+
+                  <IconButton
+                    aria-label="goals"
+                    title="Цели"
+                    onClick={() => setViewTab('goals')}
+                    sx={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 2,
+                      bgcolor: viewTab === 'goals' ? accentGradient : 'transparent',
+                      color: '#fff',
+                      boxShadow: viewTab === 'goals' ? subtleGlow : 'none',
+                      border: viewTab === 'goals' ? 'none' : '1px solid rgba(255,255,255,0.06)'
+                    }}
+                  >
+                    <FlagIcon />
+                  </IconButton>
                 </Box>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Tabs
                     value={selectedPeriodIdx}
                     onChange={(_, v) => setSelectedPeriodIdx(Number(v))}
                     textColor="inherit"
-                    indicatorColor="primary"
-                    sx={{ '.MuiTabs-flexContainer': { gap: 1 } }}
+                    variant="scrollable"
+                    scrollButtons="auto"
+                    sx={{ mr: 1, '& .MuiTab-root': { minWidth: 52, px: 1 } }}
                   >
                     {periods.map((p, i) => (
                       <Tab
                         key={p.label}
                         value={i}
-                        label={i === 0 ? selectedDate.toLocaleString('ru-RU', { month: 'long', year: 'numeric' }) : p.label}
-                        sx={{ color: 'rgba(255,255,255,0.9)' }}
+                        label={i === 0 ? selectedDate.toLocaleString('ru-RU', { month: 'short', year: 'numeric' }) : p.label}
+                        sx={{ color: 'rgba(255,255,255,0.9)', textTransform: 'none', fontWeight: 600 }}
                       />
                     ))}
                   </Tabs>
 
-                  <Button
-                    variant="outlined"
+                  <IconButton
                     onClick={() => {
                       const sel = periods[selectedPeriodIdx];
                       fetchDashboard(sel.days === null ? null : sel.days);
                     }}
                     disabled={dashboardLoading}
-                    startIcon={dashboardLoading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <RefreshIcon />}
-                    sx={{
-                      color: '#fff',
-                      borderColor: 'rgba(255,255,255,0.06)',
-                      background: 'transparent',
-                      '&:hover': { background: 'rgba(255,255,255,0.02)' }
-                    }}
+                    sx={{ color: 'rgba(255,255,255,0.9)', display: { xs: 'none', sm: 'inline-flex' } }}
                   >
-                    Обновить
-                  </Button>
+                    {dashboardLoading ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : <RefreshIcon />}
+                  </IconButton>
                 </Box>
               </Box>
 
+              {/* Content */}
               {dashboardLoading ? (
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 320px' }, gap: 2, mb: 2 }}>
-                  <Skeleton variant="rounded" height={180} sx={{ bgcolor: 'rgba(255,255,255,0.04)' }} />
-                  <Skeleton variant="rounded" height={180} sx={{ bgcolor: 'rgba(255,255,255,0.04)' }} />
-                  <Skeleton variant="rounded" height={100} sx={{ gridColumn: '1/-1', bgcolor: 'rgba(255,255,255,0.04)' }} />
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Skeleton variant="rounded" height={140} sx={{ bgcolor: 'rgba(255,255,255,0.04)', borderRadius: 10 }} />
+                  <Skeleton variant="rounded" height={110} sx={{ bgcolor: 'rgba(255,255,255,0.04)', borderRadius: 10 }} />
+                  <Skeleton variant="rounded" height={120} sx={{ bgcolor: 'rgba(255,255,255,0.04)', borderRadius: 10 }} />
                 </Box>
               ) : dashboardError ? (
-                <Box sx={{ textAlign: 'center', py: 4 }}>
+                <Box sx={{ textAlign: 'center', py: 3 }}>
                   <Typography color="error" gutterBottom>Ошибка загрузки данных</Typography>
-                  <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }} gutterBottom>{dashboardError}</Typography>
+                  <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>{dashboardError}</Typography>
                   <Button variant="contained" onClick={() => {
                     const sel = periods[selectedPeriodIdx];
                     fetchDashboard(sel.days === null ? null : sel.days);
@@ -711,197 +1012,239 @@ export const MonthDashboardScreen: React.FC = () => {
                     Повторить
                   </Button>
                 </Box>
-              ) : usedDashboard ? (
-                <>
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 320px' }, gap: 2, mb: 4 }}>
-                    <Card sx={{ background: 'transparent', boxShadow: 'none', border: 'none' }}>
-                      <CardContent>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                            <Box>
-                              <Typography variant="h3" sx={{ fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 1 }}>
-                                {fallbackScore}
-                                <Box sx={{ display: 'inline-flex', alignItems: 'center', ml: 1 }}>
-                                  {(() => {
-                                    const delta = computeDelta(usedDashboard, usedHistory);
-                                    const positive = (delta ?? 0) > 0;
-                                    const negative = (delta ?? 0) < 0;
-                                    return delta !== undefined ? (
-                                      <Chip
-                                        icon={positive ? <ArrowUpwardIcon fontSize="small" /> : negative ? <ArrowDownwardIcon fontSize="small" /> : undefined}
-                                        label={`${delta > 0 ? '+' : ''}${delta}`}
-                                        size="small"
-                                        sx={{
-                                          ml: 1,
-                                          background: positive ? 'rgba(93, 255, 183, 0.95)' : negative ? 'rgba(255, 99, 132, 0.95)' : 'rgba(255,255,255,0.06)',
-                                          color: positive ? '#042012' : negative ? '#3b0000' : '#fff',
-                                          fontWeight: 700
-                                        }}
-                                      />
-                                    ) : null;
-                                  })()}
-                                  </Box>
-                              </Typography>
-                              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>Оценка прогресса</Typography>
-                            </Box>
-                          </Box>
-
-                          <Box sx={{ textAlign: 'right' }}>
-                            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>Last updated</Typography>
-                            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
-                              {usedDashboard.lastUpdated ? (() => {
-                                const d = new Date(usedDashboard.lastUpdated);
-                                return isNaN(d.getTime()) ? String(usedDashboard.lastUpdated) : d.toLocaleString('ru-RU');
-                              })() : ''}
-                            </Typography>
-                          </Box>
-                        </Box>
-
-                        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(3,1fr)' }, gap: 2, mt: 3 }}>
-                          <MetricCard icon={<BedtimeIcon />} title="Всего снов" value={usedDashboard.totalDreams ?? 0}
+              ) : viewTab === 'dashboard' ? (
+                // DASHBOARD: restored "Инсайты" tile; removed lastUpdated + recent dreams earlier
+                usedDashboard ? (
+                  <>
+                    <Box sx={{ width: '100%', pb: 1 }}>
+                      <Swiper
+                        spaceBetween={10}
+                        slidesPerView={2.2}
+                        centeredSlides={false}
+                        breakpoints={{
+                          360: { slidesPerView: 2.4 },
+                          420: { slidesPerView: 2.8 },
+                          600: { slidesPerView: 3.4 },
+                          900: { slidesPerView: 4.4 }
+                        }}
+                        style={{ padding: '8px 6px' }}
+                      >
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<BedtimeIcon />}
+                            title="Всего снов"
+                            value={usedDashboard.totalDreams ?? 0}
                             onClick={() => navigate('/stats/totalDreams', { state: buildStatsState('total') })}
                           />
-                          <MetricCard icon={<ChatIcon />} title="Диалогов с ботом" value={usedDashboard.dialogDreamsCount ?? 0}
+                        </SwiperSlide>
+
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<ChatIcon />}
+                            title="Диалогов"
+                            value={usedDashboard.dialogDreamsCount ?? 0}
                             onClick={() => navigate('/stats/dialogDreams', { state: buildStatsState('dialog') })}
                           />
-                          <MetricCard icon={<CheckCircleIcon />} title="Проанализировано" value={`${usedDashboard.interpretedPercent ?? 0}%`}
+                        </SwiperSlide>
+
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<CheckCircleIcon />}
+                            title="Проанализировано"
+                            value={`${usedDashboard.interpretedPercent ?? 0}%`}
                             onClick={() => navigate('/stats/interpreted', { state: buildStatsState('interpreted') })}
                           />
-                          <MetricCard icon={<PaletteIcon />} title="Арт-работы" value={usedDashboard.artworksCount ?? 0}
+                        </SwiperSlide>
+
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<AutoGraphIcon />}
+                            title="Инсайты"
+                            value={( (usedDashboard.insightsDreamsCount ?? 0) + (usedDashboard.insightsArtworksCount ?? 0) )}
+                            onClick={() => navigate('/stats/insights', { state: buildStatsState('insights') })}
+                          />
+                        </SwiperSlide>
+
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<PaletteIcon />}
+                            title="Арт-работ"
+                            value={usedDashboard.artworksCount ?? 0}
                             onClick={() => navigate('/stats/artworks', { state: buildStatsState('artworks') })}
                           />
-                          <MetricCard icon={<CalendarTodayIcon />} title="Ежедневная серия" value={`${usedDashboard.streak ?? 0} дней`}
+                        </SwiperSlide>
+
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<CalendarTodayIcon />}
+                            title="Стрик"
+                            value={`${usedDashboard.streak ?? 0} дн.`}
                             onClick={() => navigate('/stats/streak', { state: buildStatsState('streak') })}
                           />
-                          <MetricCard icon={<TrendingUpIcon />} title="Блоков за месяц" value={usedDashboard.monthlyBlocks ?? 0}
+                        </SwiperSlide>
+
+                        <SwiperSlide>
+                          <MetricTileCentered
+                            icon={<TrendingUpIcon />}
+                            title="Блоков (30d)"
+                            value={usedDashboard.monthlyBlocks ?? 0}
                             onClick={() => navigate('/stats/monthlyBlocks', { state: buildStatsState('monthlyBlocks') })}
                           />
-                        </Box>
-                      </CardContent>
-                    </Card>
+                        </SwiperSlide>
+                      </Swiper>
+                    </Box>
 
-                    <Card
-                      variant="outlined"
-                      sx={{
-                        background: 'linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))',
-                        backdropFilter: 'blur(12px) saturate(120%)',
-                        border: `1px solid ${glassBorder}`,
-                        boxShadow: cardShadow,
-                        height: '100%',
-                        overflow: 'hidden'
-                      }}
-                    >
-                      <CardContent>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                          <Box sx={{
-                            width: 48,
-                            height: 48,
-                            borderRadius: 2,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            mr: 2,
-                            background: accentGradient,
-                            boxShadow: subtleGlow,
-                            color: '#fff'
-                          }}>
-                            <TrendingUpIcon />
-                          </Box>
-                          <Box>
-                            <Typography variant="h6" sx={{ color: '#fff' }}>Оценка прогресса</Typography>
-                            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                              {usedDashboard.interpretedCount ?? 0} проанализированных / {usedDashboard.totalDreams ?? 0} всего
-                            </Typography>
-                          </Box>
-                        </Box>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr' }, gap: 2, mt: 2 }}>
+                      <Card sx={{ background: 'transparent', boxShadow: 'none', border: 'none' }}>
+                        <CardContent sx={{ px: 0 }}>
+                          <EngagementCard
+                            details={{
+                              activityCount: usedDashboard.totalDreams ?? 0,
+                              interpretedPct: usedDashboard.interpretedPercent ?? 0,
+                              insightsCount: (usedDashboard.insightsDreamsCount ?? 0) + (usedDashboard.insightsArtworksCount ?? 0),
+                              artworkInteractions: usedDashboard.artworksCount ?? 0,
+                              dialogCount: usedDashboard.dialogDreamsCount ?? 0,
+                              streakDays: usedDashboard.streak ?? 0,
+                            }}
+                          />
+                        </CardContent>
+                      </Card>
+                    </Box>
+                  </>
+                ) : (
+                  <Box sx={{ textAlign: 'center', py: 3 }}>
+                    <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>Нет данных для отображения</Typography>
+                    <Button fullWidth variant="outlined" onClick={() => {
+                      const sel = periods[selectedPeriodIdx];
+                      fetchDashboard(sel.days === null ? null : sel.days);
+                    }} sx={{ mt: 2, color: '#fff', borderColor: 'rgba(255,255,255,0.08)' }} startIcon={<RefreshIcon />}>Загрузить данные</Button>
+                  </Box>
+                )
+              ) : (
+                // GOALS VIEW: graph + moods + goals list. No "Краткая разбивка".
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 360px' }, gap: 2 }}>
+                  <Paper sx={{ p: 2, borderRadius: 12, background: 'transparent' }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                      <Box>
+                        <Typography variant="subtitle1" sx={{ color: '#fff', fontWeight: 700 }}>Персональные цели</Typography>
+                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>Реальный прогресс vs идеальный</Typography>
+                      </Box>
 
-                        <Box sx={{ display: { xs: 'block', md: 'flex' }, gap: 3 }}>
-                          <Box sx={{ flex: 1 }}>
-                            <Box sx={{ mb: 2 }}>
-                              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.78)' }}>Уровень вовлеченности</Typography>
-                              <Typography variant="h5" sx={{ color: '#fff', mt: 1 }}>{fallbackScore} / 100</Typography>
-                            </Box>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        startIcon={<AddIcon />}
+                        onClick={handleAddGoal}
+                        sx={{ bgcolor: accentGradient, color: '#fff', textTransform: 'none' }}
+                      >
+                        +1
+                      </Button>
+                    </Box>
 
-                            <Box sx={{ maxWidth: 420 }}>
-                              <ProgressSection score={fallbackScore} />
-                              <BreakdownBar counts={usedDashboard.breakdownCounts} percents={usedDashboard.breakdownPercent} />
-                            </Box>
-                          </Box>
+                    <Divider sx={{ borderColor: 'rgba(255,255,255,0.04)', mb: 1 }} />
 
-                          <Box sx={{ width: { xs: '100%', md: 320 }, height: 220 }}>
+                    <Box sx={{ height: 240 }}>
+                      {Array.isArray(usedHistory) && usedHistory.length > 0 ? (
+                        (() => {
+                          const ideal = buildIdealHistory(usedHistory, 100);
+                          const merged = usedHistory.map((d, i) => ({ ...d, ideal: ideal[i] ?? null }));
+                          return (
                             <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={usedHistory} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+                              <LineChart data={merged} margin={{ top: 6, right: 12, left: 0, bottom: 6 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                                 <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" />
                                 <YAxis domain={[0, 100]} stroke="rgba(255,255,255,0.6)" />
                                 <RechartsTooltip wrapperStyle={{ background: 'rgba(10,10,20,0.9)', border: 'none', color: '#fff' }} />
-                                <Line type="monotone" dataKey="score" stroke="#8b5cf6" activeDot={{ r: 6 }} strokeWidth={2} />
+                                <Legend verticalAlign="top" align="right" wrapperStyle={{ color: '#fff' }} />
+                                <Line type="monotone" dataKey="score" name="Реал." stroke="#8b5cf6" activeDot={{ r: 6 }} strokeWidth={2} />
+                                <Line type="monotone" dataKey="ideal" name="Идеал" stroke="#34d399" strokeDasharray="6 6" dot={false} strokeWidth={2} />
                               </LineChart>
                             </ResponsiveContainer>
-
-                            <Box sx={{ mt: 2 }}>
-                              <Card sx={{ background: 'transparent', boxShadow: 'none', border: 'none' }}>
-                                <CardContent>
-                                  <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.8)' }}>
-                                    Highest: {computeHighest(usedDashboard, usedHistory)?.value ?? (usedDashboard.highestScore?.value ?? usedDashboard.highestRating?.value ?? '-')}
-                                  </Typography>
-                                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
-                                    {computeHighest(usedDashboard, usedHistory)?.date ?? (usedDashboard.highestScore?.date ?? usedDashboard.highestRating?.date ?? '')}
-                                  </Typography>
-                                </CardContent>
-                              </Card>
-                            </Box>
-                          </Box>
+                          );
+                        })()
+                      ) : (
+                        <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 8 }}>
+                          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>Нет данных прогресса</Typography>
                         </Box>
-                      </CardContent>
-                    </Card>
-                  </Box>
+                      )}
+                    </Box>
 
-                  {/* Нижняя часть: подсказка слева и Разбивка справа */}
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 360px' }, gap: 2 }}>
-                    <Paper sx={{ p: 2, background: 'rgba(255,255,255,0.02)' }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                        <Box>
-                          <Typography variant="h6">Списки снов</Typography>
-                          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                            Нажмите карточку выше, чтобы перейти на отдельный экран со списком снов. Передаются параметры периода/месяца для корректной фильтрации.
-                          </Typography>
-                        </Box>
-                        <TextField placeholder="Поиск..." size="small" sx={{ bgcolor: 'rgba(255,255,255,0.03)', borderRadius: 1, width: 220 }} disabled />
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" sx={{ color: '#fff', mb: 1 }}>Цели</Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 400, overflowY: 'auto', pr: 1 }}>
+                        {goals.map(g => (
+                          <MicroGoalCard
+                            key={g.id}
+                            goal={g}
+                            onComplete={handleCompleteGoal}
+                            onSnooze={handleSnoozeGoal}
+                            onOpen={handleOpenGoal}
+                            onEdit={handleEditGoal}
+                            onDelete={handleDeleteGoal}
+                          />
+                        ))}
+                        {goals.length === 0 && <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.65)' }}>Целей пока нет — добавьте «+1»</Typography>}
                       </Box>
+                    </Box>
 
-                      <Divider sx={{ borderColor: 'rgba(255,255,255,0.04)', mb: 1 }} />
+                    <Box sx={{ mt: 2 }}>
+                      <Button variant="outlined" fullWidth onClick={() => navigate('/goals')} sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.08)' }}>
+                        Все цели
+                      </Button>
+                    </Box>
+                  </Paper>
 
-                      <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                        Для режима "Месяц" данные собираются по выбранному месяцу (локально). Для периодов (7/30/90/1y/All) — загружаются агрегированные данные с сервера.
-                      </Typography>
+                  <Box>
+                    <Paper sx={{ p: 2, borderRadius: 12, background: glassBg, border: `1px solid ${glassBorder}` }}>
+                      <MoodsPanelCompact moodCounts={usedDashboard?.moodCounts} moodTotal={usedDashboard?.moodTotal} />
                     </Paper>
 
-                    <Paper sx={{ p: 2, background: 'rgba(255,255,255,0.02)' }}>
-                      <Typography variant="h6" sx={{ mb: 1 }}>Разбивка</Typography>
-                      <BreakdownBar counts={usedDashboard.breakdownCounts} percents={usedDashboard.breakdownPercent} />
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="subtitle2">Дополнительно</Typography>
-                        <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
-                          Диалогов: {usedDashboard.dialogDreamsCount ?? 0} • Блоков (30d): {usedDashboard.monthlyBlocks ?? 0}
-                        </Typography>
-                      </Box>
-                    </Paper>
+                    <Box sx={{ mt: 2 }} />
                   </Box>
-                </>
-              ) : (
-                <Box sx={{ textAlign: 'center', py: 4 }}>
-                  <Typography sx={{ color: 'rgba(255,255,255,0.7)' }}>Нет данных для отображения</Typography>
-                  <Button variant="outlined" onClick={() => {
-                    const sel = periods[selectedPeriodIdx];
-                    fetchDashboard(sel.days === null ? null : sel.days);
-                  }} sx={{ mt: 2, color: '#fff', borderColor: 'rgba(255,255,255,0.06)' }} startIcon={<RefreshIcon />}>Загрузить данные</Button>
                 </Box>
               )}
             </Paper>
+
+            {/* floating refresh for mobile */}
+            <Box sx={{
+              position: { xs: 'fixed', md: 'fixed' },
+              bottom: 18,
+              right: 18,
+              display: { xs: 'flex', md: 'none' },
+              zIndex: 1400
+            }}>
+              <IconButton
+                onClick={() => {
+                  const sel = periods[selectedPeriodIdx];
+                  fetchDashboard(sel.days === null ? null : sel.days);
+                }}
+                disabled={dashboardLoading}
+                sx={{
+                  width: 56,
+                  height: 56,
+                  bgcolor: accentGradient,
+                  color: '#fff',
+                  boxShadow: subtleGlow,
+                  '&:hover': { transform: 'translateY(-4px)' }
+                }}
+              >
+                {dashboardLoading ? <CircularProgress size={22} sx={{ color: '#fff' }} /> : <RefreshIcon />}
+              </IconButton>
+            </Box>
           </>
         )}
       </Box>
+
+      <Dialog open={Boolean(confirmDeleteId)} onClose={cancelDelete}>
+        <DialogTitle>Удалить цель?</DialogTitle>
+        <DialogContent>
+          <Typography>Вы уверены, что хотите удалить эту цель? Действие нельзя отменить.</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={cancelDelete}>Отмена</Button>
+          <Button color="error" onClick={confirmDelete}>Удалить</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

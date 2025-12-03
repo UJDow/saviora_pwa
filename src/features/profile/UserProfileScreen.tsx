@@ -1,4 +1,4 @@
-// UserProfileScreen.tsx
+// src/screens/UserProfileScreen.tsx
 import React, { useState } from 'react';
 import {
   Box,
@@ -18,6 +18,7 @@ import { useProfile } from './ProfileContext';
 import { AVATAR_OPTIONS } from './ProfileEditForm';
 import { MoodSlider } from './mood/MoodSlider';
 import { setMoodForDate } from 'src/utils/api';
+import { getLocalDateStr } from 'src/utils/dateUtils';
 import RecentInsightsGrid from 'src/features/insights/RecentInsightsGrid';
 
 export function UserProfileScreen() {
@@ -79,7 +80,7 @@ export function UserProfileScreen() {
     }
   };
 
-  // Обработчик сохранения — использует тот же метод, что и на главном экране
+  // Обработчик сохранения — использует локальную дату через getLocalDateStr
   const handleSaveMood = async (moodId: string) => {
     setMoodSaving(true);
     try {
@@ -87,7 +88,8 @@ export function UserProfileScreen() {
         throw new Error('Не выбрано настроение для сохранения.');
       }
 
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayStr = getLocalDateStr();
+
       // 1) Сохранение в БД
       await setMoodForDate(todayStr, moodId);
 

@@ -23,6 +23,10 @@ import { ProfileProvider } from './features/profile/ProfileContext';
 import { SimilarArtworksScreen } from './features/dreams/SimilarArtworksScreen';
 import { ArtworkChat } from './features/dreams/ArtworkChat';
 
+// Новые импорты для daily
+import DailyConvoScreen from './features/daily/DailyConvoScreen';
+import DailyConvoChat from './features/daily/DailyConvoChat';
+
 function DreamBlocksRedirect() {
   const { id } = useParams<{ id: string }>();
   if (!id) {
@@ -45,6 +49,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/auth" element={<AuthScreen />} />
+
           <Route
             path="/"
             element={
@@ -53,6 +58,38 @@ function App() {
               </PrivateRoute>
             }
           />
+
+          {/* Daily list / entry points (ProfileScreen также умеет обрабатывать календарь/фильтрацию) */}
+          <Route
+            path="/daily"
+            element={
+              <PrivateRoute>
+                {/* Можно заменить на Dedicated DailyListScreen при желании */}
+                <ProfileScreen />
+              </PrivateRoute>
+            }
+          />
+
+          {/* Просмотр отдельной дневной записи */}
+          <Route
+            path="/daily/:id"
+            element={
+              <PrivateRoute>
+                <DailyConvoScreen />
+              </PrivateRoute>
+            }
+          />
+
+          {/* Чат для дневной записи */}
+          <Route
+            path="/daily/:id/chat"
+            element={
+              <PrivateRoute>
+                <DailyConvoChat />
+              </PrivateRoute>
+            }
+          />
+
           <Route
             path="/dreams"
             element={
@@ -157,6 +194,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

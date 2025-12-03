@@ -194,11 +194,11 @@ export const ArtworkChat: React.FC = () => {
     if (sendingReply) return;
 
     kickoffInProgressRef.current = true;
-    setSendingReply(true);
+    setSendingReply(true); // Показываем лоадер сразу
 
     try {
       const kickoffPrompt =
-        'Сформулируй первый вопрос для обсуждения этого произведения искусства в контексте сна пользователя. ' +
+        'Сформулируй первый вопрос для обсуждения этого произведения в контексте сна пользователя. ' +
         'Тон: тёплый, поддерживающий, без преамбулы, без списков. Коротко (1–2 предложения). ' +
         'Используй детали описания произведения и сна.';
       const blockText = JSON.stringify(artwork, null, 2);
@@ -242,7 +242,7 @@ export const ArtworkChat: React.FC = () => {
       setError(e?.message || 'Не удалось начать диалог');
     } finally {
       kickoffInProgressRef.current = false;
-      setSendingReply(false);
+      setSendingReply(false); // Скрываем лоадер после завершения
     }
   }, [id, blockId, artwork, dream?.dreamSummary, dream?.autoSummary, sendingReply]);
 
@@ -265,7 +265,7 @@ export const ArtworkChat: React.FC = () => {
         })) as Message[];
 
         if (msgs.length === 0 && kickoffDoneRef.current !== blockId && !kickoffInProgressRef.current) {
-          setSendingReply(true); // show kickoff UI immediately
+          // Если сообщений нет и кикофф не запущен/завершен, запускаем его
           await runKickoff();
         } else {
           setMessages(msgs);
@@ -274,9 +274,6 @@ export const ArtworkChat: React.FC = () => {
         setError(e?.message || 'Ошибка загрузки чата');
       } finally {
         setMessagesLoading(false);
-        if (messages.length > 0 && !sendingReply) {
-          setSendingReply(false);
-        }
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -356,7 +353,7 @@ export const ArtworkChat: React.FC = () => {
     if (sendingReply || generatingInterpretation) return;
 
     setGeneratingInterpretation(true);
-    setSendingReply(true);
+    setSendingReply(true); // Показываем лоадер сразу
 
     try {
       const systemPrompt =
@@ -395,7 +392,7 @@ export const ArtworkChat: React.FC = () => {
       enqueueSnackbar(e?.message ?? 'Не удалось сгенерировать интерпретацию', { variant: 'error' });
     } finally {
       setGeneratingInterpretation(false);
-      setSendingReply(false);
+      setSendingReply(false); // Скрываем лоадер после завершения
     }
   };
 
@@ -601,7 +598,7 @@ export const ArtworkChat: React.FC = () => {
     );
   }
 
-const imageCandidate = null;
+const imageCandidate = pickArtworkImage(artwork); // Используем функцию для получения изображения
 
   const isKickoffActive = sendingReply || messagesLoading || kickoffInProgressRef.current;
 
@@ -627,7 +624,7 @@ const imageCandidate = null;
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 2 }}>
               <Tooltip title="Показать итоговое толкование"><IconButton onClick={() => handleFinalInterpret(false)} sx={{ color: '#fff' }}><FeedIcon /></IconButton></Tooltip>
-              <Tooltip title="Очистить чат"><span><IconButton onClick={handleClear} sx={{ color: '#fff' }} disabled={sendingReply}><DeleteSweepIcon /></IconButton></span></Tooltip>
+              <Tooltip title="Очистить чат"><span><IconButton onClick={handleClear} sx={{ color: '#fff' }} disabled={sendingReply || messagesLoading}><DeleteSweepIcon /></IconButton></span></Tooltip>
               <IconButton onClick={() => setHeaderExpanded(!headerExpanded)} sx={{ color: '#fff' }}>{headerExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}</IconButton>
             </Box>
           </Box>
@@ -637,10 +634,14 @@ const imageCandidate = null;
               <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
                 {/* moderate thumbnail (160x120) */}
                 <Box sx={{ width: 160, height: 120, borderRadius: 1, overflow: 'hidden', bgcolor: '#ddd', flexShrink: 0, boxShadow: '0 6px 18px rgba(0,0,0,0.25)' }}>
-  <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <SmartToyIcon fontSize="large" sx={{ color: 'rgba(255,255,255,0.6)' }} />
-  </Box>
-</Box>
+                  {imageCandidate ? (
+                    <img src={imageCandidate} alt={artwork.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  ) : (
+                    <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <SmartToyIcon fontSize="large" sx={{ color: 'rgba(255,255,255,0.6)' }} />
+                    </Box>
+                  )}
+                </Box>
 
                 {/* only description here (title/author already in sticky header) */}
                 <Box sx={{ flex: 1 }}>
@@ -649,40 +650,38 @@ const imageCandidate = null;
                   </Typography>
 
                   {/* prev/next compact cards styled like DreamChat */}
-<Box sx={{ display: 'flex', gap: 1, mt: 1, alignItems: 'center' }}>
-  {prevArtwork && (
-    <Card elevation={0} sx={{ background: 'rgba(255,255,255,0.08)', border: `1px solid ${glassBorder}`, borderRadius: 2 }}>
-      <CardActionArea onClick={() => goToArtwork(currentIdx - 1)}>
-        <CardContent sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, py: 0.6, px: 1 }}>
-          <Tooltip title="Предыдущее произведение">
-            {/* Added color: '#fff' to make the arrow white */}
-            <ArrowBackIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px', color: '#fff' }} />
-          </Tooltip>
-          <Typography variant="body2" sx={{ color: '#fff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.35, fontSize: 13 }}>
-            {prevArtwork.title}
-          </Typography>
-        </CardContent>
-      </CardActionArea>
-    </Card>
-  )}
+                  <Box sx={{ display: 'flex', gap: 1, mt: 1, alignItems: 'center' }}>
+                    {prevArtwork && (
+                      <Card elevation={0} sx={{ background: 'rgba(255,255,255,0.08)', border: `1px solid ${glassBorder}`, borderRadius: 2 }}>
+                        <CardActionArea onClick={() => goToArtwork(currentIdx - 1)}>
+                          <CardContent sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, py: 0.6, px: 1 }}>
+                            <Tooltip title="Предыдущее произведение">
+                              <ArrowBackIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px', color: '#fff' }} />
+                            </Tooltip>
+                            <Typography variant="body2" sx={{ color: '#fff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.35, fontSize: 13 }}>
+                              {prevArtwork.title}
+                            </Typography>
+                          </CardContent>
+                        </CardActionArea>
+                      </Card>
+                    )}
 
-  {nextArtwork && (
-    <Card elevation={0} sx={{ background: 'rgba(255,255,255,0.08)', border: `1px solid ${glassBorder}`, borderRadius: 2 }}>
-      <CardActionArea onClick={() => goToArtwork(currentIdx + 1)}>
-        <CardContent sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, py: 0.6, px: 1 }}>
-          <Tooltip title="Следующее произведение">
-            {/* Added color: '#fff' to make the arrow white */}
-            <ArrowForwardIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px', color: '#fff' }} />
-          </Tooltip>
-          <Typography variant="body2" sx={{ color: '#fff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.35, fontSize: 13 }}>
-            {nextArtwork.title}
-          </Typography>
-        </CardContent>
-      </CardActionArea>
-    </Card>
-  )}
-  <Box sx={{ flex: 1 }} />
-</Box>
+                    {nextArtwork && (
+                      <Card elevation={0} sx={{ background: 'rgba(255,255,255,0.08)', border: `1px solid ${glassBorder}`, borderRadius: 2 }}>
+                        <CardActionArea onClick={() => goToArtwork(currentIdx + 1)}>
+                          <CardContent sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, py: 0.6, px: 1 }}>
+                            <Tooltip title="Следующее произведение">
+                              <ArrowForwardIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px', color: '#fff' }} />
+                            </Tooltip>
+                            <Typography variant="body2" sx={{ color: '#fff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.35, fontSize: 13 }}>
+                              {nextArtwork.title}
+                            </Typography>
+                          </CardContent>
+                        </CardActionArea>
+                      </Card>
+                    )}
+                    <Box sx={{ flex: 1 }} />
+                  </Box>
                 </Box>
               </Box>
             </Paper>
@@ -703,7 +702,7 @@ const imageCandidate = null;
 
             {/* kickoff indicator (logo + bubble) — matches DreamChat feel */}
             {isKickoffActive ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }} role="status" aria-live="polite">
                 <Avatar src={assistantAvatarUrl} alt="Assistant" sx={{ width: 56, height: 56, border: `1px solid ${glassBorder}` }}>
                   {!assistantAvatarUrl && <SmartToyIcon />}
                 </Avatar>
@@ -720,6 +719,7 @@ const imageCandidate = null;
                 {!imageCandidate && <SmartToyIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />}
                 <Typography variant="h6" sx={{ color: '#fff' }}>Начинаем диалог…</Typography>
                 <Typography variant="body2" sx={{ mt: 1, color: 'rgba(255,255,255,0.8)' }}>Ассистент задаст первый вопрос по произведению</Typography>
+                {/* Этот лоадер будет показан только если messagesLoading true, но isKickoffActive false, что маловероятно */}
                 {messagesLoading && (
                   <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                     <CircularProgress size={20} sx={{ color: '#fff' }} />
@@ -811,13 +811,63 @@ const imageCandidate = null;
           })
         )}
 
+        {/* Показываем loader при обновлении истории, если уже есть сообщения */}
+        {messagesLoading && messages.length > 0 && !generatingInterpretation && !sendingReply && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }} role="status" aria-live="polite">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {renderAssistantAvatar()}
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 1.25,
+                  borderRadius: 2,
+                  background: 'rgba(255,255,255,0.10)',
+                  backdropFilter: 'blur(8px)',
+                  border: `1px solid ${glassBorder}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                }}
+              >
+                <CircularProgress size={18} sx={{ color: '#fff' }} />
+                <Typography variant="body2" sx={{ color: '#fff' }}>
+                  Обновляю историю сообщений…
+                </Typography>
+              </Paper>
+            </Box>
+          </Box>
+        )}
+
         {generatingInterpretation && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }} role="status" aria-live="polite">
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               {renderAssistantAvatar('interpretation')}
               <Paper elevation={0} sx={{ p: 1.25, borderRadius: 2, background: 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(139,92,246,0.08))', backdropFilter: 'blur(8px)', border: '1px solid rgba(139,92,246,0.35)', display: 'flex', alignItems: 'center', gap: 1 }}>
                 <CircularProgress size={18} sx={{ color: 'rgba(139,92,246,0.9)' }} />
                 <Typography variant="body2" sx={{ color: '#fff' }}>Генерирую интерпретацию...</Typography>
+              </Paper>
+            </Box>
+          </Box>
+        )}
+
+        {/* Если ассистент формирует ответ (sendingReply) и при этом не генерируется полная интерпретация и есть сообщения — показать индикатор рядом с аватаром */}
+        {sendingReply && !generatingInterpretation && messages.length > 0 && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }} role="status" aria-live="polite">
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {renderAssistantAvatar()}
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 1.25,
+                  borderRadius: 2,
+                  background: 'rgba(255,255,255,0.08)',
+                  backdropFilter: 'blur(8px)',
+                  border: `1px solid ${glassBorder}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                <CircularProgress size={18} sx={{ color: '#fff' }} />
               </Paper>
             </Box>
           </Box>
@@ -833,12 +883,12 @@ const imageCandidate = null;
             illumination={Math.min(messages.filter((m) => m.sender === 'user').length / 6, 1)}
             onInterpret={runInterpretation}
             onFinalInterpret={() => handleFinalInterpret(false)}
-            disabled={sendingReply}
+            disabled={sendingReply || messagesLoading}
             direction="waxing"
             size={36}
           />
           <Box sx={{ flex: 1 }}>
-            <GlassInputBox value={input} onChange={setInput} onSend={() => handleSend()} disabled={sendingReply} onClose={() => {}} containerStyle={{ position: 'static' }} />
+            <GlassInputBox value={input} onChange={setInput} onSend={() => handleSend()} disabled={sendingReply || messagesLoading} onClose={() => {}} containerStyle={{ position: 'static' }} />
           </Box>
         </Box>
       </Box>

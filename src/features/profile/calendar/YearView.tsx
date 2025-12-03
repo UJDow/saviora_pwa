@@ -41,7 +41,7 @@ interface YearViewProps {
   calendarStyles?: CalendarStyles;
 }
 
-const MotionBox = motion(Box);
+const MotionBox = motion.create(Box);
 
 export function YearView({
   dreamDates,

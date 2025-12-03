@@ -24,19 +24,26 @@ function normalizeOrigin(o) {
 }
 
 function buildCorsHeaders(origin) {
-  const norm = normalizeOrigin(origin);
-  if (allowedOrigins.includes(norm)) {
-    return {
-      'Access-Control-Allow-Origin': norm,
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Requested-With, Authorization',
-      'Access-Control-Max-Age': '86400',
-      'Vary': 'Origin',
-    };
-  }
-  return {
+  const norm = normalizeOrigin(origin || '');
+  const base = {
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Requested-With, Authorization',
+    'Access-Control-Max-Age': '86400',
     'Vary': 'Origin'
   };
+
+  if (!origin) {
+    return base;
+  }
+
+  if (allowedOrigins.includes(norm)) {
+    base['Access-Control-Allow-Origin'] = norm;
+    base['Access-Control-Allow-Credentials'] = 'true';
+  } else {
+    console.warn('[CORS] origin not in whitelist:', origin);
+  }
+
+  return base;
 }
 
 // Base64url encode/decode для JWT
@@ -112,14 +119,14 @@ async function isTrialActive(email, env) {
   const userKey = `user:${email}`;
   const userRaw = await env.USERS_KV.get(userKey);
   if (!userRaw) return false;
-  
+
   let user;
   try {
     user = JSON.parse(userRaw);
   } catch {
     return false;
   }
-  
+
   const now = Date.now();
   const trialPeriod = 365 * 24 * 60 * 60 * 1000; // 1 год в миллисекундах
   return (now - user.created) < trialPeriod;
@@ -212,6 +219,99 @@ const SUMMARY_UPDATE_PROMPT = `Ты — ассистент, который сж�
 ПРИМЕР:
 "Пользователь рассказал, что красный цвет ассоциируется у него с детством и чувством тревоги. Упомянул конфликт с матерью 2 года назад. Дом во сне напоминает квартиру бабушки, где он чувствовал себя в безопасности. Отметил, что сейчас переживает похожую ситуацию на работе — чувствует давление от начальника."`;
 
+const ARTDIALOG_SYSTEM_PROMPT = `Ты — внимательный куратор/проводник по произведениям искусства, помогающий пользователю исследовать, почему найденное произведение резонирует с его сновидением. Твоя задача — помогать пользователю раскрыть детали сходства и указать, что именно он может найти близкого себе в этом произведении — эмоции, мотивы, формальные приёмы, композиционные решения, темы, культурные или биографические коннотации.
+
+Правила поведения:
+1. Центр разговора — пользователь: ориентируй все замечания на субъективный опыт ("что ты можешь заметить/почувствовать", "на что обратить внимание"), не навязывай интерпретаций.
+2. Не спойль: если обсуждение требует раскрытия ключевых сюжетных поворотов, сначала спроси разрешение: коротко предложи опцию "Показать спойлер/Без спойлера". Пока нет разрешения — избегай указания явных сюжетных концовок и ключевых поворотов.
+3. Фокус на конкретике: указывай конкретные элементы произведения, которые соответствуют образам сна (цвет, свет, поза, повторяющийся мотив, звук/музыка, архитектура, отношения персонажей, символы). Приводи примеры того, что посмотреть в сценах/главе/кадре, но без раскрытия ключевых финалов.
+4. Личное резонирование: всегда задавай как минимум один открытый вопрос, помогающий пользователю соотнести образ из сна и элемент произведения (например: "Какая деталь этой сцены вызывает у тебя ту же эмоцию, что и в сне?").
+5. Один вопрос за раз: не задавай более одного вопроса в одном сообщении.
+6. Предлагай способы исследования: короткие действия (посмотреть кадр X, прочитать абзац Y, послушать фрагмент музыки Z), пометки на что смотреть/слушать, либо мелкие задания для заметок (написать 1–2 предложения о том, что сбивает/притягивает).
+7. Поддерживай тон: теплый, аккуратный, ненавязчивый — как гид, а не критик. Избегай категоричных утверждений о том, что "сон позаимствован" — вместо этого формулируй: "есть явные сюжеты/мотивы, которые перекликаются".
+8. При возможности отмечай формальные параллели (ритм, композиция, повторы, контраст, цветовая палитра) и содержательные (тема утраты, вины, поиска, спасения и т.д.).
+9. При необходимости используй квадратные скобки для примеров вариантов (например: [семья / работа / детство]), но не навязывай их.
+10. Если пользователь хочет — предложи безопасные, краткие ссылки или понятную подсказку, где найти произведение без спойлеров (например: "посмотри 3–ю сцену, первые 2 минуты") — только с его разрешения.
+
+Формат контента:
+- Пиши коротко, одно сообщение = одно действие/вопрос/наблюдение.
+- Если даёшь рекомендацию (например, "посмотри сцену X"), добавляй, почему именно это важно для сравнения со сном (1 предложение).
+- Не используй академические термины и не делай окончательных психоаналитических выводов — задавай вопросы и предлагай наблюдения.`;
+
+// --- DAILY PROMPTS ---
+
+const DAILY_CHAT_SYSTEM_PROMPT = `Ты — дружелюбный и поддерживающий собеседник для ежедневного разговора. 
+Фокусируйся на настоящем и недавних событиях пользователя — что он делал, заметил, почувствовал, чему научился или хочет запомнить. 
+Избегай психоаналитического и клинического языка. Задавай простые, открытые и конкретные вопросы, чтобы пользователь мог быстро ответить.
+
+Если пользователь делится событием, ответь:
+- Кратко поддержи (1 предложение).
+- Кратко резюмируй (1–2 предложения).
+- Задай один конкретный вопрос или предложи небольшое действие (одно предложение).
+
+При возможности приглашай к описанию ощущений (что видел, слышал, чувствовал), проверяй настроение (одно слово или шкала), предлагай маленький следующий шаг (растяжка, прогулка, благодарность и т.п.). Тон — теплый и практичный. Если пользователь просит конфиденциальность или резюме — уважай и предложи краткий итог или подтверждение отказа.`;
+
+const DAILY_ARTWORK_PROMPT = `Ты создаешь описание для генерации изображения, вдохновленного моментом из дня. 
+Вход: краткое описание, настроение, предпочтения по цветам и стилю (опционально). 
+Выход: JSON с полями:
+{
+  "image_prompt": "описание для генератора изображений, 1–2 предложения, с акцентом на цвета, свет, композицию, атмосферу",
+  "tags": ["тег1", "тег2", "тег3"]
+}
+
+Язык — описательный, сенсорный, без символизма и метафор. Вывод — только JSON.`;
+
+// --- INTERPRETATION PROMPTS ---
+
+const BLOCK_INTERPRETATION_PROMPT_DAILY = `
+Проанализируй один блок диалога между пользователем и ассистентом. Ответь на русском языке в формате JSON:
+
+{
+  "summary": "Краткое содержание того, о чём говорилось в этом блоке (1–2 предложения)",
+  "emotions": ["эмоция1", "эмоция2"],
+  "themes": ["тема1", "тема2"],
+  "insights": ["инсайт1", "инсайт2"],
+  "suggestions": ["что можно обсудить дальше", "возможное действие"]
+}
+`;
+
+const FINAL_INTERPRETATION_PROMPT_DAILY = `
+Проанализируй всю историю диалога между пользователем и ассистентом. Ответь на русском языке в формате JSON:
+
+{
+  "overall_summary": "Общее содержание всех блоков (2–3 предложения)",
+  "main_themes": ["основная тема1", "основная тема2"],
+  "emotional_dynamics": ["эмоция1", "эмоция2"],
+  "progression": "Как развивалась тема или настроение во времени?",
+  "key_insights": ["ключевой инсайт1", "ключевой инсайт2"],
+  "recommendations": ["что рекомендуется обсудить в будущем", "возможные действия"]
+}
+`;
+
+const ART_BLOCK_INTERPRETATION_PROMPT = `
+Проанализируй блок диалога, связанный с арт-произведением. Ответь на русском языке в формате JSON:
+
+{
+  "visual_summary": "Что изображено в арт-объекте? (1–2 предложения)",
+  "emotional_response": "Какие эмоции вызывает изображение?",
+  "symbolism": ["символ1", "символ2"],
+  "connection_to_user": "Как изображение связано с опытом пользователя?",
+  "interpretation": "Что это может значить в контексте разговора?"
+}
+`;
+
+const ART_FINAL_INTERPRETATION_PROMPT = `
+Проанализируй серию арт-диалогов. Ответь на русском языке в формате JSON:
+
+{
+  "visual_evolution": "Как менялись образы и темы в арт-диалогах?",
+  "emotional_arc": "Как менялось настроение?",
+  "recurring_motifs": ["мотив1", "мотив2"],
+  "personal_meanings": ["значение1", "значение2"],
+  "creative_direction": "Какие направления в творчестве или самовыражении проявляются?"
+}
+`;
+
 // --- Функции для работы с rolling summary ---
 
 // Получить summary с количеством обработанных сообщений
@@ -231,7 +331,7 @@ async function getRollingSummary(env, userEmail, dreamId, blockId) {
 async function saveRollingSummary(env, userEmail, dreamId, blockId, summaryText, messageCount) {
   const id = crypto.randomUUID();
   const now = Date.now();
-  
+
   console.log('[saveRollingSummary] Saving:', { 
     userEmail, 
     dreamId, 
@@ -239,7 +339,7 @@ async function saveRollingSummary(env, userEmail, dreamId, blockId, summaryText,
     messageCount,
     summaryLength: summaryText?.length || 0
   });
-  
+
   try {
     const stmt = env.DB.prepare(`
       INSERT INTO dialog_summaries (id, user, dream_id, block_id, summary, last_message_count, updated_at)
@@ -249,11 +349,11 @@ async function saveRollingSummary(env, userEmail, dreamId, blockId, summaryText,
         last_message_count = excluded.last_message_count,
         updated_at = excluded.updated_at
     `);
-    
+  
     const result = await stmt.bind(
       id, userEmail, dreamId, blockId, summaryText, messageCount, now
     ).run();
-    
+  
     console.log('[saveRollingSummary] Success:', result);
     return result;
   } catch (e) {
@@ -266,72 +366,72 @@ async function saveRollingSummary(env, userEmail, dreamId, blockId, summaryText,
 // --- Обновить rolling summary ---
 async function updateRollingSummary(env, userEmail, dreamId, blockId, blockText, deepseekApiKey) {
   console.log('[updateRollingSummary] START:', { userEmail, dreamId, blockId });
-  
+
   const d1 = env.DB;
-  
+
   // 1. Получаем текущий summary
   const currentSummary = await getRollingSummary(env, userEmail, dreamId, blockId);
   const lastMessageCount = currentSummary?.lastMessageCount || 0;
-  
+
   console.log('[updateRollingSummary] Current state:', { 
     hasSummary: !!currentSummary?.summary, 
     lastMessageCount 
   });
-  
+
   // 2. Получаем все сообщения
   const allMessagesRes = await d1.prepare(
     `SELECT role, content FROM messages
      WHERE user = ? AND dream_id = ? AND block_id = ?
      ORDER BY created_at ASC`
   ).bind(userEmail, dreamId, blockId).all();
-  
+
   const allMessages = allMessagesRes.results || [];
   const newMessageCount = allMessages.length - lastMessageCount;
-  
+
   console.log('[updateRollingSummary] Messages:', { 
     total: allMessages.length, 
     new: newMessageCount 
   });
-  
+
   // 3. Проверяем, нужно ли обновлять
   if (newMessageCount < SUMMARY_UPDATE_THRESHOLD && currentSummary?.summary) {
     console.log('[updateRollingSummary] Threshold not reached, skipping');
     return currentSummary.summary;
   }
-  
+
   // 4. Берём только новые сообщения
   const newMessages = allMessages.slice(lastMessageCount);
-  
+
   // 5. Формируем промпт
   const prompt = currentSummary?.summary 
     ? `
       ${SUMMARY_UPDATE_PROMPT}
-      
+    
       ФРАГМЕНТ СНОВИДЕНИЯ:
       ${blockText.slice(0, 2000)}
-      
+    
       ПРЕДЫДУЩЕЕ РЕЗЮМЕ ДИАЛОГА:
       ${currentSummary.summary}
-      
+    
       НОВЫЕ СООБЩЕНИЯ:
       ${newMessages.map(m => `${m.role}: ${m.content}`).join('\n')}
-      
+    
       Обнови резюме, добавив ключевые моменты из новых сообщений.
     `
     : `
       ${SUMMARY_UPDATE_PROMPT}
-      
+    
       ФРАГМЕНТ СНОВИДЕНИЯ:
       ${blockText.slice(0, 2000)}
-      
+    
       СООБЩЕНИЯ ДИАЛОГА:
       ${newMessages.map(m => `${m.role}: ${m.content}`).join('\n')}
-      
+    
       Создай краткое резюме этого диалога.
     `;
-  
+
   console.log('[updateRollingSummary] Calling DeepSeek...');
-  
+
   // 6. Вызываем DeepSeek
   const deepseekRequestBody = {
     model: 'deepseek-chat',
@@ -340,7 +440,7 @@ async function updateRollingSummary(env, userEmail, dreamId, blockId, blockText,
     temperature: 0.3,
     stream: false
   };
-  
+
   const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -349,16 +449,16 @@ async function updateRollingSummary(env, userEmail, dreamId, blockId, blockText,
     },
     body: JSON.stringify(deepseekRequestBody)
   });
-  
+
   const responseBody = await deepseekResponse.json();
   const updatedSummary = responseBody?.choices?.[0]?.message?.content || currentSummary?.summary || '';
-  
+
   console.log('[updateRollingSummary] DeepSeek response length:', updatedSummary.length);
-  
+
   // 7. Сохраняем обновлённый summary
   console.log('[updateRollingSummary] Saving summary, message count:', allMessages.length);
   await saveRollingSummary(env, userEmail, dreamId, blockId, updatedSummary, allMessages.length);
-  
+
   console.log('[updateRollingSummary] DONE');
   return updatedSummary;
 }
@@ -380,7 +480,7 @@ async function getUnprocessedMessages(env, userEmail, dreamId, blockId) {
   ).bind(userEmail, dreamId, blockId).all();
 
   const allMessages = unprocessedRows.results || [];
-  
+
   // Берём только необработанные
   const unprocessed = allMessages.slice(lastProcessed);
 
@@ -431,6 +531,125 @@ async function toggleMessageInsight(env, { dreamId, messageId, liked, userEmail 
     `)
     .bind(messageId, dreamId, userEmail)
     .all();
+
+  return results?.[0] ?? null;
+}
+
+// --- INTERPRETATION FUNCTIONS ---
+
+async function interpretBlock(env, blockText, blockType = 'dialog') {
+  let prompt;
+  if (blockType === 'art') {
+    prompt = ART_BLOCK_INTERPRETATION_PROMPT;
+  } else {
+    prompt = BLOCK_INTERPRETATION_PROMPT_DAILY;
+  }
+
+  const deepseekRequestBody = {
+    model: 'deepseek-chat',
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: blockText }
+    ],
+    max_tokens: 500,
+    temperature: 0.5,
+    stream: false
+  };
+
+  const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+    },
+    body: JSON.stringify(deepseekRequestBody)
+  });
+
+  const json = await res.json();
+  let content = json.choices?.[0]?.message?.content || '{}';
+  content = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
+async function interpretFinal(env, notesText, blockType = 'dialog') {
+  let prompt;
+  if (blockType === 'art') {
+    prompt = ART_FINAL_INTERPRETATION_PROMPT;
+  } else {
+    prompt = FINAL_INTERPRETATION_PROMPT_DAILY;
+  }
+
+  const deepseekRequestBody = {
+    model: 'deepseek-chat',
+    messages: [
+      { role: 'system', content: prompt },
+      { role: 'user', content: notesText }
+    ],
+    max_tokens: 800,
+    temperature: 0.7,
+    stream: false
+  };
+
+  const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+    },
+    body: JSON.stringify(deepseekRequestBody)
+  });
+
+  const json = await res.json();
+  let content = json.choices?.[0]?.message?.content || '{}';
+  content = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
+// --- HELPERS FOR DAILY CONVOS INSIGHTS ---
+// Вставить рядом с toggleMessageInsight/toggleMessageArtworkInsight
+
+async function toggleDailyMessageInsight(env, { dailyConvoId, messageId, liked, userEmail }) {
+  const statement = env.DB.prepare(`
+    UPDATE messages
+    SET meta = json_set(COALESCE(meta, '{}'), '$.insightLiked', ?)
+    WHERE id = ? AND dream_id = ? AND user = ?
+  `);
+
+  const { success } = await statement.bind(liked ? 1 : 0, messageId, dailyConvoId, userEmail).run();
+  if (!success) throw new Error('Не удалось обновить инсайт (daily)');
+  const { results } = await env.DB.prepare(`
+    SELECT id, role, content, meta, created_at
+    FROM messages
+    WHERE id = ? AND dream_id = ? AND user = ?
+  `).bind(messageId, dailyConvoId, userEmail).all();
+
+  return results?.[0] ?? null;
+}
+
+async function toggleDailyMessageArtworkInsight(env, { dailyConvoId, messageId, liked, userEmail }) {
+  const statement = env.DB.prepare(`
+    UPDATE messages
+    SET meta = json_set(COALESCE(meta, '{}'), '$.insightArtworksLiked', ?)
+    WHERE id = ? AND dream_id = ? AND user = ?
+  `);
+
+  const { success } = await statement.bind(liked ? 1 : 0, messageId, dailyConvoId, userEmail).run();
+  if (!success) throw new Error('Не удалось обновить арт-инсайт (daily)');
+  const { results } = await env.DB.prepare(`
+    SELECT id, role, content, meta, created_at
+    FROM messages
+    WHERE id = ? AND dream_id = ? AND user = ?
+  `).bind(messageId, dailyConvoId, userEmail).all();
 
   return results?.[0] ?? null;
 }
@@ -663,8 +882,10 @@ export default {
     }
 
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
-    }
+  const origin = request.headers.get('Origin') || '';
+  const cors = buildCorsHeaders(origin);
+  return new Response(null, { status: 204, headers: cors });
+}
 
     if (url.pathname === '/health' && request.method === 'GET') {
       return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
@@ -1298,6 +1519,46 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'drea
   }
 }
 
+// PUT /daily_convos/:dailyConvoId/messages/:messageId/artwork_like
+if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'daily_convos' && pathParts[2] === 'messages' && pathParts[4] === 'artwork_like') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const dailyConvoId = pathParts[1];
+  const messageId = pathParts[3];
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
+  const { liked } = body || {};
+  if (typeof liked !== 'boolean') return new Response(JSON.stringify({ error: 'liked must be boolean' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  try {
+    const message = await toggleDailyMessageArtworkInsight(env, { dailyConvoId, messageId, liked, userEmail });
+    if (!message) return new Response(JSON.stringify({ error: 'Сообщение не найдено' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    return new Response(JSON.stringify({ id: message.id, role: message.role, content: message.content, meta: message.meta ? JSON.parse(message.meta) : {}, createdAt: message.created_at }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (err) {
+    console.error('toggle daily artwork like error', err);
+    return new Response(JSON.stringify({ error: 'Не удалось сохранить инсайт' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
+// PUT /daily_convos/:dailyConvoId/messages/:messageId/like
+if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'daily_convos' && pathParts[2] === 'messages' && pathParts[4] === 'like') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const dailyConvoId = pathParts[1];
+  const messageId = pathParts[3];
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
+  const { liked } = body || {};
+  if (typeof liked !== 'boolean') return new Response(JSON.stringify({ error: 'liked must be boolean' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  try {
+    const message = await toggleDailyMessageInsight(env, { dailyConvoId, messageId, liked, userEmail });
+    if (!message) return new Response(JSON.stringify({ error: 'Сообщение не найдено' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    return new Response(JSON.stringify({ id: message.id, role: message.role, content: message.content, meta: message.meta ? JSON.parse(message.meta) : {}, createdAt: message.created_at }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (err) {
+    console.error('toggle daily like error', err);
+    return new Response(JSON.stringify({ error: 'Не удалось сохранить инсайт' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
 // GET /dreams/:dreamId/insights
 if (
   request.method === 'GET' &&
@@ -1386,7 +1647,109 @@ if (
   }
 }
 
+// GET /daily_convos/:id/insights
+if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'daily_convos' && pathParts[2] === 'insights') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const dailyId = pathParts[1];
+  const urlObj = new URL(request.url);
+  const metaKey = urlObj.searchParams.get('metaKey');
 
+  const allowedFilters = {
+    insightArtworksLiked: `CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1`,
+    insightLiked: `CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1`,
+  };
+
+  const filterClause = allowedFilters[metaKey] ? `AND (${allowedFilters[metaKey]})` : `
+    AND (
+      CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1
+      OR CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1
+    )
+  `;
+
+  try {
+    const { results } = await env.DB.prepare(`
+      SELECT id, content, meta, created_at
+      FROM messages
+      WHERE dream_id = ? AND user = ? ${filterClause}
+      ORDER BY created_at DESC
+    `).bind(dailyId, userEmail).all();
+
+    const insights = (results ?? []).map(row => {
+      const meta = row.meta ? JSON.parse(row.meta) : {};
+      const createdAt = typeof row.created_at === 'number' ? new Date(row.created_at).toISOString() : row.created_at;
+      const artworksFlag = Boolean(meta.insightArtworksLiked ?? meta.insight_artworks_liked ?? 0);
+      const likedFlag = Boolean(meta.insightLiked ?? meta.insight_liked ?? meta.liked ?? meta.isFavorite ?? meta.isInsight ?? meta.favorite);
+      return {
+        messageId: row.id,
+        text: row.content,
+        createdAt,
+        blockId: meta.blockId ?? meta.block_id ?? null,
+        insightLiked: metaKey === 'insightArtworksLiked' ? artworksFlag : likedFlag,
+        insightArtworksLiked: artworksFlag,
+        meta
+      };
+    });
+
+    return new Response(JSON.stringify({ insights }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (err) {
+    console.error('GET /daily_convos/:id/insights error', err);
+    return new Response(JSON.stringify({ error: 'Не удалось загрузить инсайты' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
+// worker.js — добавить в конце fetch handler
+if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const pathParts = url.pathname.split('/').filter(Boolean);
+  if (pathParts.length < 3 || pathParts[pathParts.length - 2] !== 'dreams') {
+    return new Response(JSON.stringify({ error: 'Invalid path' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const dreamId = pathParts[pathParts.length - 3];
+  if (!dreamId) {
+    return new Response(JSON.stringify({ error: 'Missing dreamId' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  let body;
+  try { body = await request.json(); } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const { context } = body;
+  if (!context) {
+    return new Response(JSON.stringify({ error: 'context required' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    await env.DB.prepare(
+      `UPDATE dreams SET context = ? WHERE id = ? AND user = ?`
+    ).bind(context, dreamId, userEmail).run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('[MOOD FOR DREAM] PUT error:', e);
+    return new Response(JSON.stringify({ error: 'database_error' }), {
+      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
 
     if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
   const userEmail = await getUserEmail(request);
@@ -1499,6 +1862,120 @@ if (
   }
 }
 
+// --- DAILY CONVOS CRUD ---
+
+// GET /daily_convos (list)
+if (url.pathname === '/daily_convos' && request.method === 'GET') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  try {
+    const res = await env.DB.prepare('SELECT * FROM daily_convos WHERE user = ? ORDER BY date DESC').bind(userEmail).all();
+    const items = (res.results || []).map(r => {
+      if (r.blocks) {
+        try { r.blocks = JSON.parse(r.blocks); } catch { r.blocks = []; }
+      } else r.blocks = [];
+      return r;
+    });
+    return new Response(JSON.stringify(items), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (e) {
+    console.error('GET /daily_convos error', e);
+    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
+// POST /daily_convos (create)
+if (url.pathname === '/daily_convos' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
+  const { notes, title } = body || {};
+  if (!notes || typeof notes !== 'string') return new Response(JSON.stringify({ error: 'notes required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const id = crypto.randomUUID();
+  const date = Date.now();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO daily_convos (id, user, title, notes, date, blocks, globalFinalInterpretation, autoSummary, context)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(id, userEmail, title ?? null, notes.trim(), date, JSON.stringify([]), null, null, null).run();
+
+    const created = { id, user: userEmail, title: title ?? null, notes: notes.trim(), date, blocks: [], globalFinalInterpretation: null, autoSummary: null, context: null };
+    return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (e) {
+    console.error('POST /daily_convos error', e);
+    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
+// GET /daily_convos/:id
+if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const id = pathParts[1];
+  try {
+    const row = await env.DB.prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).first();
+    if (!row) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    if (row.blocks) {
+      try { row.blocks = JSON.parse(row.blocks); } catch { row.blocks = []; }
+    } else row.blocks = [];
+    return new Response(JSON.stringify(row), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (e) {
+    console.error('GET /daily_convos/:id error', e);
+    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
+// PUT /daily_convos/:id
+if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const id = pathParts[1];
+  let body;
+  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
+  const { notes, title, blocks, globalFinalInterpretation, autoSummary, context } = body || {};
+  try {
+    const existing = await env.DB.prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).first();
+    if (!existing) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+
+    // Используем старые значения, если новые не переданы
+    const newNotes = typeof notes !== 'undefined' ? notes : existing.notes;
+    const newTitle = typeof title !== 'undefined' ? title : existing.title;
+    const newBlocks = typeof blocks !== 'undefined' ? JSON.stringify(blocks) : existing.blocks;
+    const newGlobalFinalInterpretation = typeof globalFinalInterpretation !== 'undefined' ? globalFinalInterpretation : existing.globalFinalInterpretation;
+    const newAutoSummary = typeof autoSummary !== 'undefined' ? autoSummary : existing.autoSummary;
+    const newContext = typeof context !== 'undefined' ? context : existing.context;
+
+    await env.DB.prepare(`
+      UPDATE daily_convos SET title = ?, notes = ?, blocks = ?, globalFinalInterpretation = ?, autoSummary = ?, context = ?
+      WHERE id = ? AND user = ?
+    `).bind(newTitle, newNotes, newBlocks, newGlobalFinalInterpretation, newAutoSummary, newContext, id, userEmail).run();
+
+    const row = await env.DB.prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).first();
+    if (row.blocks) {
+      try { row.blocks = JSON.parse(row.blocks); } catch { row.blocks = []; }
+    } else row.blocks = [];
+    return new Response(JSON.stringify(row), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (e) {
+    console.error('PUT /daily_convos/:id error', e);
+    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
+// DELETE /daily_convos/:id
+if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  const id = pathParts[1];
+  try {
+    const res = await env.DB.prepare('DELETE FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).run();
+    if (res.changes === 0) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  } catch (e) {
+    console.error('DELETE /daily_convos/:id error', e);
+    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  }
+}
+
 // --- CHAT: get history ---
 if (url.pathname === '/chat' && request.method === 'GET') {
   const userEmail = await getUserEmail(request);
@@ -1587,6 +2064,8 @@ if (url.pathname === '/chat' && request.method === 'POST') {
   }
 }
 
+
+
 // --- CHAT: clear history for block ---
 if (url.pathname === '/chat' && request.method === 'DELETE') {
   const userEmail = await getUserEmail(request);
@@ -1620,6 +2099,183 @@ if (url.pathname === '/chat' && request.method === 'DELETE') {
     return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
       status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
+  }
+}
+
+// --- DAILY CHAT: GET /daily_chat?dailyConvoId=... ---
+if (url.pathname === '/daily_chat' && request.method === 'GET') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const dailyConvoId = url.searchParams.get('dailyConvoId');
+  if (!dailyConvoId) {
+    return new Response(JSON.stringify({ error: 'Missing dailyConvoId' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    const res = await env.DB.prepare(
+      `SELECT id, role, content, created_at, meta
+       FROM messages
+       WHERE user = ? AND dream_id = ?
+       ORDER BY created_at ASC`
+    ).bind(userEmail, dailyConvoId).all();
+
+    const messages = (res.results || []).map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      created_at: r.created_at,
+      meta: r.meta ? JSON.parse(r.meta) : undefined,
+    }));
+
+    return new Response(JSON.stringify({ messages }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('GET /daily_chat error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        details: e?.message || String(e)
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+// --- POST /daily_chat ---
+if (url.pathname === '/daily_chat' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const { id, dailyConvoId, role, content, meta, blockId } = body || {};
+  if (!dailyConvoId || !role || !content || !['user', 'assistant'].includes(role)) {
+    return new Response(JSON.stringify({ error: 'Invalid payload' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const msgId = id || crypto.randomUUID();
+  const createdAt = Date.now();
+
+  // block_id in schema is NOT NULL — use empty string when not provided
+  const safeBlockId = (typeof blockId === 'string' && blockId.length > 0) ? blockId : '';
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        msgId,
+        userEmail,
+        dailyConvoId,     // <-- store dailyConvoId into existing dream_id column
+        safeBlockId,      // <-- never NULL
+        role,
+        String(content).slice(0, 12000),
+        createdAt,
+        meta ? JSON.stringify(meta) : null
+      )
+      .run();
+
+    return new Response(
+      JSON.stringify({
+        id: msgId,
+        role,
+        content,
+        created_at: createdAt,
+        meta: meta ?? null,
+      }),
+      {
+        status: 201,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
+  } catch (e) {
+    console.error('POST /daily_chat DB error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        details: e?.message || String(e)
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
+  }
+}
+
+// --- DELETE /daily_chat?dailyConvoId=... ---
+if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const dailyConvoId = url.searchParams.get('dailyConvoId');
+  if (!dailyConvoId) {
+    return new Response(JSON.stringify({ error: 'Missing dailyConvoId' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    await env.DB.prepare(
+      `DELETE FROM messages WHERE user = ? AND dream_id = ?`
+    )
+      .bind(userEmail, dailyConvoId)
+      .run();
+
+    await env.DB.prepare(
+      `DELETE FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id IS NULL`
+    )
+      .bind(userEmail, dailyConvoId)
+      .run()
+      .catch(() => {});
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('DELETE /daily_chat error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        details: e?.message || String(e)
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
   }
 }
 
@@ -1749,23 +2405,23 @@ let rollingSummary = null;
 if (dreamId && blockId) {
   const summaryData = await getRollingSummary(env, userEmail, dreamId, blockId);
   rollingSummary = summaryData?.summary || null;
-  
+
   console.log('[analyze] Summary state:', { 
     hasSummary: !!summaryData, 
     dreamId, 
     blockId 
   });
-  
+
   // 2. Проверяем, нужно ли обновить summary
   const d1 = env.DB;
   const allMessagesRes = await d1.prepare(
     `SELECT COUNT(*) as count FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`
   ).bind(userEmail, dreamId, blockId).first();
-  
+
   const currentMessageCount = allMessagesRes?.count || 0;
-  
+
   console.log('[analyze] Message count:', currentMessageCount);
-  
+
   // 🆕 Если summary нет, но есть хотя бы 2 сообщения — создаём
   if (!summaryData && currentMessageCount >= 2) {
     console.log('[analyze] Creating initial summary');
@@ -1780,9 +2436,9 @@ if (dreamId && blockId) {
   // Если summary есть, проверяем порог обновления
   else if (summaryData) {
     const newMessageCount = currentMessageCount - summaryData.lastMessageCount;
-    
+  
     console.log('[analyze] New messages since last summary:', newMessageCount);
-    
+  
     if (newMessageCount >= SUMMARY_UPDATE_THRESHOLD) {
       console.log('[analyze] Updating summary');
       try {
@@ -1797,8 +2453,11 @@ if (dreamId && blockId) {
 }
 
     let messages = [];
-    messages.push({ role: 'system', content: DIALOG_SYSTEM_PROMPT });
-    
+    const isArtworkDialog = blockId?.startsWith('artwork__');
+    const systemPrompt = isArtworkDialog ? ARTDIALOG_SYSTEM_PROMPT : DIALOG_SYSTEM_PROMPT;
+
+messages.push({ role: 'system', content: systemPrompt });
+  
     const d1 = env.DB;
     let dreamSummary = null;
     let autoSummary = null;
@@ -1807,7 +2466,7 @@ if (dreamId && blockId) {
       const dreamRow = await d1.prepare(
         `SELECT dreamSummary, autoSummary FROM dreams WHERE id = ? AND user = ?`
       ).bind(dreamId, userEmail).first();
-      
+    
       if (dreamRow) {
         dreamSummary = dreamRow.dreamSummary || null;
         autoSummary = dreamRow.autoSummary || null;
@@ -1828,14 +2487,14 @@ if (dreamId && blockId) {
     if (rollingSummary) {
       messages.push({ role: 'system', content: `ROLLING SUMMARY ДИАЛОГА:\n${rollingSummary}` });
     }
-    
+  
     // Добавляем текст текущего блока
     messages.push({ role: 'system', content: `ТЕКУЩИЙ БЛОК:\n${(blockText || '').slice(0, 4000)}` });
-    
+  
     if (Array.isArray(lastTurns) && lastTurns.length) {
       messages.push(...lastTurns);
     }
-    
+  
     if (extraSystemPrompt) {
       messages.push({ role: 'system', content: extraSystemPrompt });
     }
@@ -1862,7 +2521,7 @@ if (dreamId && blockId) {
     content = content.replace(/```[\s\S]*?```/g, '').trim();
     if (!content) content = responseBody?.choices?.[0]?.message?.content || '';
     responseBody.choices[0].message.content = content;
-    
+  
     return new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -1874,6 +2533,200 @@ if (dreamId && blockId) {
       error: 'internal_error',
       message: error.message || 'Unknown error'
     }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// --- Analyze daily convo (clone of /analyze, for daily_convos) ---
+if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const contentType = request.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return new Response(JSON.stringify({ error: 'Invalid content type', message: 'Content-Type must be application/json' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const body = await request.json();
+    const { notesText, lastTurns = [], extraSystemPrompt, dailyConvoId, blockId, autoSummary } = body || {};
+
+    if (!notesText || typeof notesText !== 'string') {
+      return new Response(JSON.stringify({ error: 'No notesText' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    // choose system prompt (artwork vs daily vs main)
+    let systemPrompt = DIALOG_SYSTEM_PROMPT;
+    if (typeof blockId === 'string' && blockId.startsWith('artwork__')) {
+      systemPrompt = ARTDIALOG_SYSTEM_PROMPT;
+    } else if (blockId === 'daily_chat') {
+      systemPrompt = DAILY_CHAT_SYSTEM_PROMPT;
+    } else if (blockId === 'daily_artwork') {
+      systemPrompt = DAILY_ARTWORK_PROMPT;
+    }
+
+    const messages = [];
+    messages.push({ role: 'system', content: systemPrompt });
+
+    // autoSummary if provided
+    if (autoSummary) {
+      messages.push({ role: 'system', content: `ВЫЖИМКА:\n${autoSummary}` });
+    }
+
+    // rolling summary if any (reuse getRollingSummary — it expects (env, userEmail, dreamId, blockId))
+    if (dailyConvoId) {
+      try {
+        const summaryData = await getRollingSummary(env, userEmail, dailyConvoId, blockId);
+        if (summaryData?.summary) {
+          messages.push({ role: 'system', content: `ROLLING SUMMARY ДИАЛОГА:\n${summaryData.summary}` });
+        }
+      } catch (e) {
+        // non-fatal: log and continue
+        console.warn('analyze_daily_convo: getRollingSummary failed', e);
+      }
+    }
+
+    // main text
+    messages.push({ role: 'system', content: `ТЕКСТ:\n${(notesText || '').slice(0, 4000)}` });
+
+    if (Array.isArray(lastTurns) && lastTurns.length) {
+      messages.push(...lastTurns);
+    }
+
+    if (extraSystemPrompt) {
+      messages.push({ role: 'system', content: extraSystemPrompt });
+    }
+
+    const deepseekRequestBody = {
+      model: 'deepseek-chat',
+      messages,
+      max_tokens: 500,
+      temperature: 0.7,
+      stream: false
+    };
+
+    const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify(deepseekRequestBody)
+    });
+
+    let responseBody = await deepseekResponse.json();
+    let content = responseBody?.choices?.[0]?.message?.content || '';
+    content = content.replace(/```[\s\S]*?```/g, '').trim();
+    responseBody.choices[0].message.content = content;
+
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+
+  } catch (err) {
+    console.error('Error in /analyze_daily_convo:', err);
+    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// --- Generate Auto Summary for Daily Convo ---
+if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const { dailyConvoId, notes } = body;
+  if (!dailyConvoId || !notes) {
+    return new Response(JSON.stringify({ error: 'Missing dailyConvoId or notes' }), {
+      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const d1 = env.DB;
+    const existing = await d1
+      .prepare('SELECT notes, autoSummary FROM daily_convos WHERE id = ? AND user = ?')
+      .bind(dailyConvoId, userEmail)
+      .first();
+
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Daily convo not found' }), {
+        status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    if (existing.autoSummary && existing.notes === notes) {
+      return new Response(JSON.stringify({ success: true, autoSummary: existing.autoSummary }), {
+        status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const prompt = `Создай краткое резюме этой записи в 2-3 предложениях. Выдели ключевые элементы: события, эмоции, мысли. Пиши кратко и по существу.\n\nТекст записи:\n${notes.slice(0, 4000)}`;
+
+    const deepseekRequestBody = {
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: 'Ты создаёшь краткие резюме записей. Пиши нейтрально, кратко, только факты и ключевые образы.' },
+        { role: 'user', content: prompt }
+      ],
+      max_tokens: 200,
+      temperature: 0.5,
+      stream: false
+    };
+
+    const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify(deepseekRequestBody)
+    });
+
+    let responseBody = await deepseekResponse.json();
+    let autoSummary = responseBody?.choices?.[0]?.message?.content || '';
+    autoSummary = autoSummary.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+
+    await d1.prepare('UPDATE daily_convos SET autoSummary = ? WHERE id = ? AND user = ?')
+      .bind(autoSummary, dailyConvoId, userEmail)
+      .run();
+
+    return new Response(JSON.stringify({ success: true, autoSummary }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('Error generating auto summary for daily convo:', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
@@ -2080,12 +2933,12 @@ if (url.pathname === '/interpret_block' && request.method === 'POST') {
     const d1 = env.DB;
     let autoSummary = '';
     let dreamSummary = '';
-    
+  
     if (dreamId) {
       const dreamRow = await d1.prepare(
         `SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`
       ).bind(dreamId, userEmail).first();
-      
+    
       if (dreamRow) {
         autoSummary = dreamRow.autoSummary || '';
         dreamSummary = dreamRow.dreamSummary || '';
@@ -2147,7 +3000,7 @@ ${unprocessedContext}
 if (dreamId && blockId && interpretation) {
   const msgId = crypto.randomUUID();
   const createdAt = Date.now();
-  
+
   await d1.prepare(
     `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2161,12 +3014,12 @@ if (dreamId && blockId && interpretation) {
     createdAt,
     JSON.stringify({ kind: 'block_interpretation' })
   ).run();
-  
+
   // Также сохраняем в blocks для истории
   const dreamRow = await d1.prepare(
     `SELECT blocks FROM dreams WHERE id = ? AND user = ?`
   ).bind(dreamId, userEmail).first();
-  
+
   if (dreamRow) {
     let blocks = [];
     try {
@@ -2174,11 +3027,11 @@ if (dreamId && blockId && interpretation) {
     } catch {
       blocks = [];
     }
-    
+  
     const blockIndex = blocks.findIndex(b => b.id === blockId);
     if (blockIndex !== -1) {
       blocks[blockIndex].interpretation = interpretation;
-      
+    
       await d1.prepare(
         `UPDATE dreams SET blocks = ? WHERE id = ? AND user = ?`
       ).bind(JSON.stringify(blocks), dreamId, userEmail).run();
@@ -2231,12 +3084,12 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
     const d1 = env.DB;
     let autoSummary = '';
     let dreamSummary = '';
-    
+  
     if (dreamId) {
       const dreamRow = await d1.prepare(
         `SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`
       ).bind(dreamId, userEmail).first();
-      
+    
       if (dreamRow) {
         autoSummary = dreamRow.autoSummary || '';
         dreamSummary = dreamRow.dreamSummary || '';
@@ -2257,7 +3110,7 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
         );
 
         blocksContext += `\n\n### Блок ${i + 1}:\n${blockText}\n`;
-        
+      
         if (rollingSummary) {
           blocksContext += `**Контекст диалога (summary):**\n${rollingSummary}\n`;
         }
@@ -2324,6 +3177,166 @@ ${blocksContext}
   } catch (e) {
     console.error('Error in /interpret_final:', e);
     return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// --- Interpret final for daily convo (save into daily_convos.globalFinalInterpretation) ---
+if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const ct = request.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const body = await request.json();
+    const { notesText, dailyConvoId } = body || {};
+
+    if (!notesText || typeof notesText !== 'string') {
+      return new Response(JSON.stringify({ error: 'No notesText' }), {
+        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const prompt = `${FINAL_INTERPRETATION_PROMPT}\n\nТЕКСТ:\n${notesText.slice(0, 4000)}`;
+
+    const deepseekRequestBody = {
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 800,
+      temperature: 0.7,
+      stream: false
+    };
+
+    const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify(deepseekRequestBody)
+    });
+
+    const responseBody = await deepseekResponse.json();
+    let interpretation = responseBody?.choices?.[0]?.message?.content || '';
+    interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+
+    if (dailyConvoId && interpretation) {
+      try {
+        await env.DB.prepare(
+          `UPDATE daily_convos SET globalFinalInterpretation = ? WHERE id = ? AND user = ?`
+        ).bind(interpretation, dailyConvoId, userEmail).run();
+      } catch (e) {
+        console.warn('interpret_final_daily_convo: failed to save interpretation', e);
+      }
+    }
+
+    return new Response(JSON.stringify({ interpretation }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+
+  } catch (err) {
+    console.error('Error in /interpret_final_daily_convo:', err);
+    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// --- Interpret block for daily convo ---
+if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const ct = request.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const body = await request.json();
+    const { notesText, blockType = 'dialog' } = body || {};
+
+    if (!notesText || typeof notesText !== 'string') {
+      return new Response(JSON.stringify({ error: 'No notesText' }), {
+        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const interpretation = await interpretBlock(env, notesText, blockType);
+
+    return new Response(JSON.stringify({ interpretation }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+
+  } catch (err) {
+    console.error('Error in /interpret_block_daily_convo:', err);
+    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// --- Interpret final for daily convo (NEW) ---
+if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const ct = request.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const body = await request.json();
+    const { notesText, blockType = 'dialog' } = body || {};
+
+    if (!notesText || typeof notesText !== 'string') {
+      return new Response(JSON.stringify({ error: 'No notesText' }), {
+        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    const interpretation = await interpretFinal(env, notesText, blockType);
+
+    return new Response(JSON.stringify({ interpretation }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+
+  } catch (err) {
+    console.error('Error in /interpret_final_daily_convo_new:', err);
+    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
@@ -2592,6 +3605,146 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       dialogs: Math.round((bc.dialogs / totalForPct) * 100)
     };
 
+    // =============================
+    // ✅ НОВЫЙ БЛОК: АГРЕГАЦИЯ НАСТРОЕНИЙ
+    // =============================
+
+    let moodCounts = {};
+    let moodTotal = 0;
+
+    try {
+      const moodsSql = isAll
+        ? `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? GROUP BY context`
+        : `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? AND date >= ? GROUP BY context`;
+
+      const moodsStmt = isAll
+        ? await d1.prepare(moodsSql).bind(userEmail)
+        : await d1.prepare(moodsSql).bind(userEmail, sinceTs);
+
+      const moodsRes = await moodsStmt.all();
+      const moodRows = moodsRes?.results ?? [];
+
+      for (const r of moodRows) {
+        const key = r.context ?? 'unknown';
+        const cnt = Number(r.cnt ?? 0);
+        moodCounts[key] = (moodCounts[key] || 0) + cnt;
+        moodTotal += cnt;
+      }
+    } catch (e) {
+      console.warn('Failed to aggregate moods for dashboard:', e);
+      moodCounts = {};
+      moodTotal = 0;
+    }
+
+    // =============================
+    // ✅ НОВЫЙ БЛОК: АГРЕГАЦИЯ ИНСАЙТОВ
+    // =============================
+
+    let insightsDreamsCount = 0;
+    let insightsArtworksCount = 0;
+
+    try {
+      // Сначала попытка агрегировать по колонкам/JSON-полям в dreams (как раньше)
+      const insightsSql = isAll
+        ? `
+          SELECT
+            SUM(COALESCE(insightsCount, 0)) AS insights_sum_col,
+            SUM(COALESCE(artworkInsightsCount, 0)) AS artwork_sum_col,
+            SUM(COALESCE(json_array_length(insights), 0)) AS insights_sum_arr,
+            SUM(COALESCE(json_array_length(similarArtworks), 0)) AS artwork_sum_arr
+          FROM dreams
+          WHERE user = ?
+        `
+        : `
+          SELECT
+            SUM(COALESCE(insightsCount, 0)) AS insights_sum_col,
+            SUM(COALESCE(artworkInsightsCount, 0)) AS artwork_sum_col,
+            SUM(COALESCE(json_array_length(insights), 0)) AS insights_sum_arr,
+            SUM(COALESCE(json_array_length(similarArtworks), 0)) AS artwork_sum_arr
+          FROM dreams
+          WHERE user = ? AND date >= ?
+        `;
+
+      const insightsStmt = isAll
+        ? await d1.prepare(insightsSql).bind(userEmail)
+        : await d1.prepare(insightsSql).bind(userEmail, sinceTs);
+
+      const insightsRes = await insightsStmt.first();
+      const colInsights = Number(insightsRes?.insights_sum_col ?? 0);
+      const arrInsights = Number(insightsRes?.insights_sum_arr ?? 0);
+      const colArt = Number(insightsRes?.artwork_sum_col ?? 0);
+      const arrArt = Number(insightsRes?.artwork_sum_arr ?? 0);
+
+      insightsDreamsCount = Math.max(colInsights, arrInsights);
+      insightsArtworksCount = Math.max(colArt, arrArt);
+
+    } catch (err) {
+      // fallbacks below will try other strategies
+      insightsDreamsCount = 0;
+      insightsArtworksCount = 0;
+    }
+
+    // Дополнительно: посчитаем инсайты по сообщениям, если там выставлены флаги
+    try {
+      const msgsSql = isAll
+        ? `
+          SELECT
+            COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS dreams_with_insight,
+            SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS artworks_insight_messages
+          FROM messages
+          WHERE user = ?
+        `
+        : `
+          SELECT
+            COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS dreams_with_insight,
+            SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS artworks_insight_messages
+          FROM messages
+          WHERE user = ? AND created_at >= ?
+        `;
+
+      const msgsStmt = isAll
+        ? await d1.prepare(msgsSql).bind(userEmail)
+        : await d1.prepare(msgsSql).bind(userEmail, sinceTs);
+
+      const msgsRes = await msgsStmt.first();
+      const dreamsWithInsight = Number(msgsRes?.dreams_with_insight ?? 0);
+      const artworksInsightMsgs = Number(msgsRes?.artworks_insight_messages ?? 0);
+
+      // Объединяем: берём максимум между подсчитанным по dreams и подсчитанным по сообщениям,
+      // т.к. структура может быть разной в базе
+      insightsDreamsCount = Math.max(insightsDreamsCount || 0, dreamsWithInsight || 0);
+      // Для артов — если в dreams есть массив similarArtworks, он даёт количество арт-работ;
+      // сообщения дают количество лайков/инсайтов по арт-работам — сложим (или берём max по логике)
+      insightsArtworksCount = Math.max(insightsArtworksCount || 0, artworksInsightMsgs || 0);
+
+    } catch (e) {
+      console.warn('Failed to aggregate insights from messages:', e);
+      // уже имеющиеся значения сохраняются
+    }
+
+    // === DAILY CONVOS AGGREGATION FOR DASHBOARD ===
+let totalDailyConvos = 0;
+let dailyConvoInsightsCount = 0;
+try {
+  const dailyCountRes = await d1.prepare(`SELECT COUNT(*) AS cnt FROM daily_convos WHERE user = ?`).bind(userEmail).first();
+  totalDailyConvos = Number(dailyCountRes?.cnt ?? 0);
+
+  // Count insights from messages linked to daily_convos (dream_id used)
+  const dailyInsightsRes = await d1.prepare(`
+    SELECT
+      COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS daily_convos_with_insight,
+      SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS daily_artwork_insight_msgs
+    FROM messages
+    WHERE user = ? AND dream_id IN (SELECT id FROM daily_convos WHERE user = ?)
+  `).bind(userEmail, userEmail).first();
+
+  dailyConvoInsightsCount = Number(dailyInsightsRes?.daily_convos_with_insight ?? 0);
+} catch (e) {
+  console.warn('Failed to aggregate daily_convos metrics for dashboard:', e);
+  totalDailyConvos = totalDailyConvos || 0;
+  dailyConvoInsightsCount = dailyConvoInsightsCount || 0;
+}
+
     // 10) Compose response payload (includes old and new fields)
     const payload = {
       period: isAll ? 'all' : `${days}d`,
@@ -2611,7 +3764,13 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       breakdownCounts: bc,
       breakdownPercent: bp,
       recentDreams,
-      lastUpdated: new Date().toISOString()
+      lastUpdated: new Date().toISOString(),
+
+      // === НОВЫЕ ПОЛЯ ===
+      moodCounts,
+      moodTotal,
+      insightsDreamsCount,
+      insightsArtworksCount
     };
 
     return new Response(JSON.stringify(payload), {

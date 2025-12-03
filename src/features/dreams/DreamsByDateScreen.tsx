@@ -1,3 +1,4 @@
+// src/features/daily/DreamsByDateScreen.tsx
 import React, { useMemo } from 'react';
 import {
   Box,
@@ -12,6 +13,8 @@ import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import { useParams, useNavigate } from 'react-router-dom';
 import { alpha } from '@mui/material/styles';
 import type { CalendarStyles } from 'src/features/profile/calendar/MonthView';
+import type { Dream as ApiDream } from 'src/utils/api'; // <-- импорт типа из API
+
 const monthNames = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
   'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
@@ -22,19 +25,11 @@ const dayNames = [
   'Четверг', 'Пятница', 'Суббота'
 ];
 
-type Dream = {
-  id: string;
-  dreamText: string;
-  date: number;
-  title?: string;
-};
-
 interface DreamsByDateScreenProps {
   date?: string; // формат "dd.MM.yyyy"
   onBack?: () => void;
   usePaper?: boolean;
-  dreams?: Dream[];
-  // optional style overrides to keep consistent with other calendar components
+  dreams?: ApiDream[]; // <-- используем тип из API
   calendarStyles?: CalendarStyles;
 }
 
@@ -96,7 +91,6 @@ export function DreamsByDateScreen({
   const navigate = useNavigate();
   const theme = useTheme();
 
-  // merge styles with sensible glass defaults
   const mergedStyles: CalendarStyles = {
     containerBg: alpha('#ffffff', 0.06),
     tileBg: alpha('#ffffff', 0.02),
@@ -111,7 +105,6 @@ export function DreamsByDateScreen({
     ...calendarStyles,
   };
 
-  // parse date string "dd.MM.yyyy" into Date
   const dateObj = useMemo(() => {
     if (!dateStr) return new Date();
     const parts = dateStr.split('.');
@@ -131,7 +124,6 @@ export function DreamsByDateScreen({
         width: '100%',
         mx: 'auto',
         borderRadius: 3,
-        // apply glassmorphism only when usePaper === true (when false, assume parent provides container)
         ...(usePaper
           ? {
               background: mergedStyles.containerBg,
@@ -153,67 +145,73 @@ export function DreamsByDateScreen({
         <Typography sx={{ color: alpha('#ffffff', 0.9) }}>Снов за эту дату нет.</Typography>
       ) : (
         <List disablePadding>
-          {dreams.map((dream) => (
-            <ListItem
-              key={dream.id}
-              onClick={() => navigate(`/dreams/${dream.id}`)}
-              role="button"
-              aria-label={`Открыть сон ${dream.title ?? dream.dreamText}`}
-              sx={{
-                textAlign: 'left',
-                borderRadius: 2,
-                mb: 1.5,
-                p: { xs: 1.25, sm: 1.75 },
-                position: 'relative',
-                cursor: 'pointer',
-                // subtle glass card for each list item
-                background: usePaper ? alpha('#ffffff', 0.03) : alpha('#ffffff', 0.02),
-                border: `1px solid ${alpha('#ffffff', 0.04)}`,
-                boxShadow: '0 4px 10px rgba(2,6,23,0.12)',
-                transition: 'transform 160ms ease, box-shadow 160ms ease, background 160ms ease',
-                '&:hover': {
-                  transform: 'translateY(-6px)',
-                  boxShadow: '0 12px 36px rgba(2,6,23,0.18)',
-                  background: usePaper ? alpha('#ffffff', 0.06) : alpha('#ffffff', 0.04),
-                },
-                minHeight: 56,
-              }}
-            >
-              <ListItemText
-                primary={
-                  <Typography
-                    variant="body1"
-                    sx={{
-                      display: '-webkit-box',
-                      WebkitLineClamp: { xs: 1, sm: 2 },
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'normal',
-                      fontWeight: dream.title ? 700 : 500,
-                      color: alpha('#ffffff', 0.98),
-                    }}
-                  >
-                    {dream.title && dream.title.trim() !== '' ? dream.title : dream.dreamText}
-                  </Typography>
-                }
-                secondary={
-                  <Typography
-                    variant="caption"
-                    sx={{ color: alpha('#ffffff', 0.7), mt: 0.5, display: 'block' }}
-                  >
-                    {new Date(dream.date).toLocaleString('ru-RU', {
-                      day: '2-digit',
-                      month: 'long',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </Typography>
-                }
-              />
-            </ListItem>
-          ))}
+          {dreams.map((dream) => {
+            const titleToShow =
+              typeof dream.title === 'string' && dream.title.trim() !== ''
+                ? dream.title
+                : dream.dreamText;
+
+            return (
+              <ListItem
+                key={dream.id}
+                onClick={() => navigate(`/dreams/${dream.id}`)}
+                role="button"
+                aria-label={`Открыть сон ${dream.title ?? dream.dreamText}`}
+                sx={{
+                  textAlign: 'left',
+                  borderRadius: 2,
+                  mb: 1.5,
+                  p: { xs: 1.25, sm: 1.75 },
+                  position: 'relative',
+                  cursor: 'pointer',
+                  background: usePaper ? alpha('#ffffff', 0.03) : alpha('#ffffff', 0.02),
+                  border: `1px solid ${alpha('#ffffff', 0.04)}`,
+                  boxShadow: '0 4px 10px rgba(2,6,23,0.12)',
+                  transition: 'transform 160ms ease, box-shadow 160ms ease, background 160ms ease',
+                  '&:hover': {
+                    transform: 'translateY(-6px)',
+                    boxShadow: '0 12px 36px rgba(2,6,23,0.18)',
+                    background: usePaper ? alpha('#ffffff', 0.06) : alpha('#ffffff', 0.04),
+                  },
+                  minHeight: 56,
+                }}
+              >
+                <ListItemText
+                  primary={
+                    <Typography
+                      variant="body1"
+                      sx={{
+                        display: '-webkit-box',
+                        WebkitLineClamp: { xs: 1, sm: 2 },
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'normal',
+                        fontWeight: dream.title ? 700 : 500,
+                        color: alpha('#ffffff', 0.98),
+                      }}
+                    >
+                      {titleToShow}
+                    </Typography>
+                  }
+                  secondary={
+                    <Typography
+                      variant="caption"
+                      sx={{ color: alpha('#ffffff', 0.7), mt: 0.5, display: 'block' }}
+                    >
+                      {new Date(dream.date).toLocaleString('ru-RU', {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </Typography>
+                  }
+                />
+              </ListItem>
+            );
+          })}
         </List>
       )}
     </Box>

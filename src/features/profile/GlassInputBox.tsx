@@ -14,6 +14,7 @@ interface GlassInputBoxProps {
   disabled?: boolean;
   onClose?: () => void;
   containerStyle?: React.CSSProperties;
+  placeholder?: string;
 }
 
 export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
@@ -23,19 +24,20 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
   disabled = false,
   onClose,
   containerStyle = {},
+  placeholder = 'Опиши свой сон',
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  const accentColor = 'rgba(88, 120, 255, 0.85)'; // цвет из логотипа
-  const maxHeight = 160; // Максимальная высота поля ввода
+  const accentColor = 'rgba(88, 120, 255, 0.85)';
+  const maxHeight = 160;
 
-  // Автоматическая подстройка высоты textarea с оптимизацией
+  // Подстраиваем высоту textarea
   useEffect(() => {
     if (inputRef.current) {
-      inputRef.current.style.height = 'auto'; // сброс высоты
+      inputRef.current.style.height = 'auto';
       const scrollHeight = inputRef.current.scrollHeight;
       const newHeight = Math.min(scrollHeight, maxHeight) + 'px';
       if (inputRef.current.style.height !== newHeight) {
@@ -45,6 +47,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     }
   }, [value]);
 
+  // Инициализация speech recognition (если доступен)
   useEffect(() => {
     if (!SpeechRecognition) {
       console.warn('SpeechRecognition API not supported in this browser');
@@ -56,9 +59,9 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: any) => {
-  const transcript = event.results[0][0].transcript;
-  onChange(value ? value + ' ' + transcript : transcript);
-};
+      const transcript = event.results[0][0].transcript;
+      onChange(value ? value + ' ' + transcript : transcript);
+    };
 
     recognition.onend = () => {
       setListening(false);
@@ -70,24 +73,24 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     };
 
     recognitionRef.current = recognition;
-  }, [onChange]);
+  }, [onChange, value]);
 
   const handleClickOutside = (e: MouseEvent) => {
-  if (
-    containerRef.current &&
-    !containerRef.current.contains(e.target as Node) &&
-    onClose
-  ) {
-    onClose(); // <-- вызываем только если передан
-  }
-};
+    if (
+      containerRef.current &&
+      !containerRef.current.contains(e.target as Node) &&
+      onClose
+    ) {
+      onClose();
+    }
+  };
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, []);
+  }, [onClose]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -95,6 +98,8 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
       if (value.trim() && !disabled) {
         onSend();
       }
+    } else if (e.key === 'Escape' && onClose) {
+      onClose();
     }
   };
 
@@ -113,7 +118,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     <Box
       ref={containerRef}
       sx={{
-        position: 'relative', // изменено с sticky на relative
+        position: 'relative',
         margin: '0 auto',
         width: 'calc(100% - 32px)',
         maxWidth: 600,
@@ -127,14 +132,14 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
         userSelect: 'none',
         ...containerStyle,
       }}
-      aria-label="Ввод сновидения"
+      aria-label="Ввод"
     >
       <TextField
         variant="filled"
-        placeholder="Опиши свой сон"
+        placeholder={placeholder}
         fullWidth
         multiline
-        maxRows={10} // ограничение по количеству строк (альтернатива maxHeight)
+        maxRows={10}
         value={value}
         onChange={(e) => onChange(e.target.value.slice(0, 4096))}
         onKeyDown={handleKeyDown}
@@ -180,7 +185,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
         <IconButton
           onClick={onSend}
           disabled={disabled}
-          aria-label="Отправить сон"
+          aria-label="Отправить"
           sx={{ ml: 1, p: 0.5, minWidth: 36, minHeight: 36, color: accentColor }}
         >
           <SendIcon />
@@ -189,3 +194,5 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     </Box>
   );
 };
+
+export default GlassInputBox;

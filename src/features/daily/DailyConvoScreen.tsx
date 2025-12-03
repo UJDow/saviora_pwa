@@ -1,54 +1,41 @@
-// DreamDetail.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
   IconButton,
+  Paper,
+  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   Button,
+  CircularProgress,
+  Alert,
   TextField,
   Snackbar,
-  Alert,
-  CircularProgress,
   Autocomplete,
-  Paper,
-  Chip,
   Avatar,
   Tooltip,
-  Badge,
   Menu,
   MenuItem,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import type { SvgIconProps } from '@mui/material/SvgIcon';
+import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import ManageSearchRoundedIcon from '@mui/icons-material/ManageSearchRounded';
-import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
 import InsightsIcon from '@mui/icons-material/Insights';
 import MoodIcon from '@mui/icons-material/Mood';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import {
-  updateDream,
-  deleteDream as apiDeleteDream,
-  getDreams,
-  generateAutoSummary,
-  getDreamInsights,
-  getMoodForDate,
-  setMoodForDate,
-} from '../../utils/api';
-import type { Dream } from '../../utils/api';
-import { DreamBlocks } from './DreamBlocks';
-import type { WordBlock } from './DreamTextSelector';
-import { normalizeInsightsResponse, formatDateTimeRu } from '../../features/insights/helpers';
+import { useNavigate, useParams } from 'react-router-dom';
+
+import * as api from 'src/utils/api';
+import type { DailyConvo as ApiDailyConvo } from 'src/utils/api';
+import { formatDateTimeRu } from 'src/features/insights/helpers';
 import { MOODS, type MoodOption } from 'src/features/profile/mood/MoodIcons';
 
-type EnrichedDreamInsight = {
+type EnrichedDailyConvoInsight = {
   messageId: string;
   text: string;
   blockId: string | null;
@@ -58,34 +45,37 @@ type EnrichedDreamInsight = {
 };
 
 const categories = [
-  'Яркий',
-  'Тревожный',
-  'Спокойный',
-  'Повторяющийся',
-  'Ночной кошмар',
-  'Осознанный',
-  'Другой',
+  'Личное',
+  'Работа',
+  'Учеба',
+  'Здоровье',
+  'Финансы',
+  'Отношения',
+  'Путешествия',
+  'Другое',
 ];
 
-export function DreamDetail() {
+export function DailyConvoScreen() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const isBlockView = searchParams.get('view') === 'blocks';
-
-  const [dream, setDream] = useState<Dream | null>(null);
+  const [convo, setConvo] = useState<ApiDailyConvo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [editedTitle, setEditedTitle] = useState('');
   const [editedText, setEditedText] = useState('');
-  const [editedDreamSummary, setEditedDreamSummary] = useState('');
+  const [editedContext, setEditedContext] = useState<string | null>('');
   const [editedCategory, setEditedCategory] = useState<string | null>(null);
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [dayMood, setDayMood] = useState<string | null>(null);
 
   const [deleting, setDeleting] = useState(false);
+  const [autoSummaryRequested, setAutoSummaryRequested] = useState(false);
+
+  const [insights, setInsights] = useState<EnrichedDailyConvoInsight[] | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(true);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
 
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -96,14 +86,6 @@ export function DreamDetail() {
     message: '',
     severity: 'success',
   });
-
-  const [blocks, setBlocks] = useState<WordBlock[]>([]);
-  const [autoSummaryRequested, setAutoSummaryRequested] = useState(false);
-  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
-
-  const [insights, setInsights] = useState<EnrichedDreamInsight[] | null>(null);
-  const [insightsLoading, setInsightsLoading] = useState(true);
-  const [insightsError, setInsightsError] = useState<string | null>(null);
 
   const [moodAnchorEl, setMoodAnchorEl] = useState<null | HTMLElement>(null);
   const moodMenuOpen = Boolean(moodAnchorEl);
@@ -161,25 +143,6 @@ export function DreamDetail() {
     justifyContent: 'center',
   } as const;
 
-  const cardIconSx = {
-    bgcolor: 'rgba(255,255,255,0.10)',
-    color: 'rgba(255,255,255,0.95)',
-    borderRadius: 1.5,
-    boxShadow: '0 6px 14px rgba(0,0,0,0.10)',
-    border: `1px solid rgba(255,255,255,0.06)`,
-    '&:hover': {
-      bgcolor: 'rgba(255,255,255,0.18)',
-    },
-    p: 0.5,
-    minWidth: 36,
-    minHeight: 36,
-    width: 36,
-    height: 36,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as const;
-
   // Heart mask SVG + small gradient heart sx (to match SimilarArtworksScreen gradient heart)
   const heartSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 6.01 3.99 4 6.5 4c1.74 0 3.41 0.81 4.5 2.09C12.09 4.81 13.76 4 15.5 4 18.01 4 20 6.01 20 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z' /></svg>`;
   const heartMaskUrl = `url("data:image/svg+xml;utf8,${encodeURIComponent(heartSvg)}")`;
@@ -201,46 +164,35 @@ export function DreamDetail() {
     display: 'inline-block',
   } as const;
 
+  // Безопасный перевод timestamp в миллисекунды:
+  const toMs = (v: unknown): number | undefined => {
+    if (v == null || v === '') return undefined;
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!isFinite(n)) return undefined;
+    return n < 1e12 ? n * 1000 : n;
+  };
+
   useEffect(() => {
-    async function fetchDream() {
+    let mounted = true;
+    void (async () => {
       try {
         setLoading(true);
         setError(null);
-
         if (!id) {
-          setError('ID сна не указан');
-          setDream(null);
-          setBlocks([]);
+          setError('ID записи не указан');
+          setConvo(null);
           return;
         }
+        const found = await api.getDailyConvo(id);
+        if (!mounted) return;
+        setConvo(found ?? null);
+        setEditedTitle(found?.title ?? '');
+        setEditedText(found?.notes ?? found?.body ?? '');
+        setEditedContext(found?.context ?? '');
+        setEditedCategory(found?.category ?? null);
 
-        const dreamsResponse = await getDreams();
-        const dreamList = Array.isArray(dreamsResponse) ? dreamsResponse : [];
-
-        if (!dreamList.length) {
-          setError('Сон не найден');
-          setDream(null);
-          setBlocks([]);
-          return;
-        }
-
-        const found = dreamList.find((d) => d.id === id);
-        if (!found) {
-          setError('Сон не найден');
-          setDream(null);
-          setBlocks([]);
-          return;
-        }
-
-        setDream(found);
-        setEditedTitle(found.title || '');
-        setEditedText(found.dreamText);
-        setEditedDreamSummary(found.dreamSummary || '');
-        setEditedCategory(found.category || null);
-
-        // Подтягиваем настроение дня из таблицы moods
-        const dateYmd = new Date(found.date).toISOString().split('T')[0]; // YYYY-MM-DD
-        getMoodForDate(dateYmd)
+        const dateYmd = new Date(toMs(found?.date ?? found?.createdAt) ?? Date.now()).toISOString().split('T')[0];
+        api.getMoodForDate(dateYmd)
           .then(moodId => {
             setDayMood(moodId);
             setSelectedMood(moodId);
@@ -249,34 +201,64 @@ export function DreamDetail() {
             console.warn('Не удалось загрузить настроение дня:', err);
           });
 
-        const blocksFromDream = Array.isArray(found.blocks) ? (found.blocks as WordBlock[]) : [];
-        setBlocks(blocksFromDream);
-        setActiveBlockId(blocksFromDream.length ? blocksFromDream[0].id : null);
       } catch (e: any) {
-        setError(e.message || 'Ошибка загрузки');
-        setDream(null);
-        setBlocks([]);
+        console.error(e);
+        setError(e?.message ?? 'Ошибка загрузки');
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
-    }
-
-    fetchDream();
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [id]);
 
+  // Автоматическая генерация автосаммари при первом заходе
   useEffect(() => {
-    if (!dream?.id) return;
+    if (!convo?.id) return;
+    if (autoSummaryRequested) return;
+    if (convo.autoSummary) return;
+
+    const generateSummary = async () => {
+      setAutoSummaryRequested(true);
+      try {
+        await api.generateAutoSummaryDailyConvo(convo.id, convo.notes ?? convo.body ?? '');
+        const refreshed = await api.getDailyConvo(convo.id);
+        if (refreshed) {
+          setConvo(refreshed);
+        }
+      } catch (e) {
+        console.error('Auto summary generation error:', e);
+      } finally {
+        setAutoSummaryRequested(false);
+      }
+    };
+
+    generateSummary();
+  }, [convo, autoSummaryRequested]);
+
+  useEffect(() => {
+    if (!convo?.id) return;
 
     let mounted = true;
     setInsightsLoading(true);
     setInsightsError(null);
     setInsights(null);
 
-    (async () => {
+    void (async () => {
       try {
-        const raw = await getDreamInsights(dream.id);
+        const raw = await api.getDailyConvoInsights(convo.id);
         if (!mounted) return;
-        const normalized = normalizeInsightsResponse(raw);
+        // Нормализация ответа инсайтов, если требуется, или прямое использование
+        const normalized = raw.map(insight => ({
+          ...insight,
+          createdAt: new Date(toMs(insight.createdAt) ?? Date.now()).toISOString(),
+          text: insight.text,
+          messageId: insight.messageId,
+          blockId: insight.blockId ?? null,
+          insightLiked: insight.insightLiked ?? false,
+          meta: insight.meta ?? {},
+        }));
         setInsights(normalized);
       } catch (err: any) {
         if (!mounted) return;
@@ -291,142 +273,66 @@ export function DreamDetail() {
     return () => {
       mounted = false;
     };
-  }, [dream?.id]);
-
-  useEffect(() => {
-    const run = async () => {
-      if (!isBlockView || autoSummaryRequested) return;
-      if (!dream?.id || !dream?.dreamText) return;
-      if (dream.autoSummary) return;
-
-      setAutoSummaryRequested(true);
-      try {
-        await generateAutoSummary(dream.id, dream.dreamText);
-        const dreamsResponse = await getDreams();
-        const dreamList = Array.isArray(dreamsResponse) ? dreamsResponse : [];
-        const refreshed = dreamList.find((d) => d.id === dream.id);
-        if (refreshed) setDream(refreshed);
-      } catch (err) {
-        console.error('Auto summary error:', err);
-      } finally {
-        setAutoSummaryRequested(false);
-      }
-    };
-
-    run();
-  }, [isBlockView, dream, autoSummaryRequested]);
+  }, [convo?.id]);
 
   const handleSave = async () => {
-    if (!dream) return;
+    if (!convo) return;
     try {
-      const textChanged = editedText.trim() !== dream.dreamText.trim();
+      const textChanged = editedText.trim() !== (convo.notes ?? convo.body ?? '').trim();
 
-      const updated = await updateDream(
-        dream.id,
-        editedText,
-        editedTitle,
-        blocks,
-        dream.globalFinalInterpretation,
-        editedDreamSummary || null,
-        dream.similarArtworks,
-        editedCategory || null,
-        dream.date,
+      const updated = await api.updateDailyConvo(
+        convo.id,
+        editedText, // notes
+        editedTitle || null,
+        undefined, // blocks
+        undefined, // globalFinalInterpretation
+        convo.autoSummary || null, // оставляем текущее autoSummary, чтобы не затирать
+        editedCategory || null, // category
+        editedContext || null, // context
+        undefined // date
       );
-
-      setDream({
-        ...updated,
-        title: editedTitle,
-        dreamSummary: editedDreamSummary || null,
-        category: editedCategory || null,
-      });
+      setConvo(updated);
       setEditing(false);
-      setSnackbar({ open: true, message: 'Сон обновлён', severity: 'success' });
+      setSnackbar({ open: true, message: 'Запись обновлена', severity: 'success' });
 
-      if (textChanged && updated?.id && updated?.dreamText) {
+      if (textChanged && updated?.id && (updated?.notes ?? updated?.body)) {
         try {
-          await generateAutoSummary(updated.id, updated.dreamText);
-          const dreamsResponse = await getDreams();
-          const dreamList = Array.isArray(dreamsResponse) ? dreamsResponse : [];
-          const refreshed = dreamList.find((d) => d.id === updated.id);
-          if (refreshed) setDream(refreshed);
+          setAutoSummaryRequested(true);
+          await api.generateAutoSummaryDailyConvo(updated.id, updated.notes ?? updated.body ?? '');
+          const refreshed = await api.getDailyConvo(updated.id);
+          setConvo(refreshed);
         } catch (e) {
           console.error('Auto summary regen error:', e);
+        } finally {
+          setAutoSummaryRequested(false);
         }
       }
     } catch (e: any) {
-      setSnackbar({ open: true, message: e.message || 'Ошибка обновления', severity: 'error' });
+      setSnackbar({ open: true, message: e?.message ?? 'Ошибка обновления', severity: 'error' });
     }
   };
 
   const handleDelete = async () => {
-    if (!dream) return;
+    if (!convo) return;
     try {
-      await apiDeleteDream(dream.id);
-      setDeleting(false);
-      setSnackbar({ open: true, message: 'Сон удалён', severity: 'success' });
-      navigate(-1);
+      await api.deleteDailyConvo(convo.id);
+      setSnackbar({ open: true, message: 'Запись удалена', severity: 'success' });
+      navigate('/daily');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e.message || 'Ошибка удаления', severity: 'error' });
+      setSnackbar({ open: true, message: e?.message ?? 'Ошибка удаления', severity: 'error' });
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const handleOpenBlockView = (initialBlockId?: string) => {
-    if (initialBlockId) {
-      setActiveBlockId(initialBlockId);
-    } else if (blocks.length) {
-      setActiveBlockId(blocks[0].id);
-    }
-    const next = new URLSearchParams(searchParams.toString());
-    next.set('view', 'blocks');
-    setSearchParams(next, { replace: false });
-  };
-
-  const handleCloseBlockView = () => {
-    const next = new URLSearchParams(searchParams.toString());
-    if (next.has('view')) {
-      next.delete('view');
-      setSearchParams(next, { replace: true });
-    }
-  };
-
-  const handleUndoLastBlock = () => {
-    setBlocks((prev) => {
-      if (!prev.length) return prev;
-      const trimmed = prev.slice(0, -1);
-      const removed = prev[prev.length - 1];
-      if (removed?.id === activeBlockId) {
-        setActiveBlockId(trimmed.length ? trimmed[trimmed.length - 1].id : null);
-      }
-      return trimmed;
-    });
-  };
-
-  const handleGoToDialogue = () => {
-    if (!dream) return;
-    const targetBlock = activeBlockId ?? blocks[0]?.id ?? null;
-    const basePath = `/dreams/${dream.id}/chat`;
-    const url = targetBlock ? `${basePath}?blockId=${encodeURIComponent(targetBlock)}` : basePath;
-    navigate(url);
-  };
-
-  const handleInsightClick = (insight: EnrichedDreamInsight) => {
-    if (!dream) return;
-
-    const matchedBlock = insight.blockId
-      ? blocks.find((block) => block.id === insight.blockId)
-      : null;
-
-    const fallbackBlock = blocks.length ? blocks[0].id : null;
-    const targetBlockId = matchedBlock ? matchedBlock.id : fallbackBlock;
+  const handleInsightClick = (insight: EnrichedDailyConvoInsight) => {
+    if (!convo) return;
 
     const params = new URLSearchParams();
-    if (targetBlockId) {
-      params.set('blockId', targetBlockId);
-    }
     params.set('messageId', insight.messageId);
     params.set('highlight', Date.now().toString());
 
-    navigate(`/dreams/${dream.id}/chat?${params.toString()}`, {
+    navigate(`/daily/${convo.id}/chat?${params.toString()}`, {
       state: {
         highlightMessageId: insight.messageId,
         highlightNonce: Date.now(),
@@ -444,10 +350,10 @@ export function DreamDetail() {
   };
 
   const handleMoodSelect = async (moodId: string) => {
-    if (!dream?.id) return;
+    if (!convo?.id) return;
     try {
-      const dateYmd = new Date(dream.date).toISOString().split('T')[0];
-      await setMoodForDate(dateYmd, moodId);
+      const dateYmd = new Date(toMs(convo.date ?? convo.createdAt) ?? Date.now()).toISOString().split('T')[0];
+      await api.setMoodForDate(dateYmd, moodId);
       setSelectedMood(moodId);
       setDayMood(moodId);
       setSnackbar({ open: true, message: 'Настроение дня обновлено', severity: 'success' });
@@ -458,25 +364,16 @@ export function DreamDetail() {
     }
   };
 
-  useEffect(() => {
-    if (isBlockView) {
-      if (blocks.length && !activeBlockId) {
-        setActiveBlockId(blocks[0].id);
-      }
-    } else {
-      setActiveBlockId(null);
-    }
-  }, [isBlockView, blocks, activeBlockId]);
-
-  const dreamDate = dream?.date ?? null;
+  const convoDate = convo?.date ?? convo?.createdAt ?? null;
   const dateStr = useMemo(() => {
-    if (!dreamDate) return '';
-    return new Date(dreamDate).toLocaleDateString('ru-RU', {
+    const ms = toMs(convoDate);
+    if (!ms) return '';
+    return new Date(ms).toLocaleDateString('ru-RU', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     });
-  }, [dreamDate]);
+  }, [convoDate]);
 
   const filteredInsights = useMemo(() => {
     if (!insights) return [];
@@ -496,6 +393,8 @@ export function DreamDetail() {
   }, [effectiveMoodId]);
 
   const MoodIconComponent = currentMoodOption?.icon as React.ComponentType<SvgIconProps> | undefined;
+
+  const moodGradient = (color: string) => `linear-gradient(135deg, ${color} 0%, rgba(18,22,30,0.06) 100%)`;
 
   if (loading) {
     return (
@@ -521,16 +420,27 @@ export function DreamDetail() {
     );
   }
 
-  if (!dream) return null;
-
-  const moodGradient = (color: string) => `linear-gradient(135deg, ${color} 0%, rgba(18,22,30,0.06) 100%)`;
+  if (!convo) {
+    return (
+      <Box sx={pageSx}>
+        <Box sx={mainCardSx}>
+          <Alert severity="info" sx={{ bgcolor: 'rgba(255,255,255,0.1)', color: '#fff' }}>
+            Дневная запись не найдена
+          </Alert>
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+            <Button variant="contained" onClick={() => navigate('/daily')} sx={{ bgcolor: accentColor }}>Назад</Button>
+          </Box>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={pageSx}>
       <Box sx={mainCardSx}>
         <IconButton
           aria-label="Назад"
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/daily')}
           sx={{
             position: 'absolute',
             top: 16,
@@ -558,8 +468,8 @@ export function DreamDetail() {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2, pt: 6 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Avatar
-              src="/logo.png"
-              alt="Dreamly"
+              src="/logo.png" // Замените на актуальный логотип, если есть
+              alt="Daily Convo"
               sx={{
                 width: 48,
                 height: 48,
@@ -572,14 +482,14 @@ export function DreamDetail() {
               <Typography variant="h5" sx={{ mb: 1, color: '#fff' }}>
                 {dateStr}
               </Typography>
-              {dream.title && (
+              {convo.title && (
                 <Typography variant="h6" sx={{ mb: 1, color: '#fff' }}>
-                  {dream.title}
+                  {convo.title}
                 </Typography>
               )}
-              {dream.category && (
+              {convo.category && (
                 <Chip
-                  label={dream.category}
+                  label={convo.category}
                   size="small"
                   sx={{
                     bgcolor: 'rgba(255,255,255,0.1)',
@@ -727,9 +637,11 @@ export function DreamDetail() {
             <IconButton aria-label="Редактировать" onClick={() => setEditing(true)} sx={iconBtnSxLight}>
               <EditIcon fontSize="small" />
             </IconButton>
-
             <IconButton aria-label="Удалить" onClick={() => setDeleting(true)} sx={iconBtnSxLight}>
               <DeleteIcon fontSize="small" />
+            </IconButton>
+            <IconButton aria-label="Открыть чат" onClick={() => navigate(`/daily/${convo.id}/chat`)} sx={iconBtnSxLight}>
+              <ChatBubbleOutlineRoundedIcon fontSize="small" />
             </IconButton>
           </Box>
         </Box>
@@ -747,7 +659,6 @@ export function DreamDetail() {
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                {/* заменил красную иконку Favorite на градиентное сердце */}
                 <Box sx={heartSxSmall} aria-hidden />
                 <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff' }}>
                   Сохранённые инсайты
@@ -848,8 +759,7 @@ export function DreamDetail() {
               )}
             </Paper>
 
-            {/* далее остальной UI без изменений */}
-            {dream.dreamSummary && (
+            {convo.context && (
               <Paper
                 sx={{
                   p: 2,
@@ -863,12 +773,12 @@ export function DreamDetail() {
                   Контекст:
                 </Typography>
                 <Typography variant="body2" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
-                  {dream.dreamSummary}
+                  {convo.context}
                 </Typography>
               </Paper>
             )}
 
-            {dream.autoSummary && (
+            {convo.autoSummary && (
               <Paper
                 sx={{
                   p: 2,
@@ -882,26 +792,7 @@ export function DreamDetail() {
                   Краткое резюме:
                 </Typography>
                 <Typography variant="body2" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
-                  {dream.autoSummary}
-                </Typography>
-              </Paper>
-            )}
-
-            {dream.globalFinalInterpretation && (
-              <Paper
-                sx={{
-                  p: 2,
-                  mb: 2,
-                  borderRadius: 2,
-                  background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(88,120,255,0.03))',
-                  border: `1px solid ${glassBorder}`,
-                }}
-              >
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1, color: '#fff' }}>
-                  Итоговое толкование сна
-                </Typography>
-                <Typography variant="body2" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
-                  {dream.globalFinalInterpretation}
+                  {convo.autoSummary}
                 </Typography>
               </Paper>
             )}
@@ -919,164 +810,14 @@ export function DreamDetail() {
               }}
             >
               <Typography variant="body1" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
-                {dream.dreamText}
+                {convo.notes ?? convo.body}
               </Typography>
-
-              <Box
-                sx={{
-                  position: 'absolute',
-                  right: 24,
-                  bottom: 24,
-                  display: 'flex',
-                  gap: 1,
-                  alignItems: 'center',
-                  zIndex: 6,
-                }}
-              >
-                <IconButton
-                  aria-label="Найти схожие сновидения"
-                  onClick={() => navigate(`/dreams/${dream.id}/similar`)}
-                  sx={iconBtnSxLight}
-                >
-                  <ManageSearchRoundedIcon />
-                </IconButton>
-
-                <IconButton
-                  aria-label="Перейти к анализу"
-                  onClick={() => handleOpenBlockView()}
-                  sx={iconBtnSxLight}
-                >
-                  <InsightsIcon />
-                </IconButton>
-              </Box>
             </Paper>
-
-            <Dialog
-              open={isBlockView}
-              onClose={handleCloseBlockView}
-              maxWidth="md"
-              fullWidth
-              PaperProps={{
-                sx: {
-                  position: 'relative',
-                  background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-                  backdropFilter: 'blur(18px)',
-                  border: `1px solid ${glassBorder}`,
-                  color: '#fff',
-                  borderRadius: 4,
-                  boxShadow: '0 12px 60px rgba(24,32,80,0.38)',
-                  p: 0,
-                },
-              }}
-            >
-              <DialogTitle sx={{ px: 3, pt: 2, pb: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <IconButton
-                    aria-label="Назад к тексту"
-                    onClick={handleCloseBlockView}
-                    sx={{
-                      color: '#fff',
-                      bgcolor: 'rgba(255,255,255,0.08)',
-                      '&:hover': { bgcolor: 'rgba(255,255,255,0.16)' },
-                    }}
-                  >
-                    <ArrowBackIosNewIcon fontSize="small" />
-                  </IconButton>
-
-                  <Typography variant="h6" sx={{ flexGrow: 1, textAlign: 'center' }}>
-                    Выделите блоки в тексте сна
-                  </Typography>
-
-                  <Tooltip title="Удалить последний блок">
-                    <Badge
-                      overlap="circular"
-                      anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-                      badgeContent={
-                        <Box component="span" sx={{ fontSize: '0.65rem', fontWeight: 700, lineHeight: 1 }}>
-                          -1
-                        </Box>
-                      }
-                      sx={{
-                        '& .MuiBadge-badge': {
-                          pointerEvents: 'none',
-                          background: blocks.length
-                            ? 'linear-gradient(135deg, #a77bff 0%, #80ffea 100%)'
-                            : 'rgba(255,255,255,0.12)',
-                          color: '#fff',
-                          minWidth: 18,
-                          height: 18,
-                          borderRadius: '9px',
-                          boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-                          transform: 'translate(50%,-70%)',
-                          fontSize: '0.65rem',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        },
-                      }}
-                    >
-                      <IconButton
-                        aria-label="Удалить последний блок"
-                        onClick={handleUndoLastBlock}
-                        disabled={!blocks.length}
-                        sx={{
-                          color: blocks.length ? '#fff' : 'rgba(255,255,255,0.3)',
-                          bgcolor: 'rgba(255,255,255,0.08)',
-                          '&:hover': {
-                            bgcolor: blocks.length ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.08)',
-                          },
-                        }}
-                      >
-                        <DeleteOutlineIcon />
-                      </IconButton>
-                    </Badge>
-                  </Tooltip>
-                </Box>
-              </DialogTitle>
-
-              <DialogContent sx={{ px: 3, pt: 1, pb: 6 }}>
-                <DreamBlocks
-                  text={dream.dreamText}
-                  blocks={blocks}
-                  dreamId={dream.id}
-                  onBlocksChange={(next) => {
-                    setBlocks(next);
-                    if (!next.length) {
-                      setActiveBlockId(null);
-                    } else if (!next.some((block) => block.id === activeBlockId)) {
-                      setActiveBlockId(next[next.length - 1].id);
-                    }
-                  }}
-                  activeBlockId={activeBlockId}
-                  onActiveBlockChange={setActiveBlockId}
-                  hideInternalBackButton
-                  hideHeader
-                  onBack={handleCloseBlockView}
-                />
-              </DialogContent>
-
-              <IconButton
-                aria-label="Перейти к диалогу"
-                onClick={handleGoToDialogue}
-                sx={{
-                  position: 'absolute',
-                  right: 24,
-                  bottom: 20,
-                  bgcolor: 'rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.95)',
-                  borderRadius: 2,
-                  boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-                  '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' },
-                }}
-              >
-                <ChatBubbleOutlineRoundedIcon />
-              </IconButton>
-            </Dialog>
           </>
         ) : (
           <Box component="form" sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
-              label="Название сна"
+              label="Заголовок"
               value={editedTitle}
               onChange={(e) => setEditedTitle(e.target.value)}
               fullWidth
@@ -1134,7 +875,7 @@ export function DreamDetail() {
   renderInput={(params) => (
     <TextField
       {...params}
-      label="Категория сна"
+      label="Категория записи"
       sx={{
         '& .MuiOutlinedInput-root': {
           '& fieldset': {
@@ -1165,12 +906,13 @@ export function DreamDetail() {
 />
 
             <TextField
-              label="Контекст сновидения"
-              value={editedDreamSummary}
-              onChange={(e) => setEditedDreamSummary(e.target.value)}
+              fullWidth
+              label="Контекст (коротко)"
+              value={editedContext ?? ''}
+              onChange={(e) => setEditedContext(e.target.value)}
+              variant="outlined"
               multiline
               minRows={3}
-              fullWidth
               sx={{
                 '& .MuiOutlinedInput-root': {
                   '& fieldset': {
@@ -1202,12 +944,13 @@ export function DreamDetail() {
             />
 
             <TextField
-              label="Текст сна"
+              fullWidth
+              label="Запись дня"
+              multiline
+              rows={6}
               value={editedText}
               onChange={(e) => setEditedText(e.target.value)}
-              multiline
-              minRows={4}
-              fullWidth
+              variant="outlined"
               sx={{
                 '& .MuiOutlinedInput-root': {
                   '& fieldset': {
@@ -1237,8 +980,7 @@ export function DreamDetail() {
                 style: { color: '#fff' },
               }}
             />
-
-            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+            <Box sx={{ display: 'flex', gap: 1 }}>
               <Button
                 variant="contained"
                 onClick={handleSave}
@@ -1284,10 +1026,10 @@ export function DreamDetail() {
             },
           }}
         >
-          <DialogTitle>Удалить сон?</DialogTitle>
+          <DialogTitle>Удалить запись?</DialogTitle>
           <DialogContent>
             <Typography sx={{ color: 'rgba(255,255,255,0.85)' }}>
-              Вы уверены, что хотите удалить этот сон? Это действие нельзя отменить.
+              Вы уверены, что хотите удалить эту дневную запись? Это действие нельзя отменить.
             </Typography>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -1336,4 +1078,4 @@ export function DreamDetail() {
   );
 }
 
-export default DreamDetail;
+export default DailyConvoScreen;

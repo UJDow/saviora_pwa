@@ -5,6 +5,7 @@ import 'swiper/css';
 
 import { Box, Typography, useTheme } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import { useMediaQuery } from '@mui/material';
 
 const daysShort = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const monthNames = [
@@ -32,7 +33,7 @@ function getWeekDates(monday: Date) {
 }
 
 interface CalendarLineProps {
-  dreamDates: string[]; // формат: "dd.MM.yyyy"
+  eventDates: string[];
   selectedDate: Date;
   onDateClick?: (date: string) => void;
   onMonthYearClick?: () => void;
@@ -41,7 +42,7 @@ interface CalendarLineProps {
 }
 
 export function CalendarLine({
-  dreamDates,
+  eventDates,
   selectedDate,
   onDateClick,
   onMonthYearClick,
@@ -49,6 +50,9 @@ export function CalendarLine({
   hideMonthYearTitle = false,
 }: CalendarLineProps) {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTablet = useMediaQuery(theme.breakpoints.between('sm', 'md'));
+  
   const [currentMonday, setCurrentMonday] = useState(() => getMonday(selectedDate));
 
   useEffect(() => {
@@ -58,6 +62,12 @@ export function CalendarLine({
   const swiperRef = useRef<SwiperType | null>(null);
   const isProgrammaticSlideRef = useRef(false);
 
+  // Адаптивные размеры
+  const daySize = isMobile ? 36 : isTablet ? 40 : 44;
+  const fontSize = isMobile ? 12 : isTablet ? 13 : 14;
+  const dotSize = isMobile ? 4 : 6;
+  const containerMaxWidth = isMobile ? 320 : isTablet ? 420 : 520;
+
   const slides = useMemo(() => {
     return [-2, -1, 0, 1, 2].map(offset => {
       const monday = addDays(currentMonday, offset * 7);
@@ -65,16 +75,15 @@ export function CalendarLine({
     });
   }, [currentMonday]);
 
-  const hasDream = (d: Date) => {
+  const hasEvent = (d: Date) => {
     const day = d.getDate().toString().padStart(2, '0');
     const month = (d.getMonth() + 1).toString().padStart(2, '0');
     const year = d.getFullYear();
     const dateStr = `${day}.${month}.${year}`;
-    return dreamDates.includes(dateStr);
+    return eventDates.includes(dateStr);
   };
 
   const displayMonth = monthNames[currentMonday.getMonth()];
-  // const displayYear = currentMonday.getFullYear(); // год не нужен по требованию
 
   const onSlideChange = (swiper: any) => {
     if (isProgrammaticSlideRef.current) {
@@ -100,12 +109,11 @@ export function CalendarLine({
     <Box
       sx={{
         userSelect: 'none',
-        maxWidth: 520,
+        maxWidth: containerMaxWidth,
         mx: 'auto',
-        px: 2,
-        py: 1,
-        borderRadius: 3,
-        // Убираем видимый glass контейнер — делаем прозрачным, без бордера/теней
+        px: isMobile ? 1 : 2,
+        py: isMobile ? 0.5 : 1,
+        borderRadius: isMobile ? 2 : 3,
         background: 'transparent',
         backdropFilter: 'none',
         WebkitBackdropFilter: 'none',
@@ -116,10 +124,10 @@ export function CalendarLine({
     >
       {!hideMonthYearTitle && (
         <Typography
-          variant="subtitle1"
+          variant={isMobile ? "subtitle2" : "subtitle1"}
           align="center"
           sx={{
-            mb: 1,
+            mb: isMobile ? 0.5 : 1,
             userSelect: 'none',
             cursor: 'pointer',
             fontWeight: 600,
@@ -132,20 +140,28 @@ export function CalendarLine({
           }}
           onClick={() => onMonthYearClick && onMonthYearClick()}
         >
-          {displayMonth} {/* теперь только название месяца, без года */}
+          {displayMonth}
         </Typography>
       )}
 
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+      <Box 
+        sx={{ 
+          display: 'grid',
+          gridTemplateColumns: `repeat(7, 1fr)`,
+          gap: isMobile ? 0.5 : 1,
+          mb: isMobile ? 0.5 : 1,
+          px: isMobile ? 0.5 : 1
+        }}
+      >
         {daysShort.map(day => (
           <Typography
             key={day}
             variant="caption"
             sx={{
-              width: 44,
               textAlign: 'center',
               color: alpha('#ffffff', 0.9),
               opacity: 0.9,
+              fontSize: isMobile ? 11 : 12,
             }}
           >
             {day}
@@ -163,24 +179,26 @@ export function CalendarLine({
         speed={320}
         resistanceRatio={0}
         allowTouchMove={true}
-        style={{ padding: '4px 0' }}
+        style={{ padding: isMobile ? '2px 0' : '4px 0' }}
       >
         {slides.map((weekDates, idx) => (
           <SwiperSlide key={idx}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', px: 1 }}>
+            <Box 
+              sx={{ 
+                display: 'grid',
+                gridTemplateColumns: `repeat(7, 1fr)`,
+                gap: isMobile ? 0.5 : 1,
+                px: isMobile ? 0.5 : 1
+              }}
+            >
               {weekDates.map(date => {
-                const dreamExists = hasDream(date);
+                const eventExists = hasEvent(date);
                 const isToday = date.toDateString() === new Date().toDateString();
                 const isCurrentMonth = date.getMonth() === currentMonday.getMonth();
                 const isSelected = date.toDateString() === selectedDate.toDateString();
 
                 const mutedText = alpha('#ffffff', 0.75);
-
-                // Новый визуал:
-                // - круглая карточка (borderRadius: '50%')
-                // - если есть сон -> мягкий светлый фон (не синий)
-                // - если выбран -> яркий акцентный градиент + белая обводка
-                const dreamBg = 'rgba(255, 255, 255, 0.08)'; // мягкий светлый тон для дат с сном
+                const eventBg = 'rgba(255, 255, 255, 0.08)';
                 const selectedBg = `linear-gradient(180deg, ${alpha('#5878FF', 0.20)}, ${alpha('#8A5CFF', 0.12)})`;
 
                 return (
@@ -188,11 +206,11 @@ export function CalendarLine({
                     key={date.toISOString()}
                     onClick={() => onDateClick && onDateClick(date.toLocaleDateString('ru-RU'))}
                     sx={{
-                      width: 44,
-                      height: 44,
-                      minWidth: 44,
-                      minHeight: 44,
-                      borderRadius: '50%', // круг
+                      width: daySize,
+                      height: daySize,
+                      minWidth: daySize,
+                      minHeight: daySize,
+                      borderRadius: '50%',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -203,11 +221,11 @@ export function CalendarLine({
                       transition: 'transform 140ms ease, box-shadow 140ms ease, background-color 200ms ease',
                       background: isSelected
                         ? selectedBg
-                        : dreamExists
-                          ? dreamBg
+                        : eventExists
+                          ? eventBg
                           : 'transparent',
-                      color: isSelected || dreamExists ? '#fff' : (isCurrentMonth ? mutedText : alpha('#ffffff', 0.5)),
-                      fontWeight: isSelected || dreamExists ? 700 : 500,
+                      color: isSelected || eventExists ? '#fff' : (isCurrentMonth ? mutedText : alpha('#ffffff', 0.5)),
+                      fontWeight: isSelected || eventExists ? 700 : 500,
                       border: isToday
                         ? `2px solid ${alpha('#5878FF', 0.95)}`
                         : isSelected
@@ -223,28 +241,29 @@ export function CalendarLine({
                           : `0 6px 14px ${alpha('#000', 0.06)}`,
                         background: isSelected
                           ? `linear-gradient(180deg, ${alpha('#5878FF', 0.28)}, ${alpha('#8A5CFF', 0.16)})`
-                          : dreamExists
-                            ? dreamBg
+                          : eventExists
+                            ? eventBg
                             : alpha('#ffffff', 0.06),
                       },
+                      margin: '0 auto',
                     }}
                     aria-label={`День ${date.getDate()}`}
                     role={onDateClick ? 'button' : 'presentation'}
                   >
-                    <Box component="span" sx={{ lineHeight: 1, fontSize: 14 }}>
+                    <Box component="span" sx={{ lineHeight: 1, fontSize: fontSize }}>
                       {date.getDate()}
                     </Box>
 
                     <Box
                       sx={{
-                        width: 6,
-                        height: 6,
+                        width: dotSize,
+                        height: dotSize,
                         borderRadius: '50%',
                         mt: 0.5,
-                        background: dreamExists && !isSelected ? alpha('#ffffff', 0.85) : 'transparent',
-                        opacity: dreamExists && !isSelected ? 1 : 0,
+                        background: eventExists && !isSelected ? alpha('#ffffff', 0.85) : 'transparent',
+                        opacity: eventExists && !isSelected ? 1 : 0,
                         transition: 'opacity 180ms ease, transform 180ms ease',
-                        transform: dreamExists && !isSelected ? 'translateY(0)' : 'translateY(-2px)',
+                        transform: eventExists && !isSelected ? 'translateY(0)' : 'translateY(-2px)',
                       }}
                     />
                   </Box>

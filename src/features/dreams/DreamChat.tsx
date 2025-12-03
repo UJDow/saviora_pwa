@@ -1,3 +1,4 @@
+// DreamChat.tsx (обновлённый)
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import {
@@ -310,16 +311,58 @@ export const DreamChat: React.FC = () => {
           setFinalInterpretationText(found.globalFinalInterpretation);
         }
 
+        // === ИЗМЕНЕНИЕ ЛОГИКИ ===
+        // Если blockId указан и найден — используем его
         if (blockId && Array.isArray(found.blocks)) {
           const block = (found.blocks as any[]).find((b: WordBlock) => b.id === blockId);
           if (block) {
             setCurrentBlock(block);
-          } else {
-            setError('Блок не найден');
+            return;
           }
-        } else {
-          setError('Не указан блок для анализа');
         }
+
+        // Если blockId не указан или не найден, и есть messageId — ищем блок по сообщению
+        if (messageId && Array.isArray(found.blocks)) {
+          let foundTargetBlock: WordBlock | null = null;
+          let foundTargetMessageId: string | null = null;
+
+          for (const rawBlock of found.blocks as any[]) {
+            const candidateBlock = rawBlock as WordBlock;
+            if (!candidateBlock?.id) continue;
+
+            try {
+              const resp = await getChat(found.id, candidateBlock.id);
+              const candidateMessages = (resp.messages || []).map((m: any) => ({
+                id: m.id,
+              }));
+
+              if (candidateMessages.some((m: any) => m.id === messageId)) {
+                foundTargetBlock = candidateBlock;
+                foundTargetMessageId = messageId;
+                break;
+              }
+            } catch (innerErr) {
+              console.error(`[DreamChat] Failed to load chat for block '${candidateBlock.id}':`, innerErr);
+            }
+          }
+
+          if (foundTargetBlock && foundTargetMessageId) {
+            // Перенаправляем на правильный blockId
+            navigate(
+              `/dreams/${found.id}/chat?blockId=${encodeURIComponent(foundTargetBlock.id)}&messageId=${encodeURIComponent(foundTargetMessageId)}`,
+              { replace: true }
+            );
+            setCurrentBlock(foundTargetBlock);
+            return;
+          } else {
+            setError(`Сообщение не найдено ни в одном блоке.`);
+            enqueueSnackbar('Сообщение не найдено в блоках этого сна.', { variant: 'warning' });
+            return;
+          }
+        }
+
+        // Если blockId не указан и messageId тоже — ошибка
+        setError('Не указан блок для анализа');
       } catch (e: any) {
         setError(e.message || 'Ошибка загрузки данных');
       } finally {
@@ -327,7 +370,7 @@ export const DreamChat: React.FC = () => {
       }
     }
     fetchData();
-  }, [id, blockId]);
+  }, [id, blockId, messageId, navigate, enqueueSnackbar]);
 
   useEffect(() => {
     if (messageId && !hasScrolledToTargetRef.current) return;
@@ -403,7 +446,6 @@ export const DreamChat: React.FC = () => {
         setMessages(msgs);
 
         if (msgs.length === 0 && kickoffDoneRef.current !== currentBlock.id && !kickoffInProgressRef.current && !sendingReply) {
-          // показываем центрированный индикатор сразу (setSendingReply здесь нужен для UI)
           setSendingReply(true);
           await runKickoff();
         }
@@ -413,74 +455,12 @@ export const DreamChat: React.FC = () => {
         setMessagesLoading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dream?.id, currentBlock?.id]);
-
-  useEffect(() => {
-    if (!messageId || !dream?.id || !currentBlock?.id) return;
-    if (messages.length === 0) return;
-
-    const alreadyHere = messages.some((m) => m.id === messageId);
-    if (alreadyHere) {
-      failedMessageSearchRef.current = null;
-      return;
-    }
-
-    if (!Array.isArray(dream.blocks) || dream.blocks.length === 0) return;
-    if (failedMessageSearchRef.current === messageId) return;
-    if (resolvingMessageRef.current) return;
-
-    resolvingMessageRef.current = true;
-
-    (async () => {
-      try {
-        for (const rawBlock of dream.blocks as any[]) {
-          const candidate = rawBlock as WordBlock;
-          if (!candidate?.id || candidate.id === currentBlock.id) continue;
-
-          try {
-            const resp = await getChat(dream.id as string, candidate.id);
-            const candidateMessages = (resp.messages || []).map((m: any) => ({
-              id: m.id,
-              text: m.content,
-              sender: mapDbToUi(m.role as Role),
-              role: m.role as Role,
-              timestamp: toTimestamp(m.createdAt ?? m.created_at),
-              meta: m.meta ?? null,
-              insightLiked: Boolean(m.meta?.insightLiked),
-            })) as Message[];
-
-            if (candidateMessages.some((m) => m.id === messageId)) {
-              skipNextFetchRef.current = true;
-              failedMessageSearchRef.current = null;
-              kickoffDoneRef.current = candidate.id;
-              setCurrentBlock(candidate);
-              setMessages(candidateMessages);
-              setError(null);
-              navigate(
-                `/dreams/${dream.id}/chat?blockId=${encodeURIComponent(candidate.id)}&messageId=${encodeURIComponent(messageId)}`,
-                { replace: true },
-              );
-              return;
-            }
-          } catch (innerErr) {
-            console.error('Не удалось загрузить чат блока', candidate?.id, innerErr);
-          }
-        }
-
-        failedMessageSearchRef.current = messageId;
-        enqueueSnackbar('Не удалось найти сообщение в других блоках', { variant: 'warning' });
-      } finally {
-        resolvingMessageRef.current = false;
-      }
-    })();
-  }, [messageId, messages, dream, currentBlock?.id, navigate, enqueueSnackbar]);
+  }, [dream?.id, currentBlock?.id, sendingReply]);
 
   useEffect(() => {
     (async () => {
       await recomputeInterpretedCount();
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dream?.id, dream?.blocks]);
 
   async function recomputeInterpretedCount() {
@@ -1142,7 +1122,6 @@ export const DreamChat: React.FC = () => {
             </Box>
           </Box>
         )}
-        {/* Показываем левый индикатор отправки только если уже есть сообщения (чтобы не дублировать стартовый центрированный индикатор) */}
         {sendingReply && !generatingInterpretation && messages.length > 0 && (
           <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

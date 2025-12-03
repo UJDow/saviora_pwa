@@ -24,7 +24,7 @@ export interface Dream {
   id: string;
   dreamText: string;
   title?: string | null;
-  date: number;
+  date: number; // milliseconds
   blocks?: any[];
   globalFinalInterpretation?: string | null;
   dreamSummary?: string | null;
@@ -62,6 +62,33 @@ export interface DreamInsight {
   meta?: Record<string, unknown>;
 }
 
+// === ТИПЫ DAILY CONVO ===
+
+export interface DailyConvo {
+  id: string;
+  notes: string;
+  body?: string | null;
+  title?: string | null;
+  date?: number | string | null; // will be normalized to milliseconds where used
+  blocks?: any[];
+  globalFinalInterpretation?: string | null;
+  autoSummary?: string | null;
+  category?: string | null;
+  context?: string | null;
+  createdAt?: number | string | null;
+  updatedAt?: number | string | null;
+}
+
+export interface DailyConvoInsight {
+  messageId: string;
+  text: string;
+  createdAt: string;
+  blockId: string | null;
+  insightLiked?: boolean;
+  insightArtworksLiked?: boolean;
+  meta?: Record<string, unknown>;
+}
+
 // === БАЗОВЫЙ ЗАПРОС ===
 
 export async function request<T>(
@@ -81,26 +108,66 @@ export async function request<T>(
     }
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  const url = `${API_URL}${path}`;
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (err) {
+    // сетевые ошибки
+    console.error('Network error when calling', url, options, err);
+    throw new Error(`Network error when calling ${path}: ${String(err)}`);
+  }
 
   const text = await res.text();
   let data: any;
   try {
     data = JSON.parse(text);
   } catch {
-    data = { error: text };
+    data = { _raw: text };
   }
 
   if (!res.ok) {
-    throw new Error(data.error || `Ошибка запроса: ${res.status}`);
+    // детальный лог для отладки
+    console.error('API error', {
+      url,
+      status: res.status,
+      statusText: res.statusText,
+      requestOptions: options,
+      responseText: text,
+      parsed: data,
+    });
+
+    // пробрасываем сообщение, содержащее статус и тело ответа
+    const errMsg = data?.error || data?.message || data?._raw || `Ошибка запроса: ${res.status}`;
+    const err = new Error(`${errMsg}`);
+    // @ts-ignore добавим поля для удобства при обработке в UI
+    (err as any).status = res.status;
+    (err as any).response = data;
+    throw err;
   }
+
   return data as T;
 }
 
 // === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+
+// Преобразует значение в миллисекунды (number) или undefined.
+// Если приходит число в секундах (меньше 1e12), умножаем на 1000.
+const normalizeTimestampToMs = (value: unknown): number | undefined => {
+  if (value == null || value === '') return undefined;
+  if (typeof value === 'number') {
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === 'string' && !isNaN(Number(value))) {
+    const n = Number(value);
+    return n < 1e12 ? n * 1000 : n;
+  }
+  return undefined;
+};
 
 const normalizeCreatedAt = (value: unknown): string => {
   if (typeof value === 'string') {
@@ -147,6 +214,38 @@ const mapChatMessage = (message: any): ChatMessage => {
   };
 };
 
+// Нормализует объект dailyConvo, возвращая поля date/createdAt/updatedAt в миллисекундах (числа)
+const normalizeDailyConvo = (dc: any): DailyConvo => {
+  const dateMs = normalizeTimestampToMs(dc.date) ?? normalizeTimestampToMs(dc.createdAt) ?? Date.now();
+  const createdAtMs = normalizeTimestampToMs(dc.createdAt) ?? dateMs;
+  const updatedAtMs = normalizeTimestampToMs(dc.updatedAt) ?? createdAtMs;
+
+  return {
+    ...dc,
+    date: dateMs,
+    createdAt: createdAtMs,
+    updatedAt: updatedAtMs,
+  } as DailyConvo;
+};
+
+export const generateAutoSummaryDailyConvo = (
+  dailyConvoId: string,
+  notes: string
+) =>
+  request<{ success: boolean; autoSummary: string }>('/generate_auto_summary_daily_convo', {
+    method: 'POST',
+    body: JSON.stringify({ dailyConvoId, notes }),
+  }, true);
+
+// Нормализует dream объект (date -> ms)
+const normalizeDream = (d: any): Dream => {
+  const dateMs = normalizeTimestampToMs(d.date) ?? Date.now();
+  return {
+    ...d,
+    date: dateMs,
+  } as Dream;
+};
+
 // === АВТОРИЗАЦИЯ ===
 
 export const login = (email: string, password: string) =>
@@ -167,10 +266,12 @@ export const getMe = () =>
 // === DREAMS CRUD ===
 
 export const getDreams = () =>
-  request<Dream[]>('/dreams', {}, true);
+  request<Dream[]>('/dreams', {}, true).then((data) =>
+    (data || []).map((d) => normalizeDream(d))
+  );
 
 export const getDream = (id: string) =>
-  request<Dream>(`/dreams/${id}`, {}, true);
+  request<Dream>(`/dreams/${id}`, {}, true).then((d) => normalizeDream(d));
 
 export const addDream = (
   dreamText: string,
@@ -196,7 +297,7 @@ export const addDream = (
       }),
     },
     true
-  );
+  ).then((d) => normalizeDream(d));
 
 export const updateDream = (
   id: string,
@@ -225,7 +326,7 @@ export const updateDream = (
       }),
     },
     true
-  );
+  ).then((d) => normalizeDream(d));
 
 export const deleteDream = (id: string) =>
   request<{ success: boolean }>(`/dreams/${id}`, {
@@ -347,25 +448,17 @@ export const interpretFinal = (
 
 // === ИНСАЙТЫ ===
 
-/**
- * Лайк/дислайк сообщения.
- * @param dreamId ID сна
- * @param messageId ID сообщения
- * @param liked true/false
- * @param blockId (опционально) ID блока (например artwork)
- */
-
 export const toggleMessageLike = (
   dreamId: string,
   messageId: string,
   liked: boolean,
-  blockId?: string // ← новый параметр
+  blockId?: string
 ) =>
   request<any>(
     `/dreams/${encodeURIComponent(dreamId)}/messages/${encodeURIComponent(messageId)}/like`,
     {
       method: 'PUT',
-      body: JSON.stringify({ liked, blockId }), // ← передаём blockId
+      body: JSON.stringify({ liked, blockId }),
     },
     true
   ).then(mapChatMessage);
@@ -382,7 +475,6 @@ export const getDreamInsights = (
   ).then(({ insights }) => insights);
 };
 
-// Удобный alias для запроса только artwork-инсайтов
 export const getDreamArtworksInsights = (dreamId: string) =>
   getDreamInsights(dreamId, { metaKey: 'insightArtworksLiked' });
 
@@ -416,3 +508,216 @@ export const setMoodForDate = (dateStr: string, moodId: string) =>
     },
     true
   );
+
+export const setMoodForDream = (dreamId: string, moodId: string) =>
+  request<void>(
+    `/dreams/${encodeURIComponent(dreamId)}/mood`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ context: moodId }),
+    },
+    true
+  );
+
+// === DAILY CONVOS CRUD ===
+
+export const getDailyConvos = () =>
+  request<DailyConvo[]>('/daily_convos', {}, true).then((data) =>
+    (data || []).map((dc) => normalizeDailyConvo(dc))
+  );
+
+export const getDailyConvo = (id: string) =>
+  request<DailyConvo>(`/daily_convos/${encodeURIComponent(id)}`, {}, true).then((dc) =>
+    normalizeDailyConvo(dc)
+  );
+
+// addDailyConvo: добавил опциональный параметр date (ожидается seconds OR ms)
+export const addDailyConvo = (
+  notes: string,
+  title?: string | null,
+  blocks: any[] = [],
+  globalFinalInterpretation: string | null = null,
+  autoSummary: string | null = null,
+  date?: number
+) =>
+  request<DailyConvo>('/daily_convos', {
+    method: 'POST',
+    body: JSON.stringify({
+      notes,
+      title: title || null,
+      blocks,
+      globalFinalInterpretation,
+      autoSummary,
+      ...(typeof date !== 'undefined' ? { date } : {}),
+    }),
+  }, true).then((dc) => normalizeDailyConvo(dc));
+
+export const updateDailyConvo = (
+  id: string,
+  notes: string,
+  title?: string | null,
+  blocks?: any[],
+  globalFinalInterpretation?: string | null,
+  autoSummary?: string | null,
+  category?: string | null,
+  context?: string | null,
+  date?: number
+) =>
+  request<DailyConvo>(
+    `/daily_convos/${encodeURIComponent(id)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({
+        notes,
+        title: title ?? null,
+        blocks: blocks ?? [],
+        globalFinalInterpretation: globalFinalInterpretation ?? null,
+        autoSummary: autoSummary ?? null,
+        category: category ?? null,
+        context: context ?? null, // <- теперь отправляем context
+        ...(typeof date === 'number' ? { date } : {}),
+      }),
+    },
+    true
+  ).then((dc) => normalizeDailyConvo(dc));
+
+export const deleteDailyConvo = (id: string) =>
+  request<{ success: boolean }>(`/daily_convos/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, true);
+
+// === DAILY CONVO CHAT ===
+
+export const getDailyConvoChat = (dailyConvoId: string) =>
+  request<{ messages: any[] }>(
+    `/daily_chat?dailyConvoId=${encodeURIComponent(dailyConvoId)}`,
+    {},
+    true
+  ).then(({ messages }) => ({
+    messages: messages.map(mapChatMessage),
+  }));
+
+export const appendDailyConvoChat = (params: {
+  id?: string;
+  dailyConvoId: string;
+  role: ChatRole;
+  content: string;
+  meta?: ChatMessageMeta;
+}) =>
+  request<any>(
+    '/daily_chat',
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+    true
+  ).then(mapChatMessage);
+
+export const clearDailyConvoChat = (dailyConvoId: string) =>
+  request<{ success: boolean }>(
+    `/daily_chat?dailyConvoId=${encodeURIComponent(dailyConvoId)}`,
+    { method: 'DELETE' },
+    true
+  );
+
+// === DAILY CONVO ANALYTICS ===
+
+export const analyzeDailyConvo = (
+  notesText: string,
+  lastTurns?: any[],
+  extraSystemPrompt?: string,
+  dailyConvoId?: string,
+  blockId?: string, // Добавлен blockId
+  autoSummary?: string | null,
+  context?: string | null
+) =>
+  request<any>('/analyze_daily_convo', {
+    method: 'POST',
+    body: JSON.stringify({
+      notesText,
+      lastTurns: lastTurns || [],
+      extraSystemPrompt,
+      dailyConvoId,
+      blockId, // Передаем blockId
+      autoSummary,
+      context,
+    }),
+  }, true);
+
+export const interpretBlockDailyConvo = (
+  notesText: string,
+  dailyConvoId?: string,
+  blockType?: 'dialog' | 'art', // Добавлен blockType
+  autoSummary?: string | null,
+  context?: string | null
+) =>
+  request<{ interpretation: string }>(
+    '/interpret_block_daily_convo',
+    {
+      method: 'POST',
+      body: JSON.stringify({ notesText, dailyConvoId, blockType, autoSummary, context }),
+    },
+    true
+  );
+
+export const interpretFinalDailyConvo = (
+  notesText: string,
+  dailyConvoId?: string,
+  autoSummary?: string | null,
+  context?: string | null
+) =>
+  request<{ interpretation: string }>(
+    '/interpret_final_daily_convo',
+    {
+      method: 'POST',
+      body: JSON.stringify({ notesText, dailyConvoId, autoSummary, context }),
+    },
+    true
+  );
+
+// === DAILY CONVO INSIGHTS ===
+
+export const toggleDailyConvoMessageLike = (
+  dailyConvoId: string,
+  messageId: string,
+  liked: boolean,
+  blockId?: string
+) =>
+  request<any>(
+    `/daily_convos/${encodeURIComponent(dailyConvoId)}/messages/${encodeURIComponent(messageId)}/like`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ liked, blockId }),
+    },
+    true
+  ).then(mapChatMessage);
+
+export const getDailyConvoInsights = (
+  dailyConvoId: string,
+  opts?: { metaKey?: 'insightArtworksLiked' | 'insightLiked' }
+) => {
+  const q = opts?.metaKey ? `?metaKey=${encodeURIComponent(opts.metaKey)}` : '';
+  return request<{ insights: DailyConvoInsight[] }>(
+    `/daily_convos/${encodeURIComponent(dailyConvoId)}/insights${q}`,
+    {},
+    true
+  ).then(({ insights }) => insights);
+};
+
+export const getDailyConvoArtworksInsights = (dailyConvoId: string) =>
+  getDailyConvoInsights(dailyConvoId, { metaKey: 'insightArtworksLiked' });
+
+export const toggleDailyConvoArtworkInsight = (
+  dailyConvoId: string,
+  messageId: string,
+  liked: boolean,
+  blockId?: string
+) =>
+  request<any>(
+    `/daily_convos/${encodeURIComponent(dailyConvoId)}/messages/${encodeURIComponent(messageId)}/artwork_like`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ liked, blockId }),
+    },
+    true
+  ).then(mapChatMessage);

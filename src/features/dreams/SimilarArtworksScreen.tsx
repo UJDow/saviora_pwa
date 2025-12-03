@@ -6,6 +6,8 @@ import {
   findSimilarArtworks,
   updateDream,
   getDreamArtworksInsights,
+  getMoodForDate,
+  setMoodForDate,
 } from '../../utils/api';
 import type { Dream, SimilarArtwork } from '../../utils/api';
 import {
@@ -27,13 +29,15 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Menu,
+  MenuItem,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
 import DeleteIcon from '@mui/icons-material/Delete';
-// удалил импорт FavoriteIcon, теперь не используем его напрямую
-// import FavoriteIcon from '@mui/icons-material/Favorite';
+import MoodIcon from '@mui/icons-material/Mood';
 
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import PaletteIcon from '@mui/icons-material/Palette';
@@ -45,6 +49,9 @@ import AutoStoriesIcon from '@mui/icons-material/AutoStories';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import ArtTrackIcon from '@mui/icons-material/ArtTrack';
+import { normalizeInsightsResponse, formatDateTimeRu } from '../../features/insights/helpers';
+import { MOODS, type MoodOption } from 'src/features/profile/mood/MoodIcons';
+import type { SvgIconProps } from '@mui/material/SvgIcon';
 
 type ArtworkType =
   | 'painting'
@@ -135,311 +142,6 @@ function detectType(art: SimilarArtwork): ArtworkType {
   return 'default';
 }
 
-/* =========================
-   Helpers (insights normalization + utils)
-   ========================= */
-
-type EnrichedDreamInsight = {
-  messageId: string;
-  text: string;
-  blockId: string | null;
-  createdAt: string;
-  insightLiked?: boolean;
-  meta?: Record<string, any>;
-};
-
-const stringifyId = (value: unknown): string => {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return '';
-};
-
-const ensureIsoString = (value: unknown): string => {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'string' || typeof value === 'number') {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
-  }
-  return new Date().toISOString();
-};
-
-const toBooleanFlag = (value: unknown): boolean => {
-  if (value === null || value === undefined) return false;
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number(value) === 1;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    return ['1', 'true', 'yes', 'да'].includes(normalized);
-  }
-  return false;
-};
-
-const extractPlainText = (value: unknown, seen = new WeakSet<object>()): string => {
-  const fragments: string[] = [];
-
-  const push = (str: string) => {
-    const trimmed = str.trim();
-    if (!trimmed) return;
-    if (!fragments.includes(trimmed)) {
-      fragments.push(trimmed);
-    }
-  };
-
-  const visit = (node: unknown) => {
-    if (node == null) return;
-
-    const type = typeof node;
-
-    if (type === 'string') {
-      push(node as string);
-      return;
-    }
-
-    if (type === 'number' || type === 'boolean' || type === 'bigint') {
-      push(String(node));
-      return;
-    }
-
-    if (Array.isArray(node)) {
-      node.forEach(visit);
-      return;
-    }
-
-    if (type === 'object') {
-      const obj = node as Record<string, unknown>;
-      if (seen.has(obj)) return;
-      seen.add(obj);
-
-      const priorityKeys = [
-        'text',
-        'content',
-        'message',
-        'summary',
-        'output',
-        'outputText',
-        'chunks',
-        'parts',
-        'messages',
-        'data',
-        'value',
-        'response',
-        'body',
-        'payload',
-        'suggestion',
-        'details',
-      ];
-
-      for (const key of priorityKeys) {
-        if (key in obj) visit(obj[key]);
-      }
-
-      for (const val of Object.values(obj)) {
-        if (typeof val === 'string') {
-          push(val);
-        } else if (typeof val === 'object') {
-          visit(val);
-        }
-      }
-    }
-  };
-
-  visit(value);
-  return fragments.join('\n');
-};
-
-const parseMetaObject = (raw: unknown): Record<string, any> => {
-  if (!raw || typeof raw !== 'object') {
-    if (typeof raw === 'string') {
-      try {
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? (parsed as Record<string, any>) : {};
-      } catch {
-        return {};
-      }
-    }
-    return {};
-  }
-  return { ...(raw as Record<string, unknown>) };
-};
-
-const normalizeInsightMeta = (entry: any): Record<string, any> => {
-  const primaryMeta = parseMetaObject(entry.meta);
-  const fallbackMeta = parseMetaObject(entry.metadata);
-
-  const meta: Record<string, any> = {
-    ...fallbackMeta,
-    ...primaryMeta,
-  };
-
-  const textCandidate = extractPlainText(
-    meta.text ??
-      meta.content ??
-      meta.response ??
-      meta.output ??
-      meta.body ??
-      entry.text ??
-      entry.content ??
-      entry.message ??
-      entry.summary,
-  );
-
-  if (textCandidate) {
-    meta.text = textCandidate;
-  }
-
-  const likedCandidate =
-    meta.insightLiked ??
-    entry.insightLiked ??
-    entry.liked ??
-    entry.favorite ??
-    entry.isInsight ??
-    entry.isFavorite;
-
-  meta.insightLiked = toBooleanFlag(likedCandidate);
-
-  return meta;
-};
-
-const extractArrayFromPayload = (payload: unknown): any[] => {
-  if (Array.isArray(payload)) return payload;
-  if (!payload || typeof payload !== 'object') return [];
-
-  const preferredKeys = ['insights', 'items', 'data', 'results', 'records', 'messages', 'rows'];
-  const visited = new Set<object>();
-  const queue: unknown[] = [payload];
-
-  while (queue.length) {
-    const current = queue.shift();
-    if (!current) continue;
-
-    if (Array.isArray(current)) return current;
-    if (typeof current !== 'object') continue;
-
-    const obj = current as Record<string, unknown>;
-    if (visited.has(obj)) continue;
-    visited.add(obj);
-
-    for (const key of preferredKeys) {
-      if (key in obj) {
-        queue.unshift(obj[key]);
-      }
-    }
-
-    for (const value of Object.values(obj)) {
-      queue.push(value);
-    }
-  }
-
-  return [];
-};
-
-const mapToInsight = (entry: any): EnrichedDreamInsight | null => {
-  if (!entry || typeof entry !== 'object') return null;
-
-  const meta = normalizeInsightMeta(entry);
-
-  const messageIdRaw =
-    entry.messageId ??
-    entry.message_id ??
-    entry.id ??
-    entry.message?.id ??
-    meta.messageId ??
-    meta.message_id ??
-    null;
-
-  const text = extractPlainText(
-    entry.text ??
-      entry.content ??
-      entry.message ??
-      entry.summary ??
-      meta.text ??
-      meta.content ??
-      meta.response ??
-      meta.output ??
-      meta.data ??
-      meta.body ??
-      '',
-  );
-
-  if (!messageIdRaw || !text) return null;
-
-  const blockIdRaw =
-    entry.blockId ??
-    entry.block_id ??
-    entry.block?.id ??
-    meta.blockId ??
-    meta.block_id ??
-    null;
-
-  const createdRaw =
-    entry.createdAt ??
-    entry.created_at ??
-    entry.timestamp ??
-    meta.createdAt ??
-    meta.created_at ??
-    meta.timestamp ??
-    null;
-
-  const insightLiked = meta.insightLiked ?? false;
-
-  return {
-    messageId: stringifyId(messageIdRaw),
-    text,
-    blockId: blockIdRaw !== undefined && blockIdRaw !== null ? stringifyId(blockIdRaw) : null,
-    createdAt: ensureIsoString(createdRaw),
-    insightLiked,
-    meta,
-  };
-};
-
-const normalizeInsightsResponse = (payload: unknown): EnrichedDreamInsight[] => {
-  const rawEntries = extractArrayFromPayload(payload);
-  const mapped = rawEntries
-    .map(mapToInsight)
-    .filter((entry): entry is EnrichedDreamInsight => Boolean(entry));
-
-  const deduped = new Map<string, EnrichedDreamInsight>();
-  mapped.forEach((insight) => {
-    const key = insight.messageId || `${insight.blockId ?? 'unknown'}-${insight.createdAt}`;
-    const prev = deduped.get(key);
-    if (!prev) {
-      deduped.set(key, insight);
-      return;
-    }
-
-    const preferCurrent =
-      (insight.insightLiked ?? false) && !(prev.insightLiked ?? false)
-        ? true
-        : new Date(insight.createdAt).getTime() > new Date(prev.createdAt).getTime();
-
-    if (preferCurrent) {
-      deduped.set(key, {
-        ...insight,
-        meta: {
-          ...(prev.meta ?? {}),
-          ...(insight.meta ?? {}),
-        },
-      });
-    }
-  });
-
-  return Array.from(deduped.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-};
-
-const formatDateTimeRu = (value: string | null | undefined) => {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString('ru-RU');
-};
-
-/* =========================
-   Main component
-   ========================= */
-
 export function SimilarArtworksScreen(): React.ReactElement {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
@@ -449,9 +151,13 @@ export function SimilarArtworksScreen(): React.ReactElement {
   const [artworks, setArtworks] = useState<SimilarArtwork[]>([]);
   const [insightsByMessage, setInsightsByMessage] = useState<Record<string, boolean>>({});
   const [insightsByBlock, setInsightsByBlock] = useState<Record<string, boolean>>({});
-  const [insightsList, setInsightsList] = useState<EnrichedDreamInsight[] | null>(null);
+  const [insightsList, setInsightsList] = useState<any[] | null>(null);
   const [insightsLoading, setInsightsLoading] = useState<boolean>(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
+  const [dayMood, setDayMood] = useState<string | null>(null);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
+  const [moodAnchorEl, setMoodAnchorEl] = useState<null | HTMLElement>(null);
+  const moodMenuOpen = Boolean(moodAnchorEl);
 
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -547,12 +253,10 @@ export function SimilarArtworksScreen(): React.ReactElement {
     justifyContent: 'center',
   } as const;
 
-  // --------------- 3D heart spin & gradient mask setup ---------------
-  // SVG path for Material Favorite icon — используем как маску
+  // heart and spin config (unchanged)
   const heartSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 6.01 3.99 4 6.5 4c1.74 0 3.41 0.81 4.5 2.09C12.09 4.81 13.76 4 15.5 4 18.01 4 20 6.01 20 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z' /></svg>`;
   const heartMaskUrl = `url("data:image/svg+xml;utf8,${encodeURIComponent(heartSvg)}")`;
 
-  // global keyframes for 3D spin (rotateY)
   const spin3dKeyframes = {
     '@keyframes spin3D': {
       '0%': { transform: 'rotateY(0deg)' },
@@ -560,14 +264,13 @@ export function SimilarArtworksScreen(): React.ReactElement {
     },
   } as const;
 
-  // base sx для сердечка (градиент внутри формы через маску), размеры можно менять
   const heartSxBase = {
     width: 16,
     height: 16,
     minWidth: 16,
     minHeight: 16,
     borderRadius: 0,
-    background: 'linear-gradient(135deg, #a77bff 0%, #80ffea 100%)', // фиолетово-бирюзовый пастельный градиент
+    background: 'linear-gradient(135deg, #a77bff 0%, #80ffea 100%)',
     WebkitMaskImage: heartMaskUrl,
     maskImage: heartMaskUrl,
     WebkitMaskRepeat: 'no-repeat',
@@ -576,14 +279,31 @@ export function SimilarArtworksScreen(): React.ReactElement {
     maskSize: 'cover',
     WebkitMaskPosition: 'center',
     maskPosition: 'center',
-    // 3D spin
     animation: 'spin3D 900ms linear infinite',
     transformStyle: 'preserve-3d' as const,
     backfaceVisibility: 'hidden' as const,
     display: 'inline-block',
   } as const;
 
-  // ------------------ /end heart setup ------------------
+  const heartSxSmall = {
+    width: 16,
+    height: 16,
+    minWidth: 16,
+    minHeight: 16,
+    borderRadius: 0,
+    background: 'linear-gradient(135deg, #a77bff 0%, #80ffea 100%)',
+    WebkitMaskImage: heartMaskUrl,
+    maskImage: heartMaskUrl,
+    WebkitMaskRepeat: 'no-repeat',
+    maskRepeat: 'no-repeat',
+    WebkitMaskSize: 'cover',
+    maskSize: 'cover',
+    WebkitMaskPosition: 'center',
+    maskPosition: 'center',
+    display: 'inline-block',
+  } as const;
+
+  const moodGradient = (color: string) => `linear-gradient(135deg, ${color} 0%, rgba(18,22,30,0.06) 100%)`;
 
   const fetchArtworks = async (force = false) => {
     setLoading(true);
@@ -598,6 +318,19 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
       const d = await getDream(id);
       setDream(d);
+
+      if (d.date) {
+        const dateYmd = new Date(d.date).toISOString().split('T')[0];
+        try {
+          const moodId = await getMoodForDate(dateYmd);
+          setDayMood(moodId);
+          setSelectedMood(moodId);
+        } catch (err) {
+          console.warn('Failed to load mood for date:', err);
+          setDayMood(null);
+          setSelectedMood(null);
+        }
+      }
 
       if (!force && d.similarArtworks && d.similarArtworks.length > 0) {
         setArtworks(d.similarArtworks as SimilarArtwork[]);
@@ -708,7 +441,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
     navigate(`/dreams/${id}/artwork-chat/${idx}`);
   };
 
-  const handleInsightClick = (insight: EnrichedDreamInsight) => {
+  const handleInsightClick = (insight: any) => {
     if (!dream || !id) return;
 
     let idx = 0;
@@ -1079,6 +812,39 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
   const insightsCount = useMemo(() => (insightsList ? insightsList.length : 0), [insightsList]);
 
+  const effectiveMoodId = useMemo(() => {
+    return selectedMood ?? dayMood ?? null;
+  }, [selectedMood, dayMood]);
+
+  const currentMoodOption = useMemo(() => {
+    return MOODS.find((m: MoodOption) => m.id === effectiveMoodId) ?? null;
+  }, [effectiveMoodId]);
+
+  const MoodIconComponent = currentMoodOption?.icon as React.ComponentType<SvgIconProps> | undefined;
+
+  const handleMoodClick = (event: React.MouseEvent<HTMLElement>) => {
+    setMoodAnchorEl(event.currentTarget);
+  };
+
+  const handleMoodClose = () => {
+    setMoodAnchorEl(null);
+  };
+
+  const handleMoodSelect = async (moodId: string) => {
+    if (!dream?.id || !dream?.date) return;
+    try {
+      const dateYmd = new Date(dream.date).toISOString().split('T')[0];
+      await setMoodForDate(dateYmd, moodId);
+      setSelectedMood(moodId);
+      setDayMood(moodId);
+      setSnackbar({ open: true, message: 'Настроение дня обновлено', severity: 'success' });
+    } catch (e: any) {
+      setSnackbar({ open: true, message: e.message || 'Ошибка обновления настроения', severity: 'error' });
+    } finally {
+      handleMoodClose();
+    }
+  };
+
   return (
     <Box sx={pageSx}>
       <Box sx={mainCardSx}>
@@ -1109,19 +875,10 @@ export function SimilarArtworksScreen(): React.ReactElement {
           <ArrowBackIosNewIcon fontSize="small" />
         </IconButton>
 
+        {/* Header (DreamDetail-like) */}
         {dream && (
-          <Paper
-            sx={{
-              mb: 2,
-              p: 2,
-              pt: 6,
-              background: 'rgba(255,255,255,0.06)',
-              border: `1px solid ${glassBorder}`,
-              borderRadius: 2.5,
-              color: '#fff',
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2, pt: 6 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Avatar
                 src="/logo.png"
                 alt="Dreamly"
@@ -1131,14 +888,15 @@ export function SimilarArtworksScreen(): React.ReactElement {
                   border: `1px solid ${glassBorder}`,
                   backgroundColor: 'rgba(255,255,255,0.08)',
                   boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
+                  flex: '0 0 auto',
                 }}
               />
-              <Box>
-                <Typography variant="h5" sx={{ mb: 0.5, color: '#fff' }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="h5" sx={{ mb: 1, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {formatDate(dream.date)}
                 </Typography>
                 {dream.title && (
-                  <Typography variant="h6" sx={{ mb: 0.5, color: '#fff' }}>
+                  <Typography variant="h6" sx={{ mb: 1, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {dream.title}
                   </Typography>
                 )}
@@ -1149,25 +907,186 @@ export function SimilarArtworksScreen(): React.ReactElement {
                     sx={{
                       bgcolor: 'rgba(255,255,255,0.1)',
                       color: '#fff',
+                      mb: 1,
                     }}
                   />
                 )}
+
+                {/* Mood display (large icon + label) */}
+                <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, gap: 1, minWidth: 0 }}>
+                  <Tooltip title={currentMoodOption?.label ?? 'Выбрать настроение'} arrow>
+                    <span>
+                      <IconButton
+                        aria-label="Выбрать настроение"
+                        onClick={handleMoodClick}
+                        sx={{
+                          p: 0,
+                          mr: 0.5,
+                          borderRadius: '50%',
+                          bgcolor: 'transparent',
+                          '&:hover': {
+                            transform: 'translateY(-1px)',
+                          },
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {currentMoodOption ? (
+                          <Avatar
+                            sx={{
+                              width: 36,
+                              height: 36,
+                              background: moodGradient(currentMoodOption.color),
+                              color: '#fff',
+                              boxShadow: `0 10px 28px ${alpha('#000', 0.18)}, ${currentMoodOption ? `0 0 0 6px ${alpha(currentMoodOption.color, 0.06)}` : 'none'}`,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {MoodIconComponent ? (
+                              <MoodIconComponent style={{ color: '#fff', fontSize: 18 }} />
+                            ) : (
+                              <MoodIcon style={{ color: '#fff', fontSize: 18 }} />
+                            )}
+                          </Avatar>
+                        ) : (
+                          <Avatar
+                            sx={{
+                              width: 36,
+                              height: 36,
+                              background: alpha('#fff', 0.04),
+                              color: 'rgba(255,255,255,0.7)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: 'rgba(255,255,255,0.6)' }} />
+                          </Avatar>
+                        )}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: '#fff',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                    }}
+                  >
+                    {currentMoodOption ? currentMoodOption.label : 'Выбрать настроение'}
+                  </Typography>
+
+                  {/* Mood menu */}
+                  <Menu
+                    anchorEl={moodAnchorEl}
+                    open={moodMenuOpen}
+                    onClose={handleMoodClose}
+                    MenuListProps={{
+                      'aria-labelledby': 'mood-button',
+                    }}
+                    PaperProps={{
+                      sx: {
+                        bgcolor: 'rgba(255,255,255,0.06)',
+                        backdropFilter: 'blur(10px)',
+                        border: `1px solid ${glassBorder}`,
+                        color: '#fff',
+                        mt: 1,
+                        minWidth: 260,
+                      },
+                    }}
+                  >
+                    {MOODS.map((mood: MoodOption) => {
+                      const Icon = mood.icon as React.ComponentType<SvgIconProps>;
+                      const isActive = mood.id === effectiveMoodId;
+                      return (
+                        <MenuItem
+                          key={mood.id}
+                          onClick={() => handleMoodSelect(mood.id)}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            color: '#fff',
+                            bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
+                            borderRadius: 1,
+                            px: 1.25,
+                            py: 0.5,
+                            '&:hover': {
+                              bgcolor: `linear-gradient(135deg, ${alpha(mood.color, 0.16)} 0%, ${alpha(mood.color, 0.08)} 100%)`,
+                            },
+                          }}
+                        >
+                          <Box
+                            sx={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: '50%',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
+                              boxShadow: isActive ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(mood.color, 0.06)}` : `0 8px 22px ${alpha('#000', 0.10)}`,
+                            }}
+                          >
+                            <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
+                          </Box>
+
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" sx={{ color: '#fff' }}>
+                              {mood.label}
+                            </Typography>
+                          </Box>
+
+                          {isActive && (
+                            <Typography variant="caption" sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}>
+                              ✓
+                            </Typography>
+                          )}
+                        </MenuItem>
+                      );
+                    })}
+                  </Menu>
+                </Box>
               </Box>
             </Box>
 
-            {dream.dreamSummary && (
-              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.85)', mb: 0.5 }}>
-                Контекст: {dream.dreamSummary}
-              </Typography>
-            )}
-            {dream.autoSummary && (
-              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.85)' }}>
-                Краткое резюме: {dream.autoSummary}
-              </Typography>
-            )}
-          </Paper>
+            {/* Right: regenerate all + delete all (instead of edit/delete) */}
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Tooltip title="Перегенерировать весь список (форс-запрос)">
+                <span>
+                  <IconButton
+                    aria-label="перегенерировать весь список"
+                    onClick={() => fetchArtworks(true)}
+                    disabled={loading}
+                    sx={iconBtnSxLight}
+                  >
+                    <RefreshIcon />
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Tooltip title="Удалить весь список">
+                <span>
+                  <IconButton
+                    aria-label="удалить список"
+                    onClick={() => promptDeleteList()}
+                    disabled={loading || artworks.length === 0}
+                    sx={iconBtnSxLight}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
+          </Box>
         )}
 
+        {/* Insights card */}
         <Paper
           sx={{
             p: 2,
@@ -1178,8 +1097,9 @@ export function SimilarArtworksScreen(): React.ReactElement {
             color: '#fff',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, minWidth: 0 }}>
+            <Box sx={heartSxSmall} aria-hidden />
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Сохранённые инсайты
             </Typography>
             {insightsCount > 0 && (
@@ -1281,42 +1201,13 @@ export function SimilarArtworksScreen(): React.ReactElement {
           )}
         </Paper>
 
+        {/* Artworks list */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h5" sx={{ color: '#fff' }}>
             Схожие произведения искусства
           </Typography>
 
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Tooltip title="Обновить список">
-              <span>
-                <IconButton
-                  color="primary"
-                  onClick={() => fetchArtworks(true)}
-                  disabled={loading}
-                  aria-label="Обновить список"
-                  sx={iconBtnSxLight}
-                >
-                  <RefreshIcon />
-                </IconButton>
-              </span>
-            </Tooltip>
-
-            <Tooltip title="Удалить список">
-              <span>
-                <IconButton
-                  color="error"
-                  onClick={() => {
-                    promptDeleteList();
-                  }}
-                  disabled={loading || artworks.length === 0}
-                  aria-label="Удалить список"
-                  sx={iconBtnSxLight}
-                >
-                  <DeleteIcon />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Box>
+          {/* NOTE: Дубликат кнопок обновления/удаления удалён — кнопки остаются в шапке */}
         </Box>
 
         {loading && (
@@ -1385,6 +1276,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
                   <ListItemText
                     sx={{
                       pr: { xs: '130px', sm: '150px' },
+                      minWidth: 0,
                     }}
                     primary={
                       <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: 16, color: '#fff' }}>
@@ -1426,8 +1318,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                           disabled={isRegenerating}
                           sx={cardIconSx}
                         >
-                          {/* Встраиваем keyframes и маску в sx.
-                              Оборачиваем spin3dKeyframes в sx, чтобы ключевые кадры применились. */}
                           {isRegenerating ? (
                             <Box sx={{ ...spin3dKeyframes, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <Box sx={{ ...heartSxBase }} aria-hidden />
@@ -1545,6 +1435,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
                   <ListItemText
                     sx={{
                       pr: { xs: '130px', sm: '150px' },
+                      minWidth: 0,
                     }}
                     primary={
                       <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: 15, color: 'rgba(255,255,255,0.86)' }}>
@@ -1563,6 +1454,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
           </List>
         )}
 
+        {/* Delete dialogs, snackbar */}
         <Dialog
           open={deletingArtworkIndex !== null}
           onClose={() => {
@@ -1680,3 +1572,5 @@ export function SimilarArtworksScreen(): React.ReactElement {
     </Box>
   );
 }
+
+export default SimilarArtworksScreen;

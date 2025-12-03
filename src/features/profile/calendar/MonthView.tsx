@@ -63,7 +63,7 @@ interface MonthViewProps {
   // -----------------
 }
 
-const MotionBox = motion(Box);
+const MotionBox = motion.create(Box);
 
 export function MonthView({
   dreamDates,

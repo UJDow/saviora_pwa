@@ -1,5 +1,6 @@
 // MoodIcons.tsx
 import React from 'react';
+import type { SvgIconProps } from '@mui/material/SvgIcon';
 import SearchIcon from '@mui/icons-material/Search';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
@@ -20,7 +21,7 @@ export type MoodOption = {
   id: string;
   label: string;
   color: string; // rgba — пастельный стиль
-  icon: React.ElementType;
+  icon: React.ComponentType<SvgIconProps>;
 };
 
 /*
@@ -31,7 +32,7 @@ export const MOODS: MoodOption[] = [
   // SEEKING (поиск / interest / anticipation)
   { id: 'seeking_interest',       label: 'Интерес / Поиск',           color: 'rgba(255,185,105,0.94)', icon: SearchIcon },
   { id: 'seeking_optimism',       label: 'Оптимизм',                  color: 'rgba(255,170,90,0.92)',  icon: WhatshotIcon },
-  { id: 'seeking_vigilance',      label: 'Внимание / Бдительность',  color: 'rgba(245,160,90,0.90)',  icon: VisibilityIcon },
+  { id: 'seeking_vigilance',      label: 'Внимание / Бдительность',   color: 'rgba(245,160,90,0.90)',  icon: VisibilityIcon },
 
   // PLAY / Joy (игра / радость)
   { id: 'play_serenity',          label: 'Безмятежность',            color: 'rgba(255,235,160,0.94)', icon: WbSunnyIcon },
