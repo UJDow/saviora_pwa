@@ -1,4 +1,5 @@
 // src/features/daily/DailyConvoChat.tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -49,7 +50,7 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
   const params = useParams<{ id?: string }>();
   const location = useLocation(); // Для получения state с highlightMessageId
   const navigate = useNavigate();
-  const { user } = useAuth();
+  useAuth();
   const { enqueueSnackbar } = useSnackbar(); // Используем notistack для уведомлений
 
   const idFromUrl = params?.id;
@@ -83,7 +84,6 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
 
   // Получаем messageId из location.state или searchParams для подсветки
   const highlightMessageIdFromState = (location.state as any)?.highlightMessageId || null;
-  const highlightNonceFromState = (location.state as any)?.highlightNonce || null;
 
   const toTimestamp = useCallback((isoOrNumber: string | number) => {
     const n = typeof isoOrNumber === 'number' ? isoOrNumber : Date.parse(String(isoOrNumber));
@@ -334,7 +334,6 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
         return;
       }
 
-      const notesText = convo.notes ?? convo.body ?? '';
       const res = await api.interpretBlockDailyConvo(
         fullDialogText,
         convo.id,

@@ -1,5 +1,5 @@
 // src/features/daily/DreamsByDateScreen.tsx
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   Box,
   Typography,
