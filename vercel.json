@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://deepseek-api-key.lexsnitko.workers.dev/:path*"
+    }
+  ]
+}
