@@ -1,3 +1,4 @@
+// vite.config.js
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -15,9 +16,7 @@ export default defineConfig({
         target: 'https://deepseek-api-key.lexsnitko.workers.dev',
         changeOrigin: true,
         secure: true,
-        // Если воркер НЕ ожидает префикс /api (т.е. он обрабатывает /me вместо /api/me),
-        // раскомментируй rewrite:
-        // rewrite: (path) => path.replace(/^\/api/, '')
+        rewrite: (path) => path.replace(/^\/api/, '') // ✅ Раскомментировано
       }
     }
   }
