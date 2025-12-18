@@ -10,7 +10,6 @@ import {
   CircularProgress,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import PersonIcon from '@mui/icons-material/Person';
 
 import { useAuth } from '../auth/AuthProvider';
@@ -32,15 +31,14 @@ import { AVATAR_OPTIONS } from './ProfileEditForm';
 import { MoodSlider } from './mood/MoodSlider';
 import { getLocalDateStr } from 'src/utils/dateUtils';
 
-// --- Локальные нормализованные типы (гарантируют date: number) ---
+import AutoGraphIcon from '@mui/icons-material/AutoGraph';
+
 type NormalizedDream = Omit<ApiDream, 'date'> & { date: number };
 type NormalizedDailyConvo = Omit<ApiDailyConvo, 'date' | 'createdAt' | 'updatedAt'> & {
   date: number;
   createdAt: number;
   updatedAt: number;
 };
-
-// --------------------------------------------------------------------------
 
 type CalendarView = 'week' | 'month' | 'year' | 'day';
 
@@ -56,7 +54,6 @@ export function ProfileScreen() {
   const [previousMonthDate, setPreviousMonthDate] = useState<Date | null>(null);
   const [selectedDreamDate, setSelectedDreamDate] = useState<string | null>(null);
 
-  // unified create box state
   const [inputOpen, setInputOpen] = useState(false);
   const [createMode, setCreateMode] = useState<'dream' | 'daily' | null>(null);
   const [createText, setCreateText] = useState('');
@@ -74,16 +71,13 @@ export function ProfileScreen() {
   const avatarColor =
     AVATAR_OPTIONS.find((o) => o.icon === avatarIcon)?.color || '#f0f0f0';
 
-  // --- Настроение ---
   const [moodSaving, setMoodSaving] = useState(false);
-  const todayStr = getLocalDateStr(); // используем локальную дату
+  const todayStr = getLocalDateStr();
 
-  // Консистентные цвета/стили
   const accentColor = 'rgba(88,120,255,0.95)';
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
 
-  // === Вспомогательная функция: безопасно -> ms (number) ===
   const toMs = (raw?: number | string | null): number => {
     if (raw == null || raw === '') return Date.now();
     const n = typeof raw === 'number' ? raw : Number(raw);
@@ -91,7 +85,27 @@ export function ProfileScreen() {
     return n < 1e12 ? n * 1000 : n;
   };
 
-  // === Fetch dreams (normalize to NormalizedDream) ===
+  // === Угловые иконки: общие стили ===
+  const cornerIconOffset = 18; // подбери под макет (12/16/18)
+  const cornerIconBoxSx = {
+    position: 'absolute' as const,
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    background: 'rgba(255,255,255,0.10)',
+    boxShadow:
+      '0 4px 16px 0 rgba(88,120,255,0.14), 0 1.5px 8px 0 rgba(255,255,255,0.08) inset',
+    border: '1.2px solid rgba(255,255,255,0.14)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    zIndex: 1200,
+    transition: 'all 0.18s cubic-bezier(.4,0,.2,1)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    p: 0,
+  } as const;
+
   useEffect(() => {
     const fetchDreams = async () => {
       try {
@@ -109,22 +123,23 @@ export function ProfileScreen() {
     void fetchDreams();
   }, []);
 
-  // === Fetch daily convos (normalize to NormalizedDailyConvo) ===
   useEffect(() => {
     const fetchDailyConvos = async () => {
       try {
         const data = await api.getDailyConvos();
-        const normalized: NormalizedDailyConvo[] = (data || []).map((c: ApiDailyConvo) => {
-          const dateMs = toMs((c as any).date ?? (c as any).createdAt);
-          const createdAtMs = toMs((c as any).createdAt ?? dateMs);
-          const updatedAtMs = toMs((c as any).updatedAt ?? createdAtMs);
-          return {
-            ...c,
-            date: dateMs,
-            createdAt: createdAtMs,
-            updatedAt: updatedAtMs,
-          } as NormalizedDailyConvo;
-        });
+        const normalized: NormalizedDailyConvo[] = (data || []).map(
+          (c: ApiDailyConvo) => {
+            const dateMs = toMs((c as any).date ?? (c as any).createdAt);
+            const createdAtMs = toMs((c as any).createdAt ?? dateMs);
+            const updatedAtMs = toMs((c as any).updatedAt ?? createdAtMs);
+            return {
+              ...c,
+              date: dateMs,
+              createdAt: createdAtMs,
+              updatedAt: updatedAtMs,
+            } as NormalizedDailyConvo;
+          },
+        );
         normalized.sort((a, b) => b.date - a.date);
         setDailyConvos(normalized);
       } catch (err) {
@@ -134,7 +149,6 @@ export function ProfileScreen() {
     void fetchDailyConvos();
   }, []);
 
-  // Фильтрация снов и daily convos по дате (строка в формате локальной даты)
   useEffect(() => {
     if (!selectedDreamDate) {
       setFilteredDreams([]);
@@ -142,16 +156,19 @@ export function ProfileScreen() {
       return;
     }
 
-    const fDreams = dreams.filter((d) => new Date(d.date).toLocaleDateString('ru-RU') === selectedDreamDate);
+    const fDreams = dreams.filter(
+      (d) => new Date(d.date).toLocaleDateString('ru-RU') === selectedDreamDate,
+    );
     fDreams.sort((a, b) => b.date - a.date);
     setFilteredDreams(fDreams);
 
-    const fDaily = dailyConvos.filter((c) => new Date(c.date).toLocaleDateString('ru-RU') === selectedDreamDate);
+    const fDaily = dailyConvos.filter(
+      (c) => new Date(c.date).toLocaleDateString('ru-RU') === selectedDreamDate,
+    );
     fDaily.sort((a, b) => b.date - a.date);
     setFilteredDailyConvos(fDaily);
   }, [dreams, dailyConvos, selectedDreamDate]);
 
-  // Автоскролл при открытии инпута
   useEffect(() => {
     if (inputOpen && scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
@@ -182,9 +199,12 @@ export function ProfileScreen() {
     }
   };
 
-  // Объединяем даты (строки) для календаря
-  const dreamDateStrs = dreams.map((d) => new Date(d.date).toLocaleDateString('ru-RU'));
-  const dailyConvoDateStrs = dailyConvos.map((c) => new Date(c.date).toLocaleDateString('ru-RU'));
+  const dreamDateStrs = dreams.map((d) =>
+    new Date(d.date).toLocaleDateString('ru-RU'),
+  );
+  const dailyConvoDateStrs = dailyConvos.map((c) =>
+    new Date(c.date).toLocaleDateString('ru-RU'),
+  );
   const eventDates = Array.from(new Set([...dreamDateStrs, ...dailyConvoDateStrs]));
 
   const handleDreamDateSelect = (dateStr: string) => {
@@ -211,7 +231,6 @@ export function ProfileScreen() {
     }
   };
 
-  // unified create handlers
   const openCreateBox = (mode: 'dream' | 'daily') => {
     setCreateMode(mode);
     setInputOpen(true);
@@ -226,7 +245,10 @@ export function ProfileScreen() {
 
   const handleCreateSubmit = async () => {
     if (!createText.trim()) {
-      showSnackbar(createMode === 'daily' ? 'Введите тему беседы' : 'Введите текст сна', 'error');
+      showSnackbar(
+        createMode === 'daily' ? 'Введите тему беседы' : 'Введите текст сна',
+        'error',
+      );
       return;
     }
     setSaving(true);
@@ -234,7 +256,10 @@ export function ProfileScreen() {
     try {
       if (createMode === 'dream') {
         const newDream = await api.addDream(createText.trim());
-        const norm: NormalizedDream = { ...newDream, date: toMs((newDream as any).date ?? (newDream as any).createdAt) };
+        const norm: NormalizedDream = {
+          ...newDream,
+          date: toMs((newDream as any).date ?? (newDream as any).createdAt),
+        };
         setDreams((prev) => [norm, ...prev]);
         setCreateText('');
         setInputOpen(false);
@@ -250,9 +275,15 @@ export function ProfileScreen() {
         dateObj.setHours(0, 0, 0, 0);
         const dateSeconds = Math.floor(dateObj.getTime() / 1000);
 
-        const newDaily = await api.addDailyConvo(createText.trim(), null, [], null, null, dateSeconds);
+        const newDaily = await api.addDailyConvo(
+          createText.trim(),
+          null,
+          [],
+          null,
+          null,
+          dateSeconds,
+        );
 
-        // Нормализуем поля даты в ms
         const dateMs = toMs((newDaily as any).date ?? (newDaily as any).createdAt);
         const createdAtMs = toMs((newDaily as any).createdAt ?? dateMs);
         const updatedAtMs = toMs((newDaily as any).updatedAt ?? createdAtMs);
@@ -277,7 +308,9 @@ export function ProfileScreen() {
         const dd = String(cd.getDate()).padStart(2, '0');
         const dateYmd = `${yyyy}-${mm}-${dd}`;
 
-        const highlightParam = normalizedNewDaily?.id ? `&highlight=${encodeURIComponent(normalizedNewDaily.id)}` : '';
+        const highlightParam = normalizedNewDaily?.id
+          ? `&highlight=${encodeURIComponent(normalizedNewDaily.id)}`
+          : '';
         navigate(`/daily?date=${encodeURIComponent(dateYmd)}${highlightParam}`);
         return;
       }
@@ -291,7 +324,7 @@ export function ProfileScreen() {
     }
   };
 
-  const handleUserMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+  const handleUserMenuOpen = () => {
     navigate('/profile/user');
   };
 
@@ -300,7 +333,6 @@ export function ProfileScreen() {
     year: 'numeric',
   });
 
-  // --- Стили для консистентности ---
   const pageSx = {
     minHeight: '100vh',
     background: screenGradient,
@@ -331,50 +363,57 @@ export function ProfileScreen() {
     p: { xs: 2, sm: 3 },
   };
 
-  const smallIconBtnSx = {
-    bgcolor: 'transparent',
-    color: accentColor,
+  // FAB‑кнопки внизу (оставляем как есть, но теперь они визуально сочетаются с угловыми)
+  const fabSx = {
+    position: 'absolute' as const,
+    bottom: 18,
+    right: 18,
+    bgcolor: 'rgba(88,120,255,0.85)',
+    color: '#fff',
     borderRadius: '50%',
-    boxShadow: 'none',
+    boxShadow:
+      '0 4px 16px 0 rgba(88,120,255,0.18), 0 1.5px 8px 0 rgba(255,255,255,0.10) inset',
+    border: '1.5px solid rgba(255,255,255,0.18)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    transition: 'all 0.18s cubic-bezier(.4,0,.2,1)',
     '&:hover': {
-      bgcolor: 'rgba(88, 120, 255, 0.12)',
-      boxShadow: '0 0 12px rgba(88, 120, 255, 0.28)',
+      bgcolor: 'rgba(88,120,255,1)',
+      boxShadow:
+        '0 8px 32px 0 rgba(88,120,255,0.28), 0 1.5px 8px 0 rgba(255,255,255,0.16) inset',
+      transform: 'scale(1.08)',
     },
     p: 1,
     minWidth: 40,
     minHeight: 40,
-  };
-
-  const fabSx = {
-    position: 'absolute',
-    bottom: 18,
-    right: 18,
-    bgcolor: 'rgba(255,255,255,0.12)',
-    borderRadius: '50%',
-    boxShadow: '0 6px 18px rgba(24,32,80,0.18)',
-    border: 'none',
-    color: accentColor,
-    '&:hover': {
-      bgcolor: 'rgba(88, 120, 255, 0.18)',
-      boxShadow: '0 0 12px rgba(88, 120, 255, 0.28)',
-    },
-    p: 1,
-    minWidth: 44,
-    minHeight: 44,
     zIndex: 1300,
-    backdropFilter: 'blur(4px)',
   };
 
   const fabLeftSx = {
-    ...fabSx,
+    position: 'absolute' as const,
+    bottom: 18,
     left: 18,
-    right: 'auto',
+    bgcolor: 'rgba(255,255,255,0.18)',
     color: '#fff',
-    bgcolor: 'rgba(88,120,255,0.95)',
+    borderRadius: '50%',
+    boxShadow:
+      '0 2px 8px 0 rgba(255,255,255,0.10), 0 1.5px 8px 0 rgba(88,120,255,0.08) inset',
+    border: '1.5px solid rgba(255,255,255,0.12)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    transition: 'all 0.18s cubic-bezier(.4,0,.2,1)',
+    opacity: 0.72,
     '&:hover': {
-      bgcolor: 'rgba(88,120,255,0.85)',
-      boxShadow: '0 0 12px rgba(88, 120, 255, 0.32)',
+      bgcolor: 'rgba(255,255,255,0.28)',
+      boxShadow:
+        '0 8px 32px 0 rgba(255,255,255,0.18), 0 1.5px 8px 0 rgba(88,120,255,0.18) inset',
+      opacity: 1,
+      transform: 'scale(1.04)',
     },
+    p: 1,
+    minWidth: 40,
+    minHeight: 40,
+    zIndex: 1300,
   };
 
   const avatarSx = {
@@ -389,13 +428,23 @@ export function ProfileScreen() {
   return (
     <Box sx={pageSx}>
       <Box sx={mainCardSx}>
-        {/* Верхний левый — кнопка профиля */}
-        <Box sx={{ position: 'absolute', top: 12, left: 12 }}>
+        {/* ЛЕВЫЙ ВЕРХНИЙ УГОЛ — АВАТАР */}
+        <Box sx={{ ...cornerIconBoxSx, top: cornerIconOffset, left: cornerIconOffset }}>
           <IconButton
             aria-label="Пользователь"
             onClick={handleUserMenuOpen}
             size="large"
-            sx={smallIconBtnSx}
+            sx={{
+              color: '#fff',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 0,
+              minWidth: 40,
+              minHeight: 40,
+              width: 40,
+              height: 40,
+              '&:hover': { bgcolor: 'rgba(88,120,255,0.12)' },
+            }}
           >
             <Avatar sx={avatarSx}>
               {IconComp ? <IconComp /> : <PersonIcon />}
@@ -403,19 +452,28 @@ export function ProfileScreen() {
           </IconButton>
         </Box>
 
-        {/* Верхний правый — календарь */}
-        <Box sx={{ position: 'absolute', top: 12, right: 12 }}>
+        {/* ПРАВЫЙ ВЕРХНИЙ УГОЛ — БЕЛАЯ ИКОНКА ГРАФИКА */}
+        <Box sx={{ ...cornerIconBoxSx, top: cornerIconOffset, right: cornerIconOffset }}>
           <IconButton
-            aria-label="Календарь"
+            aria-label="График"
             onClick={() => navigate('/calendar/month')}
             size="large"
-            sx={smallIconBtnSx}
+            sx={{
+              color: '#fff',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 0,
+              minWidth: 40,
+              minHeight: 40,
+              width: 40,
+              height: 40,
+              '&:hover': { bgcolor: 'rgba(88,120,255,0.12)' },
+            }}
           >
-            <CalendarTodayIcon />
+            <AutoGraphIcon sx={{ color: '#fff', fontSize: 22 }} />
           </IconButton>
         </Box>
 
-        {/* Месяц и год (центр) */}
         <Typography
           variant="subtitle2"
           align="center"
@@ -433,7 +491,6 @@ export function ProfileScreen() {
           {displayMonthYear}
         </Typography>
 
-        {/* Календарная линия */}
         {calendarView === 'week' && (
           <Box sx={{ mt: 8, mb: 2 }}>
             <CalendarLine
@@ -442,14 +499,17 @@ export function ProfileScreen() {
               onDateClick={handleDreamDateSelect}
               onMonthYearClick={handleMonthYearClick}
               onDateChange={setSelectedDate}
-              hideMonthYearTitle={true}
+              hideMonthYearTitle
             />
           </Box>
         )}
 
-        {/* Mood slider */}
         {showMainSlider && (
-          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }}>
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45 }}
+          >
             <Box
               sx={{
                 width: '100%',
@@ -474,11 +534,25 @@ export function ProfileScreen() {
                   Какое у тебя сегодня настроение?
                 </Typography>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 84 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: 84,
+                  }}
+                >
                   {moodSaving ? (
                     <CircularProgress size={28} sx={{ color: accentColor }} />
                   ) : (
-                    <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Box
+                      sx={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
                       <MoodSlider
                         value={profile?.todayMood ?? null}
                         onChange={handleMoodSelect}
@@ -492,7 +566,15 @@ export function ProfileScreen() {
                 </Box>
 
                 {moodSaving && (
-                  <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'primary.main', fontWeight: 500 }}>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: 'block',
+                      mt: 1,
+                      color: 'primary.main',
+                      fontWeight: 500,
+                    }}
+                  >
                     Сохраняем...
                   </Typography>
                 )}
@@ -501,7 +583,6 @@ export function ProfileScreen() {
           </motion.div>
         )}
 
-        {/* Основной контент */}
         <Box
           ref={scrollContainerRef}
           sx={{
@@ -519,42 +600,29 @@ export function ProfileScreen() {
         >
           <AnimatePresence mode="wait">
             {selectedDreamDate ? (
-              <motion.div key="dreamsList" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.3 }}>
-                <DreamsByDateScreen date={selectedDreamDate} onBack={handleBackToCalendar} usePaper={false} dreams={filteredDreams} />
-
-                {filteredDailyConvos.length > 0 && (
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2" sx={{ color: '#fff', mb: 1 }}>
-                      Темы беседы за {selectedDreamDate}
-                    </Typography>
-
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {filteredDailyConvos.map((c) => (
-                        <Box
-                          key={c.id}
-                          onClick={() => navigate(`/daily/${c.id}`)}
-                          sx={{
-                            p: 1,
-                            borderRadius: 2,
-                            background: 'rgba(255,255,255,0.06)',
-                            cursor: 'pointer',
-                            '&:hover': { background: 'rgba(255,255,255,0.09)' },
-                          }}
-                        >
-                          <Typography sx={{ color: '#fff', fontWeight: 500 }}>
-                            {c.title ?? (c.notes ? c.notes.slice(0, 80) + '...' : 'Без названия')}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.6)' }}>
-                            {new Date(c.date).toLocaleTimeString()}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Box>
-                  </Box>
-                )}
+              <motion.div
+                key="dreamsList"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+              >
+                <DreamsByDateScreen
+                  date={selectedDreamDate}
+                  onBack={handleBackToCalendar}
+                  usePaper={false}
+                  dreams={filteredDreams}
+                  dailyConvos={filteredDailyConvos}
+                />
               </motion.div>
             ) : (
-              <motion.div key="calendarView" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.3 }}>
+              <motion.div
+                key="calendarView"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+              >
                 {calendarView === 'month' && (
                   <MonthView
                     dreamDates={eventDates}
@@ -599,7 +667,14 @@ export function ProfileScreen() {
 
           <AnimatePresence>
             {inputOpen && (
-              <motion.div key="inputBox" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} transition={{ duration: 0.25 }} style={{ position: 'relative', margin: '0 12px' }}>
+              <motion.div
+                key="inputBox"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                transition={{ duration: 0.25 }}
+                style={{ position: 'relative', margin: '0 12px' }}
+              >
                 <Box sx={{ bgcolor: 'transparent', borderRadius: 2, p: 1 }}>
                   <GlassInputBox
                     value={createText}
@@ -607,7 +682,11 @@ export function ProfileScreen() {
                     onSend={handleCreateSubmit}
                     disabled={saving}
                     onClose={handleCreateClose}
-                    placeholder={createMode === 'daily' ? 'Напишите тему или заметку для беседы…' : 'Опишите сон…'}
+                    placeholder={
+                      createMode === 'daily'
+                        ? 'Напишите тему или заметку для беседы…'
+                        : 'Опишите сон…'
+                    }
                   />
                 </Box>
               </motion.div>
@@ -615,10 +694,14 @@ export function ProfileScreen() {
           </AnimatePresence>
         </Box>
 
+        {/* Нижние FAB‑кнопки (оставлены как были) */}
         {!inputOpen && (
           <IconButton
             aria-label="Добавить сон"
-            onClick={() => { setSelectedDate(new Date()); openCreateBox('dream'); }}
+            onClick={() => {
+              setSelectedDate(new Date());
+              openCreateBox('dream');
+            }}
             sx={fabSx}
             size="large"
           >
@@ -637,7 +720,12 @@ export function ProfileScreen() {
           </IconButton>
         )}
 
-        <Snackbar open={snackbarOpen} autoHideDuration={3000} onClose={() => setSnackbarOpen(false)} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Snackbar
+          open={snackbarOpen}
+          autoHideDuration={3000}
+          onClose={() => setSnackbarOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
           <Alert
             severity={snackbarSeverity}
             sx={{

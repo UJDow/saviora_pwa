@@ -49,6 +49,9 @@ import type { WordBlock } from './DreamTextSelector';
 import { GlassInputBox } from '../profile/GlassInputBox';
 import { MoonButton } from './MoonButton';
 
+import { useProfile } from 'src/features/profile/ProfileContext';
+import { AVATAR_OPTIONS } from 'src/features/profile/ProfileEditForm';
+
 type Role = 'user' | 'assistant';
 
 interface Message {
@@ -108,6 +111,17 @@ export const DreamChat: React.FC = () => {
   const [interpretedCount, setInterpretedCount] = useState<number>(0);
 
   const { enqueueSnackbar } = useSnackbar();
+
+  const { profile, getIconComponent } = useProfile();
+
+  const userAvatarIcon = profile?.avatarIcon ?? null;
+  const userAvatarSrc = profile?.avatarImage ?? undefined;
+  const UserAvatarIcon = getIconComponent(userAvatarIcon);
+
+  type AvatarOption = (typeof AVATAR_OPTIONS)[number];
+
+  const userAvatarBgColor =
+    AVATAR_OPTIONS.find((o: AvatarOption) => o.icon === userAvatarIcon)?.color ?? '#f0f0f0';
 
   const accentColor = 'rgba(88, 120, 255, 0.85)';
   const glassBackground = 'rgba(255, 255, 255, 0.1)';
@@ -971,18 +985,22 @@ export const DreamChat: React.FC = () => {
                   }}
                 >
                   {msg.sender === 'user' ? (
-                    <Avatar
-                      sx={{
-                        bgcolor: accentColor,
-                        width: 36,
-                        height: 36,
-                      }}
-                    >
-                      <PersonIcon />
-                    </Avatar>
-                  ) : (
-                    renderAssistantAvatar(isInterpretation ? 'interpretation' : 'default')
-                  )}
+  <Avatar
+    src={userAvatarSrc}
+    sx={{
+      width: 36,
+      height: 36,
+      bgcolor: userAvatarSrc ? undefined : userAvatarBgColor,
+      color: '#fff',
+      boxShadow: '0 4px 16px rgba(24,32,80,0.35)',
+      border: `1px solid ${glassBorder}`,
+    }}
+  >
+    {!userAvatarSrc && UserAvatarIcon && <UserAvatarIcon sx={{ fontSize: 20 }} />}
+  </Avatar>
+) : (
+  renderAssistantAvatar(isInterpretation ? 'interpretation' : 'default')
+)}
 
                   <Box
                     sx={{ position: 'relative', cursor: isAssistant ? 'pointer' : 'default' }}

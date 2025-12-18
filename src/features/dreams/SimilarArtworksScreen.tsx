@@ -892,14 +892,30 @@ export function SimilarArtworksScreen(): React.ReactElement {
                 }}
               />
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="h5" sx={{ mb: 1, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {formatDate(dream.date)}
-                </Typography>
-                {dream.title && (
-                  <Typography variant="h6" sx={{ mb: 1, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {dream.title}
-                  </Typography>
-                )}
+  <Chip
+    label={formatDate(dream.date)}
+    size="small"
+    variant="outlined"
+    sx={{
+      mb: dream.title ? 1 : 1.2,
+      borderColor: alpha('#ffffff', 0.24),
+      background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+      color: alpha('#ffffff', 0.92),
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      '& .MuiChip-label': {
+        px: 1.6,
+        py: 0.38,
+        fontWeight: 600,
+        letterSpacing: 0.2,
+      },
+    }}
+  />
+  {dream.title && (
+    <Typography variant="h6" sx={{ mb: 1, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      {dream.title}
+    </Typography>
+  )}
                 {dream.category && (
                   <Chip
                     label={dream.category}

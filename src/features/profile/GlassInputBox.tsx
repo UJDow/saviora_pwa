@@ -31,7 +31,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  const accentColor = 'rgba(88, 120, 255, 0.85)';
+  const iconColor = 'rgba(255,255,255,0.85)';
   const maxHeight = 160;
 
   // Подстраиваем высоту textarea
@@ -150,7 +150,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
           sx: {
             bgcolor: 'rgba(255, 255, 255, 0.15)',
             borderRadius: '20px',
-            color: accentColor,
+            color: 'white',
             fontSize: '1.1rem',
             px: 2,
             py: 1,
@@ -158,15 +158,31 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
             '& .MuiInputBase-input': {
               padding: 0,
               lineHeight: '1.4em',
-              color: accentColor,
-              WebkitTextFillColor: accentColor,
+              color: 'white',
+              WebkitTextFillColor: 'white',
               whiteSpace: 'pre-wrap',
               wordWrap: 'break-word',
+              '&::placeholder': {
+                color: 'white',
+                opacity: 1,
+              },
+              // Кастомный светлый скроллбар:
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                background: 'transparent',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(255,255,255,0.3)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb:hover': {
+                background: 'rgba(255,255,255,0.5)',
+              },
             },
           },
         }}
         inputProps={{
-          style: { color: accentColor },
+          style: { color: 'white' },
         }}
         autoFocus
       />
@@ -176,7 +192,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
           <IconButton
             onClick={toggleListening}
             aria-label="Голосовой ввод"
-            sx={{ ml: 1, p: 0.5, minWidth: 36, minHeight: 36, color: accentColor }}
+            sx={{ ml: 1, p: 0.5, minWidth: 36, minHeight: 36, color: iconColor }}
           >
             {listening ? <MicOffIcon /> : <MicIcon />}
           </IconButton>
@@ -186,7 +202,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
           onClick={onSend}
           disabled={disabled}
           aria-label="Отправить"
-          sx={{ ml: 1, p: 0.5, minWidth: 36, minHeight: 36, color: accentColor }}
+          sx={{ ml: 1, p: 0.5, minWidth: 36, minHeight: 36, color: iconColor }}
         >
           <SendIcon />
         </IconButton>

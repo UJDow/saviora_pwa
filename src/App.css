@@ -18,3 +18,15 @@ body {
   margin: 0 auto;
   padding: 2rem;
 }
+
+/* ===== СТИЛИ ДЛЯ ДЕДЛАЙН-ДЕЙТПИКЕРА ===== */
+
+/* Белый текст даты внутри инпута DatePicker в модалке дедлайна */
+.deadline-date-picker .MuiInputBase-input {
+  color: #fff !important;
+}
+
+/* Доп. страховка, если MUI рендерит input без класса */
+.deadline-date-picker input {
+  color: #fff !important;
+}

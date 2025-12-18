@@ -17,7 +17,6 @@ import {
   Button,
 } from '@mui/material';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
-import PersonIcon from '@mui/icons-material/Person';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import FeedIcon from '@mui/icons-material/Feed';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -29,6 +28,9 @@ import * as api from '../../utils/api';
 import { useAuth } from '../../features/auth/useAuth';
 import { GlassInputBox } from '../profile/GlassInputBox';
 import { MoonButton } from 'src/features/dreams/MoonButton'; // Предполагается, что компонент доступен
+
+import { useProfile } from 'src/features/profile/ProfileContext';
+import { AVATAR_OPTIONS } from 'src/features/profile/ProfileEditForm';
 
 // type-only imports (verbatimModuleSyntax friendly)
 import type {
@@ -45,6 +47,83 @@ type Props = {
 };
 
 type UIMessage = DailyConvoMessageType;
+
+const normalizeMessageContent = (value: unknown): string => {
+  const seen = new WeakSet<object>();
+
+  const visit = (input: unknown): string => {
+    if (input == null) {
+      return '';
+    }
+
+    if (typeof input === 'string') {
+      return input;
+    }
+
+    if (typeof input === 'number' || typeof input === 'boolean') {
+      return String(input);
+    }
+
+    if (Array.isArray(input)) {
+      return input
+        .map((item) => visit(item))
+        .filter((fragment) => typeof fragment === 'string' && fragment.trim().length > 0)
+        .join('\n')
+        .trim();
+    }
+
+    if (typeof input === 'object') {
+      const obj = input as Record<string, unknown>;
+
+      if (seen.has(obj)) {
+        return '';
+      }
+      seen.add(obj);
+
+      const candidateKeys: (keyof typeof obj)[] = ['text', 'content', 'value', 'message', 'data', 'body'];
+      for (const key of candidateKeys) {
+        if (key in obj) {
+          const result = visit(obj[key]);
+          if (result) {
+            return result;
+          }
+        }
+      }
+
+      if ('parts' in obj) {
+        const result = visit(obj.parts);
+        if (result) {
+          return result;
+        }
+      }
+
+      if ('segments' in obj) {
+        const result = visit(obj.segments);
+        if (result) {
+          return result;
+        }
+      }
+
+      if ('choices' in obj) {
+        const result = visit(obj.choices);
+        if (result) {
+          return result;
+        }
+      }
+
+      try {
+        const json = JSON.stringify(obj);
+        return json === '{}' ? '' : json;
+      } catch {
+        return '';
+      }
+    }
+
+    return '';
+  };
+
+  return visit(value).trim();
+};
 
 export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = null }: Props) {
   const params = useParams<{ id?: string }>();
@@ -77,6 +156,17 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
   const kickoffDoneRef = useRef(false);
   const kickoffInProgressRef = useRef(false);
 
+  const { profile, getIconComponent } = useProfile();
+
+  const userAvatarIcon = profile?.avatarIcon ?? null;
+  const userAvatarSrc = profile?.avatarImage ?? undefined;
+  const UserAvatarIcon = getIconComponent(userAvatarIcon);
+
+  type AvatarOption = (typeof AVATAR_OPTIONS)[number];
+
+  const userAvatarBgColor =
+    AVATAR_OPTIONS.find((o: AvatarOption) => o.icon === userAvatarIcon)?.color ?? '#f0f0f0';
+
   // Для подсветки сообщения
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const hasScrolledToTargetRef = useRef(false);
@@ -96,10 +186,22 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
     const meta = m.meta ?? m.metadata ?? null;
     const insightLiked = Boolean(m.insightLiked ?? meta?.insightLiked ?? m.insight_liked ?? false);
 
+    const rawContent =
+      m.content ??
+      m.text ??
+      m.message ??
+      m.delta ??
+      m.value ??
+      m.body ??
+      (typeof m.data === 'object' && m.data ? (m.data as Record<string, unknown>).content : undefined) ??
+      '';
+
+    const normalizedText = normalizeMessageContent(rawContent);
+
     return {
       id: String(m.id),
-      text: m.content ?? m.text ?? '',
-      sender: (m.role === 'user' ? 'user' : 'bot'),
+      text: normalizedText,
+      sender: m.role === 'user' ? 'user' : 'bot',
       role: m.role ?? (m.sender === 'user' ? 'user' : 'assistant'),
       timestamp: toTimestamp(createdRaw ?? Date.now()),
       meta: meta ?? null,
@@ -109,14 +211,19 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
 
   const extractAiText = useCallback((aiRes: any): string | null => {
     if (!aiRes) return null;
-    return (
+
+    const raw =
       aiRes?.choices?.[0]?.message?.content ??
+      aiRes?.choices?.[0]?.delta?.content ??
+      aiRes?.message ??
       aiRes?.response ??
       aiRes?.text ??
       aiRes?.output?.text ??
       aiRes?.result ??
-      null
-    );
+      null;
+
+    const normalized = normalizeMessageContent(raw);
+    return normalized || null;
   }, []);
 
   const fetchConvo = useCallback(async () => {
@@ -709,18 +816,22 @@ export default function DailyConvoChat({ dailyConvoId: propId, initialConvo = nu
                   }}
                 >
                    {msg.sender === 'user' ? (
-                    <Avatar
-                      sx={{
-                        bgcolor: accentColor,
-                        width: 36,
-                        height: 36,
-                      }}
-                    >
-                      <PersonIcon />
-                    </Avatar>
-                  ) : (
-                    renderAssistantAvatar(isInterpretation ? 'interpretation' : 'default') // Передаем variant
-                  )}
+  <Avatar
+    src={userAvatarSrc}
+    sx={{
+      width: 36,
+      height: 36,
+      bgcolor: userAvatarSrc ? undefined : userAvatarBgColor,
+      color: '#fff',
+      boxShadow: '0 4px 16px rgba(24,32,80,0.35)',
+      border: `1px solid ${glassBorder}`,
+    }}
+  >
+    {!userAvatarSrc && <UserAvatarIcon sx={{ fontSize: 20 }} />}
+  </Avatar>
+) : (
+  renderAssistantAvatar(isInterpretation ? 'interpretation' : 'default')
+)}
 
                   <Box
                     sx={{ position: 'relative', cursor: isAssistant ? 'pointer' : 'default' }}

@@ -265,17 +265,13 @@ const DAILY_ARTWORK_PROMPT = `Ты создаешь описание для ге
 
 // --- INTERPRETATION PROMPTS ---
 
-const BLOCK_INTERPRETATION_PROMPT_DAILY = `
-Проанализируй один блок диалога между пользователем и ассистентом. Ответь на русском языке в формате JSON:
-
-{
-  "summary": "Краткое содержание того, о чём говорилось в этом блоке (1–2 предложения)",
-  "emotions": ["эмоция1", "эмоция2"],
-  "themes": ["тема1", "тема2"],
-  "insights": ["инсайт1", "инсайт2"],
-  "suggestions": ["что можно обсудить дальше", "возможное действие"]
-}
-`;
+const BLOCK_INTERPRETATION_PROMPT_DAILY = `Составь итоговое толкование этого блока повседневной беседы (3–6 предложений), используя rolling summary и сам текст блока.
+Не продолжай диалог, а выдай итоговое толкование блока на основе всей доступной информации.
+Кратко обозначь, о чём был разговор, какой в нём эмоциональный фон и какие возникли важные мысли или внутренние противоречия.
+Мягко предложи возможные направления для дальнейших размышлений или обсуждения, если это уместно.
+Не повторяй и не цитируй текст блока, не пересказывай его дословно. Не задавай пользователю вопросов.
+Избегай любых психоаналитических понятий и сложного профессионального жаргона.
+Выведи только чистый связный текст без заголовков, без кода, без тегов, без списков и без JSON.`;
 
 const FINAL_INTERPRETATION_PROMPT_DAILY = `
 Проанализируй всю историю диалога между пользователем и ассистентом. Ответь на русском языке в формате JSON:
@@ -314,6 +310,359 @@ const ART_FINAL_INTERPRETATION_PROMPT = `
 }
 `;
 
+// =============================
+// 🏆 СИСТЕМА БЕЙДЖЕЙ
+// =============================
+
+const BADGES = {
+  // Категория: Первые шаги
+  first_dream: {
+    id: 'first_dream',
+    name: 'Первый сон',
+    emoji: '🎯',
+    category: 'first_steps',
+    description: 'Записал первый сон',
+    condition: (data) => data.totalDreams >= 1,
+  },
+  first_interpretation: {
+    id: 'first_interpretation',
+    name: 'Первая мысль',
+    emoji: '💭',
+    category: 'first_steps',
+    description: 'Первая интерпретация',
+    condition: (data) => data.breakdownCounts.interpreted >= 1,
+  },
+  first_artwork: {
+    id: 'first_artwork',
+    name: 'Первый образ',
+    emoji: '🎨',
+    category: 'first_steps',
+    description: 'Первый артворк',
+    condition: (data) => data.breakdownCounts.artworks >= 1,
+  },
+  first_dialog: {
+    id: 'first_dialog',
+    name: 'Первый диалог',
+    emoji: '💬',
+    category: 'first_steps',
+    description: 'Первый диалог с AI',
+    condition: (data) => data.breakdownCounts.dialogs >= 1,
+  },
+  first_insight: {
+    id: 'first_insight',
+    name: 'Первый инсайт',
+    emoji: '📊',
+    category: 'first_steps',
+    description: 'Получил первый инсайт',
+    condition: (data) => data.insights >= 1,
+  },
+
+  // Категория: Постоянство
+  streak_7: {
+    id: 'streak_7',
+    name: 'Неделя силы',
+    emoji: '🔥',
+    category: 'consistency',
+    description: 'Стрик 7 дней',
+    condition: (data) => data.streak >= 7,
+  },
+  streak_30: {
+    id: 'streak_30',
+    name: 'Месяц мастерства',
+    emoji: '🌟',
+    category: 'consistency',
+    description: 'Стрик 30 дней',
+    condition: (data) => data.streak >= 30,
+  },
+  habit_10: {
+    id: 'habit_10',
+    name: 'Привычка',
+    emoji: '💪',
+    category: 'consistency',
+    description: '10 снов за месяц',
+    condition: (data) => data.totalDreams >= 10,
+  },
+
+  // Категория: Глубина
+  analyst_10: {
+    id: 'analyst_10',
+    name: 'Аналитик',
+    emoji: '🧠',
+    category: 'depth',
+    description: '10 интерпретаций',
+    condition: (data) => data.breakdownCounts.interpreted >= 10,
+  },
+  philosopher_10: {
+    id: 'philosopher_10',
+    name: 'Философ',
+    emoji: '🎭',
+    category: 'depth',
+    description: '10 диалогов',
+    condition: (data) => data.breakdownCounts.dialogs >= 10,
+  },
+  visionary_10: {
+    id: 'visionary_10',
+    name: 'Визионер',
+    emoji: '🖼️',
+    category: 'depth',
+    description: '10 артворков',
+    condition: (data) => data.breakdownCounts.artworks >= 10,
+  },
+  collector_20: {
+    id: 'collector_20',
+    name: 'Коллекционер',
+    emoji: '💎',
+    category: 'depth',
+    description: '20 инсайтов',
+    condition: (data) => data.insights >= 20,
+  },
+
+  // Категория: Мастерство
+  perfectionist: {
+    id: 'perfectionist',
+    name: 'Перфекционист',
+    emoji: '🏆',
+    category: 'mastery',
+    description: 'Depth Score 100% за неделю',
+    condition: (data) => data.depthScore >= 100,
+  },
+  full_immersion: {
+    id: 'full_immersion',
+    name: 'Полное погружение',
+    emoji: '🌈',
+    category: 'mastery',
+    description: 'Использовал все фичи за период',
+    condition: (data) => 
+      data.breakdownCounts.interpreted > 0 &&
+      data.breakdownCounts.artworks > 0 &&
+      data.breakdownCounts.dialogs > 0 &&
+      data.insights > 0,
+  },
+  guru: {
+    id: 'guru',
+    name: 'Гуру',
+    emoji: '🎓',
+    category: 'mastery',
+    description: '50 снов + 50 интерпретаций',
+    condition: (data) => 
+      data.totalDreams >= 50 && 
+      data.breakdownCounts.interpreted >= 50,
+  },
+};
+
+// Уровни
+const LEVELS = [
+  { min: 0, max: 100, name: 'Новичок', emoji: '🌱', color: '#9CA3AF' },
+  { min: 101, max: 300, name: 'Мечтатель', emoji: '🌙', color: '#3B82F6' },
+  { min: 301, max: 600, name: 'Исследователь', emoji: '🔍', color: '#8B5CF6' },
+  { min: 601, max: 1000, name: 'Аналитик', emoji: '✨', color: '#F59E0B' },
+  { min: 1001, max: 1500, name: 'Философ', emoji: '🧠', color: '#EC4899' },
+  { min: 1501, max: 2000, name: 'Визионер', emoji: '👁️', color: '#8B5CF6' },
+  { min: 2001, max: 2500, name: 'Мастер', emoji: '🧘', color: '#10B981' },
+  { min: 2501, max: 3000, name: 'Гуру', emoji: '🌟', color: '#FBBF24' },
+];
+
+// =============================
+// 📊 РАСЧЁТ DEPTH SCORE
+// =============================
+
+function calculateDepthScore(data) {
+  const { totalDreamsInPeriod, breakdownCounts, streak } = data;
+
+  if (totalDreamsInPeriod === 0) return 0;
+
+  // Базовые очки за каждый сон
+  let score = totalDreamsInPeriod * 50; // 3 сна × 50 = 150
+
+  // Бонусы за интерпретации (очень важно)
+  score += (breakdownCounts.interpreted || 0) * 100; // 0 × 100 = 0
+
+  // Бонусы за диалоги (важно)
+  score += (breakdownCounts.dialogs || 0) * 80; // 3 × 80 = 240
+
+  // Бонусы за артворки (средне)
+  score += (breakdownCounts.artworks || 0) * 60; // 2 × 60 = 120
+
+  // Бонусы за стрик (мотивация)
+  score += streak * 20; // 0 × 20 = 0
+
+  // Бонусы за саммари (если есть)
+  score += (breakdownCounts.summarized || 0) * 40;
+
+  return Math.min(Math.round(score), 3000); // максимум 3000
+}
+
+// =============================
+// 🎯 ОПРЕДЕЛЕНИЕ УРОВНЯ
+// =============================
+
+function getLevel(depthScore) {
+  return LEVELS.find(level => depthScore >= level.min && depthScore <= level.max) || LEVELS[0];
+}
+
+// =============================
+// 🏆 ПРОВЕРКА И РАЗБЛОКИРОВКА БЕЙДЖЕЙ
+// =============================
+
+async function checkAndUnlockBadges(d1, userEmail, dashboardData) {
+  const now = Date.now();
+  const unlockedBadges = [];
+  const newBadges = [];
+
+  const existingBadgesRes = await d1
+    .prepare('SELECT badge_id, unlocked_at, seen_at FROM user_badges WHERE user_email = ?')
+    .bind(userEmail)
+    .all();
+
+  const existingBadgeIds = new Set(
+    (existingBadgesRes?.results || []).map(r => r.badge_id)
+  );
+
+  const unseenBadgeIds = (existingBadgesRes?.results || [])
+    .filter(r => r.seen_at === null)
+    .map(r => r.badge_id);
+
+  // ✅ объявляем Map ДО цикла
+  const unlockedAtById = new Map(
+    (existingBadgesRes?.results || []).map(r => [r.badge_id, r.unlocked_at ?? null])
+  );
+
+  for (const [badgeId, badge] of Object.entries(BADGES)) {
+    const isUnlocked = badge.condition(dashboardData);
+
+    if (isUnlocked) {
+      unlockedBadges.push(badgeId);
+
+      if (!existingBadgeIds.has(badgeId)) {
+        await d1
+          .prepare('INSERT INTO user_badges (user_email, badge_id, unlocked_at) VALUES (?, ?, ?)')
+          .bind(userEmail, badgeId, now)
+          .run();
+
+        newBadges.push(badgeId);
+        unlockedAtById.set(badgeId, now);
+      }
+    }
+  }
+
+  return {
+    unlocked: unlockedBadges,
+    new: newBadges,
+    unseen: unseenBadgeIds,
+    unlockedAtById,
+  };
+}
+
+// =============================
+// 🎯 ОПРЕДЕЛЕНИЕ СЛЕДУЮЩЕЙ ЦЕЛИ
+// =============================
+
+function getNextGoal(level, unlockedBadges, dashboardData) {
+  const unlockedSet = new Set(unlockedBadges);
+
+  const goalPriority = {
+    'Новичок': ['first_interpretation', 'first_artwork', 'first_dialog'],
+    'Мечтатель': ['streak_7', 'habit_10', 'first_dialog'],
+    'Исследователь': ['philosopher_10', 'collector_20', 'analyst_10'],
+    'Аналитик': ['full_immersion', 'perfectionist', 'visionary_10'],
+    'Философ': ['guru', 'streak_30', 'philosopher_50'],
+    'Визионер': ['visionary_50', 'collector_100', 'perfectionist'],
+    'Мастер': ['guru', 'streak_30', 'full_immersion'],
+    'Гуру': ['guru', 'perfectionist', 'streak_30'],
+  };
+
+  const priorities = goalPriority[level.name] || [];
+
+  for (const badgeId of priorities) {
+    if (!unlockedSet.has(badgeId)) {
+      const badge = BADGES[badgeId];
+      return {
+        badgeId,
+        name: badge.name,
+        emoji: badge.emoji,
+        description: badge.description,
+        progress: calculateBadgeProgress(badgeId, dashboardData),
+      };
+    }
+  }
+
+  for (const [badgeId, badge] of Object.entries(BADGES)) {
+    if (!unlockedSet.has(badgeId)) {
+      return {
+        badgeId,
+        name: badge.name,
+        emoji: badge.emoji,
+        description: badge.description,
+        progress: calculateBadgeProgress(badgeId, dashboardData),
+      };
+    }
+  }
+
+  return null;
+}
+
+// =============================
+// 📈 РАСЧЁТ ПРОГРЕССА ДО БЕЙДЖА
+// =============================
+
+function calculateBadgeProgress(badgeId, data) {
+  const progressMap = {
+    first_dream: { current: data.totalDreams, target: 1 },
+    first_interpretation: { current: data.breakdownCounts.interpreted, target: 1 },
+    first_artwork: { current: data.breakdownCounts.artworks, target: 1 },
+    first_dialog: { current: data.breakdownCounts.dialogs, target: 1 },
+    first_insight: { current: data.insights, target: 1 },
+    streak_7: { current: data.streak, target: 7 },
+    streak_30: { current: data.streak, target: 30 },
+    habit_10: { current: data.totalDreams, target: 10 },
+    analyst_10: { current: data.breakdownCounts.interpreted, target: 10 },
+    philosopher_10: { current: data.breakdownCounts.dialogs, target: 10 },
+    visionary_10: { current: data.breakdownCounts.artworks, target: 10 },
+    collector_20: { current: data.insights, target: 20 },
+    perfectionist: { current: data.depthScore, target: 100 },
+    full_immersion: { 
+      current: [
+        data.breakdownCounts.interpreted > 0,
+        data.breakdownCounts.artworks > 0,
+        data.breakdownCounts.dialogs > 0,
+        data.insights > 0,
+      ].filter(Boolean).length,
+      target: 4,
+    },
+    guru: { 
+      current: Math.min(data.totalDreams, data.breakdownCounts.interpreted),
+      target: 50,
+    },
+  };
+
+  return progressMap[badgeId] || { current: 0, target: 1 };
+}
+
+// =============================
+// 💡 ГЕНЕРАЦИЯ СОВЕТА
+// =============================
+
+function generateAdvice(level, nextGoal, dashboardData) {
+  const adviceMap = {
+    first_interpretation: 'Интерпретация помогает понять смысл сна. Попробуй проанализировать свой последний сон!',
+    first_artwork: 'Визуализация снов помогает лучше их запомнить. Создай артворк для своего сна!',
+    first_dialog: 'Диалоги помогают раскрыть скрытые смыслы снов. Задай вопросы AI о своём сне!',
+    first_insight: 'Инсайты показывают паттерны в твоих снах. Исследуй раздел "Инсайты"!',
+    streak_7: 'Записывай сны каждое утро — это поможет лучше их запоминать и сформирует привычку.',
+    streak_30: 'Ты на пути к мастерству! Продолжай записывать сны каждый день.',
+    habit_10: 'Регулярная запись снов помогает лучше понимать себя. Продолжай в том же духе!',
+    analyst_10: 'Глубокий анализ снов раскрывает их истинный смысл. Интерпретируй больше снов!',
+    philosopher_10: 'Диалоги помогают задать правильные вопросы. Общайся с AI чаще!',
+    visionary_10: 'Визуальное мышление развивает креативность. Создавай больше артворков!',
+    collector_20: 'Инсайты помогают найти паттерны. Исследуй свои сны глубже!',
+    perfectionist: 'Используй все инструменты для каждого сна — это даст максимальную пользу.',
+    full_immersion: 'Попробуй использовать все инструменты для одного сна: интерпретацию, артворк, диалог и инсайты.',
+    guru: 'Ты почти мастер! Продолжай исследовать свои сны с помощью всех инструментов.',
+  };
+
+  return nextGoal ? adviceMap[nextGoal.badgeId] || 'Продолжай исследовать свои сны!' : 'Ты разблокировал все достижения! 🎉';
+}
+
 // --- Функции для работы с rolling summary ---
 
 // Получить summary с количеством обработанных сообщений
@@ -351,11 +700,11 @@ async function saveRollingSummary(env, userEmail, dreamId, blockId, summaryText,
         last_message_count = excluded.last_message_count,
         updated_at = excluded.updated_at
     `);
-  
+
     const result = await stmt.bind(
       id, userEmail, dreamId, blockId, summaryText, messageCount, now
     ).run();
-  
+
     console.log('[saveRollingSummary] Success:', result);
     return result;
   } catch (e) {
@@ -408,27 +757,27 @@ async function updateRollingSummary(env, userEmail, dreamId, blockId, blockText,
   const prompt = currentSummary?.summary 
     ? `
       ${SUMMARY_UPDATE_PROMPT}
-    
+
       ФРАГМЕНТ СНОВИДЕНИЯ:
       ${blockText.slice(0, 2000)}
-    
+
       ПРЕДЫДУЩЕЕ РЕЗЮМЕ ДИАЛОГА:
       ${currentSummary.summary}
-    
+
       НОВЫЕ СООБЩЕНИЯ:
       ${newMessages.map(m => `${m.role}: ${m.content}`).join('\n')}
-    
+
       Обнови резюме, добавив ключевые моменты из новых сообщений.
     `
     : `
       ${SUMMARY_UPDATE_PROMPT}
-    
+
       ФРАГМЕНТ СНОВИДЕНИЯ:
       ${blockText.slice(0, 2000)}
-    
+
       СООБЩЕНИЯ ДИАЛОГА:
       ${newMessages.map(m => `${m.role}: ${m.content}`).join('\n')}
-    
+
       Создай краткое резюме этого диалога.
     `;
 
@@ -540,17 +889,17 @@ async function toggleMessageInsight(env, { dreamId, messageId, liked, userEmail 
 // --- INTERPRETATION FUNCTIONS ---
 
 async function interpretBlock(env, blockText, blockType = 'dialog') {
-  let prompt;
+  let systemPrompt;
   if (blockType === 'art') {
-    prompt = ART_BLOCK_INTERPRETATION_PROMPT;
+    systemPrompt = ART_BLOCK_INTERPRETATION_PROMPT;
   } else {
-    prompt = BLOCK_INTERPRETATION_PROMPT_DAILY;
+    systemPrompt = BLOCK_INTERPRETATION_PROMPT_DAILY;
   }
 
   const deepseekRequestBody = {
     model: 'deepseek-chat',
     messages: [
-      { role: 'system', content: prompt },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: blockText }
     ],
     max_tokens: 500,
@@ -568,14 +917,24 @@ async function interpretBlock(env, blockText, blockType = 'dialog') {
   });
 
   const json = await res.json();
-  let content = json.choices?.[0]?.message?.content || '{}';
-  content = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  let content = json.choices?.[0]?.message?.content || '';
 
-  try {
-    return JSON.parse(content);
-  } catch {
-    return {};
+  content = content.replace(/```[\s\S]*?```/g, '').trim();
+
+  if (blockType === 'art') {
+    let cleaned = content
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*$/g, '')
+      .trim();
+
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      return {};
+    }
   }
+  content = content.replace(/^["'`]+|["'`]+$/g, '').trim();
+  return content;
 }
 
 async function interpretFinal(env, notesText, blockType = 'dialog') {
@@ -860,15 +1219,280 @@ async function avatar_handleServe(request, env) {
 }
 // ===== end Avatar helpers =====
 
+async function getOrCreateUserRowByEmail(env, email) {
+  if (!email) {
+    console.warn('[getOrCreateUserRowByEmail] email is empty');
+    return null;
+  }
+
+  // Нормализация email
+  email = email.trim().toLowerCase();
+  console.log('[getOrCreateUserRowByEmail] Normalized email:', email);
+
+  // 1) пробуем найти в D1
+  let row = await env.DB
+    .prepare('SELECT id, email, password_hash, created_at FROM users WHERE LOWER(email) = ?')
+    .bind(email)
+    .first();
+
+  console.log('[getOrCreateUserRowByEmail] D1 row:', row);
+
+  if (row && row.id) {
+    return row;
+  }
+
+  // 2) если нет — достаём из KV
+  const userRaw = await env.USERS_KV.get(`user:${email}`);
+  console.log('[getOrCreateUserRowByEmail] KV lookup:', userRaw ? 'found' : 'NOT FOUND');
+
+  if (!userRaw) {
+    console.warn('[getOrCreateUserRowByEmail] User not in KV:', email);
+    return null;
+  }
+
+  let kv;
+  try {
+    kv = JSON.parse(userRaw);
+  } catch (e) {
+    console.error('[getOrCreateUserRowByEmail] KV parse error:', e);
+    kv = {};
+  }
+
+  const password_hash = kv.password ?? '';
+  const createdMs = kv.created ?? Date.now();
+  const created_at = new Date(createdMs).toISOString();
+
+  // 🆕 Генерация UUID
+  const id = crypto.randomUUID();
+
+  console.log('[getOrCreateUserRowByEmail] Attempting insert:', { id, email });
+
+  // 3) создаём запись в D1
+  try {
+    await env.DB.prepare(
+      `INSERT INTO users (id, email, password_hash, name, avatar_icon, avatar_image_url, created_at)
+       VALUES (?, ?, ?, NULL, NULL, NULL, ?)`
+    )
+      .bind(id, email, password_hash, created_at)
+      .run();
+
+    console.log('[getOrCreateUserRowByEmail] Insert successful');
+  } catch (e) {
+    console.error('[getOrCreateUserRowByEmail] Insert error:', e);
+    const msg = String(e?.message || e);
+    if (!msg.includes('UNIQUE constraint failed: users.email')) {
+      throw e;
+    }
+    console.log('[getOrCreateUserRowByEmail] UNIQUE conflict, will re-read');
+  }
+
+  // 4) возвращаем актуальную строку из D1
+  row = await env.DB
+    .prepare('SELECT id, email, password_hash, created_at FROM users WHERE LOWER(email) = ?')
+    .bind(email)
+    .first();
+
+  console.log('[getOrCreateUserRowByEmail] Final row:', row);
+
+  if (!row || !row.id) {
+    console.error('[getOrCreateUserRowByEmail] CRITICAL: Failed to create/retrieve user');
+    return null;
+  }
+
+  return row;
+}
+
+// ===== Personal goals helpers =====
+
+async function getUserIdByEmail(env, email) {
+  const row = await getOrCreateUserRowByEmail(env, email);
+  return row?.id || null;
+}
+
+async function createGoal(env, userEmail, body) {
+  const userId = await getUserIdByEmail(env, userEmail);
+  if (!userId) throw new Error('User not found in DB');
+
+  const id = crypto.randomUUID();
+  const {
+    title,
+    description,
+    category,
+    goalType,
+    targetCount,
+    unit,
+    period,
+    startDate,
+    dueDate
+  } = body;
+
+  await env.DB.prepare(
+    `INSERT INTO personal_goals
+     (id, user_id, title, description, category, goal_type, target_count, unit, period, start_date, due_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    userId,
+    title,
+    description ?? null,
+    category ?? null,
+    goalType,
+    targetCount ?? null,
+    unit ?? null,
+    period ?? null,
+    startDate,
+    dueDate ?? null
+  ).run();
+
+  return { id };
+}
+
+async function getGoalsWithProgress(env, userEmail) {
+  const userId = await getUserIdByEmail(env, userEmail);
+  if (!userId) throw new Error('User not found in DB');
+
+  const stmt = env.DB.prepare(
+    `SELECT
+       g.id          AS goal_id,
+       g.title,
+       g.description,
+       g.category,
+       g.goal_type,
+       g.target_count,
+       g.unit,
+       g.period,
+       g.start_date,
+       g.due_date,
+       g.status,
+       g.created_at,
+       g.updated_at,
+       COALESCE(SUM(e.amount), 0) AS total_done,
+       CASE
+         WHEN g.target_count IS NOT NULL AND g.target_count > 0
+           THEN ROUND(100.0 * COALESCE(SUM(e.amount), 0) / g.target_count, 1)
+         ELSE NULL
+       END AS progress_percent
+     FROM personal_goals g
+     LEFT JOIN personal_goal_events e
+       ON e.goal_id = g.id
+       AND e.user_id = g.user_id
+     WHERE g.user_id = ?
+     GROUP BY g.id
+     ORDER BY g.created_at DESC`
+  );
+
+  const res = await stmt.bind(userId).all();
+  return res.results ?? [];
+}
+
+async function addGoalEvent(env, userEmail, goalId, body) {
+  const userId = await getUserIdByEmail(env, userEmail);
+  if (!userId) throw new Error('User not found in DB');
+
+  const amount = body.amount ?? 1;
+  const eventDate = body.eventDate ?? Math.floor(Date.now() / 1000);
+
+  await env.DB.prepare(
+    `INSERT INTO personal_goal_events
+     (goal_id, user_id, event_date, amount)
+     VALUES (?, ?, ?, ?)`
+  ).bind(goalId, userId, eventDate, amount).run();
+
+  return { ok: true };
+}
+
+async function getGoalsTimeline(env, userEmail, range) {
+  const now = Math.floor(Date.now() / 1000); // секунды
+  let from;
+
+  switch (range) {
+    case '7d':
+      from = now - 7 * 24 * 3600;
+      break;
+    case '30d':
+      from = now - 30 * 24 * 3600;
+      break;
+    case '60d':
+      from = now - 60 * 24 * 3600;
+      break;
+    case '90d':
+      from = now - 90 * 24 * 3600;
+      break;
+    case '365d':
+      from = now - 365 * 24 * 3600;
+      break;
+    case 'all':
+    default:
+      from = 0;
+  }
+
+  const userId = await getUserIdByEmail(env, userEmail);
+  if (!userId) throw new Error('User not found in DB');
+
+  const totalTargetRow = await env.DB
+    .prepare(
+      `SELECT COALESCE(SUM(target_count), 0) AS total_target
+       FROM personal_goals
+       WHERE user_id = ?
+         AND (status IS NULL OR status != 'archived')`
+    )
+    .bind(userId)
+    .first();
+
+  const totalTarget = Number(totalTargetRow?.total_target || 0);
+
+  const stmt = env.DB.prepare(
+    `WITH daily AS (
+       SELECT
+         DATE(event_date, 'unixepoch') AS d,
+         SUM(amount) AS daily_amount
+       FROM personal_goal_events
+       WHERE user_id = ?
+         AND event_date BETWEEN ? AND ?
+       GROUP BY DATE(event_date, 'unixepoch')
+     ),
+     cum AS (
+       SELECT
+         d,
+         SUM(daily_amount) OVER (ORDER BY d) AS cumulative_amount
+       FROM daily
+     )
+     SELECT d AS date, cumulative_amount
+     FROM cum
+     ORDER BY d`
+  );
+
+  const res = await stmt.bind(userId, from, now).all();
+  const rows = res.results ?? [];
+
+  if (totalTarget > 0) {
+    return rows.map(r => ({
+      date: r.date,
+      cumulative_amount: r.cumulative_amount,
+      percent: Math.max(
+        0,
+        Math.min(100, Math.round((r.cumulative_amount / totalTarget) * 100)),
+      ),
+    }));
+  }
+
+  return rows;
+}
+
+// ===== end Personal goals helpers =====
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname === '/me/avatar/upload' && request.method === 'POST') {
-      return avatar_handleUpload(request, env);
+    
+    // ✅ 1. ОБРАБОТКА OPTIONS (PREFLIGHT) — ПЕРВЫМ ДЕЛОМ!
+    if (request.method === 'OPTIONS') {
+      const origin = request.headers.get('Origin') || '';
+      const cors = buildCorsHeaders(origin);
+      return new Response(null, { status: 204, headers: cors });
     }
-    if (url.pathname.startsWith('/avatars/') && request.method === 'GET') {
-      return avatar_handleServe(request, env);
-    }
+
+    // ✅ 2. Теперь buildCorsHeaders для остальных запросов
     const origin = request.headers.get('Origin') || '';
     const corsHeaders = buildCorsHeaders(origin);
     const pathParts = url.pathname.split('/').filter(Boolean);
@@ -883,17 +1507,266 @@ export default {
       });
     }
 
-    if (request.method === 'OPTIONS') {
-  const origin = request.headers.get('Origin') || '';
-  const cors = buildCorsHeaders(origin);
-  return new Response(null, { status: 204, headers: cors });
-}
-
     if (url.pathname === '/health' && request.method === 'GET') {
       return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
+    }
+
+    // === PERSONAL GOALS API ===
+
+    // GET /goals - список целей с прогрессом
+    if (url.pathname === '/goals' && request.method === 'GET') {
+      const userEmail = await getUserEmail(request);
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      try {
+        const goals = await getGoalsWithProgress(env, userEmail);
+        return new Response(JSON.stringify({ goals }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (e) {
+        console.error('GET /goals error', e);
+        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
+    // POST /goals - создать цель
+    if (url.pathname === '/goals' && request.method === 'POST') {
+      const userEmail = await getUserEmail(request);
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      const ct = request.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) {
+        return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      const { title, goalType, startDate } = body || {};
+      if (!title || !goalType || !startDate) {
+        return new Response(JSON.stringify({ error: 'title, goalType and startDate are required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      try {
+        const resCreate = await createGoal(env, userEmail, body);
+        return new Response(JSON.stringify({ id: resCreate.id }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (e) {
+        console.error('POST /goals error', e);
+        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
+    // POST /goals/:id/event - добавить событие (Сделать)
+    if (request.method === 'POST' && pathParts.length === 3 && pathParts[0] === 'goals' && pathParts[2] === 'event') {
+      const userEmail = await getUserEmail(request);
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      const goalId = pathParts[1];
+
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+
+      try {
+        const resAdd = await addGoalEvent(env, userEmail, goalId, body || {});
+        return new Response(JSON.stringify(resAdd), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (e) {
+        console.error('POST /goals/:id/event error', e);
+        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+    }
+
+    // PUT /goals/:id - обновить цель (включая target_count)
+if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goals') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const goalId = pathParts[1];
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const userId = await getUserIdByEmail(env, userEmail);
+  if (!userId) throw new Error('User not found in DB');
+
+  const {
+    title,
+    description,
+    category,
+    targetCount,
+    unit,
+    period,
+    dueDate,
+    status
+  } = body;
+
+  try {
+    // Формируем UPDATE динамически
+    const sets = [];
+    const binds = [];
+
+    if (typeof title !== 'undefined') { sets.push('title = ?'); binds.push(title); }
+    if (typeof description !== 'undefined') { sets.push('description = ?'); binds.push(description); }
+    if (typeof category !== 'undefined') { sets.push('category = ?'); binds.push(category); }
+    if (typeof targetCount !== 'undefined') { sets.push('target_count = ?'); binds.push(targetCount); }
+    if (typeof unit !== 'undefined') { sets.push('unit = ?'); binds.push(unit); }
+    if (typeof period !== 'undefined') { sets.push('period = ?'); binds.push(period); }
+    if (typeof dueDate !== 'undefined') { sets.push('due_date = ?'); binds.push(dueDate); }
+    if (typeof status !== 'undefined') { sets.push('status = ?'); binds.push(status); }
+
+    sets.push('updated_at = strftime(\'%s\',\'now\')');
+
+    binds.push(goalId, userId);
+
+    const sql = `UPDATE personal_goals SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`;
+    await env.DB.prepare(sql).bind(...binds).run();
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('PUT /goals/:id error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// DELETE /goals/:id - удалить цель
+if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'goals') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const goalId = pathParts[1];
+
+  try {
+    const userId = await getUserIdByEmail(env, userEmail);
+    if (!userId) throw new Error('User not found in DB');
+
+    // Удаляем все события цели
+    await env.DB.prepare(
+      'DELETE FROM personal_goal_events WHERE goal_id = ? AND user_id = ?'
+    ).bind(goalId, userId).run();
+
+    // Удаляем саму цель
+    const res = await env.DB.prepare(
+      'DELETE FROM personal_goals WHERE id = ? AND user_id = ?'
+    ).bind(goalId, userId).run();
+
+    if (res.changes === 0) {
+      return new Response(JSON.stringify({ error: 'Goal not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('DELETE /goals/:id error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+    // GET /goals/timeline?range=7d
+    if (url.pathname === '/goals/timeline' && request.method === 'GET') {
+      const userEmail = await getUserEmail(request);
+      if (!userEmail) {
+        return new Response(JSON.stringify({ error: 'unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
+
+      const range = url.searchParams.get('range') || '30d';
+
+      try {
+        const points = await getGoalsTimeline(env, userEmail, range);
+        return new Response(JSON.stringify({ points }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      } catch (e) {
+        console.error('GET /goals/timeline error', e);
+        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        });
+      }
     }
 
     if (url.pathname === '/register' && request.method === 'POST') {
@@ -2438,9 +3311,9 @@ if (dreamId && blockId) {
   // Если summary есть, проверяем порог обновления
   else if (summaryData) {
     const newMessageCount = currentMessageCount - summaryData.lastMessageCount;
-  
+
     console.log('[analyze] New messages since last summary:', newMessageCount);
-  
+
     if (newMessageCount >= SUMMARY_UPDATE_THRESHOLD) {
       console.log('[analyze] Updating summary');
       try {
@@ -2459,7 +3332,7 @@ if (dreamId && blockId) {
     const systemPrompt = isArtworkDialog ? ARTDIALOG_SYSTEM_PROMPT : DIALOG_SYSTEM_PROMPT;
 
 messages.push({ role: 'system', content: systemPrompt });
-  
+
     const d1 = env.DB;
     let dreamSummary = null;
     let autoSummary = null;
@@ -2468,7 +3341,7 @@ messages.push({ role: 'system', content: systemPrompt });
       const dreamRow = await d1.prepare(
         `SELECT dreamSummary, autoSummary FROM dreams WHERE id = ? AND user = ?`
       ).bind(dreamId, userEmail).first();
-    
+
       if (dreamRow) {
         dreamSummary = dreamRow.dreamSummary || null;
         autoSummary = dreamRow.autoSummary || null;
@@ -2489,14 +3362,14 @@ messages.push({ role: 'system', content: systemPrompt });
     if (rollingSummary) {
       messages.push({ role: 'system', content: `ROLLING SUMMARY ДИАЛОГА:\n${rollingSummary}` });
     }
-  
+
     // Добавляем текст текущего блока
     messages.push({ role: 'system', content: `ТЕКУЩИЙ БЛОК:\n${(blockText || '').slice(0, 4000)}` });
-  
+
     if (Array.isArray(lastTurns) && lastTurns.length) {
       messages.push(...lastTurns);
     }
-  
+
     if (extraSystemPrompt) {
       messages.push({ role: 'system', content: extraSystemPrompt });
     }
@@ -2523,7 +3396,7 @@ messages.push({ role: 'system', content: systemPrompt });
     content = content.replace(/```[\s\S]*?```/g, '').trim();
     if (!content) content = responseBody?.choices?.[0]?.message?.content || '';
     responseBody.choices[0].message.content = content;
-  
+
     return new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -2935,12 +3808,12 @@ if (url.pathname === '/interpret_block' && request.method === 'POST') {
     const d1 = env.DB;
     let autoSummary = '';
     let dreamSummary = '';
-  
+
     if (dreamId) {
       const dreamRow = await d1.prepare(
         `SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`
       ).bind(dreamId, userEmail).first();
-    
+
       if (dreamRow) {
         autoSummary = dreamRow.autoSummary || '';
         dreamSummary = dreamRow.dreamSummary || '';
@@ -3029,11 +3902,11 @@ if (dreamId && blockId && interpretation) {
     } catch {
       blocks = [];
     }
-  
+
     const blockIndex = blocks.findIndex(b => b.id === blockId);
     if (blockIndex !== -1) {
       blocks[blockIndex].interpretation = interpretation;
-    
+
       await d1.prepare(
         `UPDATE dreams SET blocks = ? WHERE id = ? AND user = ?`
       ).bind(JSON.stringify(blocks), dreamId, userEmail).run();
@@ -3086,12 +3959,12 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
     const d1 = env.DB;
     let autoSummary = '';
     let dreamSummary = '';
-  
+
     if (dreamId) {
       const dreamRow = await d1.prepare(
         `SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`
       ).bind(dreamId, userEmail).first();
-    
+
       if (dreamRow) {
         autoSummary = dreamRow.autoSummary || '';
         dreamSummary = dreamRow.dreamSummary || '';
@@ -3112,7 +3985,7 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
         );
 
         blocksContext += `\n\n### Блок ${i + 1}:\n${blockText}\n`;
-      
+
         if (rollingSummary) {
           blocksContext += `**Контекст диалога (summary):**\n${rollingSummary}\n`;
         }
@@ -3345,7 +4218,7 @@ if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'P
   }
 }
 
-// --- Dashboard metrics endpoint (расширенный, поддержка ?days=) ---
+// --- Dashboard metrics endpoint (нормальный range) ---
 if (url.pathname === '/dashboard' && request.method === 'GET') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
@@ -3355,7 +4228,6 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     });
   }
 
-  // Проверка триала
   if (!(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
@@ -3363,65 +4235,116 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     });
   }
 
-  try {
-    const d1 = env.DB;
+ try {
+  const d1 = env.DB;
 
-    // Parse days param: ?days=7|30|90|365 or 0/all
-    const daysParam = url.searchParams.get('days');
-    const days = daysParam ? parseInt(daysParam, 10) : 90; // default 90d
-    const isAll = !daysParam || days <= 0;
-    const sinceTs = isAll ? 0 : Date.now() - (days * 24 * 60 * 60 * 1000);
+  // ---------- БЛОК RANGE ----------
+  const rangeParamRaw = url.searchParams.get('range') || '30d';
+  const allowedRanges = ['7d','30d','60d','90d','365d','all'];
+  const rangeParam = (allowedRanges.includes(rangeParamRaw) ? rangeParamRaw : '30d');
 
-    // --- Precomputed things used previously ---
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const isAll = rangeParam === 'all';
 
-    // 1) Всего снов (всего записей пользователя)
-    const totalDreamsResult = await d1.prepare(
-      'SELECT COUNT(*) as count FROM dreams WHERE user = ?'
-    ).bind(userEmail).first();
-    const totalDreams = totalDreamsResult?.count || 0;
+  function resolveSinceTs(range) {
+    const now = Date.now();
+    let sinceTs;
+  
+    switch (range) {
+      case '7d':   sinceTs = now - (7  * 24 * 60 * 60 * 1000); break;
+      case '30d':  sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
+      case '60d':  sinceTs = now - (60 * 24 * 60 * 60 * 1000); break;
+      case '90d':  sinceTs = now - (90 * 24 * 60 * 60 * 1000); break;
+      case '365d': sinceTs = now - (365 * 24 * 60 * 60 * 1000); break;
+      case 'all':  sinceTs = 0; break;
+      default:     sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
+    }
+  
+    // 🆕 Округляем до начала дня (00:00:00 UTC)
+    const date = new Date(sinceTs);
+    date.setUTCHours(0, 0, 0, 0);
+    sinceTs = date.getTime();
+  
+    console.log(`[resolveSinceTs] range=${range}, sinceTs=${sinceTs}, date=${new Date(sinceTs).toISOString()}`);
+    return sinceTs;
+  }
 
-    // 2) Блоков за месяц (диалогов за 30 дней)
-    const monthlyBlocksResult = await d1.prepare(
-      `SELECT COUNT(DISTINCT dream_id) as count 
-       FROM messages 
-       WHERE user = ? AND created_at > ?`
-    ).bind(userEmail, thirtyDaysAgo).first();
-    const monthlyBlocks = monthlyBlocksResult?.count || 0;
+  // ✅ ВЫЗЫВАЕМ ФУНКЦИЮ И СОХРАНЯЕМ РЕЗУЛЬТАТ
+  const sinceTs = resolveSinceTs(rangeParam);
 
-    // 3) Проанализировано (сны с итоговой интерпретацией)
-    const interpretedResult = await d1.prepare(
-      `SELECT COUNT(*) as count 
-       FROM dreams 
-       WHERE user = ? AND globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != ''`
-    ).bind(userEmail).first();
-    const interpretedCount = interpretedResult?.count || 0;
+  // ---------- ALL‑TIME метрики ----------
+  const thirtyDaysAgo = resolveSinceTs('30d');
 
-    // 4) Арт-работы (сны с artwork'ами)
-    const artworksResult = await d1.prepare(
-      `SELECT COUNT(*) as count 
-       FROM dreams 
-       WHERE user = ? AND similarArtworks IS NOT NULL AND similarArtworks != '[]' AND similarArtworks != '{}'`
-    ).bind(userEmail).first();
-    const artworksCount = artworksResult?.count || 0;
+    // Всего снов
+    const totalDreamsRow = await d1
+      .prepare('SELECT COUNT(*) AS count FROM dreams WHERE user = ?')
+      .bind(userEmail)
+      .first();
+    const totalDreams = Number(totalDreamsRow?.count || 0);
 
-    // 5) Диалогов с ботом (сны, по которым велись диалоги)
-    const dialogDreamsResult = await d1.prepare(
-      `SELECT COUNT(DISTINCT dream_id) as count 
-       FROM messages 
-       WHERE user = ? AND role = 'assistant'`
-    ).bind(userEmail).first();
-    const dialogDreamsCount = dialogDreamsResult?.count || 0;
+    // Блоков (диалогов) за последние 30 дней — НЕ зависит от range
+    const monthlyBlocksRow = await d1
+      .prepare(
+        `SELECT COUNT(DISTINCT dream_id) AS count
+         FROM messages
+         WHERE user = ? AND created_at > ?`
+      )
+      .bind(userEmail, thirtyDaysAgo)
+      .first();
+    const monthlyBlocks = Number(monthlyBlocksRow?.count || 0);
 
-    // 6) Стрик (days with entries in last year)
-    const dailyDreamsResult = await d1.prepare(
-      `SELECT DATE(date/1000, 'unixepoch') as day, COUNT(*) as count, MIN(date) as first_ts
-       FROM dreams 
-       WHERE user = ? AND date > ?
-       GROUP BY day
-       ORDER BY day DESC`
-    ).bind(userEmail, Date.now() - 365 * 24 * 60 * 60 * 1000).all();
-    const dailyDreams = dailyDreamsResult.results || [];
+    // Снов с финальной интерпретацией (all‑time)
+    const interpretedRow = await d1
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM dreams
+         WHERE user = ?
+           AND globalFinalInterpretation IS NOT NULL
+           AND globalFinalInterpretation != ''`
+      )
+      .bind(userEmail)
+      .first();
+    const interpretedCount = Number(interpretedRow?.count || 0);
+
+    // Снов с артами (all‑time)
+    const artworksRow = await d1
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM dreams
+         WHERE user = ?
+           AND similarArtworks IS NOT NULL
+           AND similarArtworks NOT IN ('[]','{}')`
+      )
+      .bind(userEmail)
+      .first();
+    const artworksCount = Number(artworksRow?.count || 0);
+
+    // Снов с диалогами (all‑time)
+const dialogDreamsRow = await d1
+  .prepare(
+    `SELECT COUNT(DISTINCT dream_id) AS count
+     FROM messages
+     WHERE user = ? AND role = 'assistant'
+       AND dream_id IN (SELECT id FROM dreams WHERE user = ?)`
+  )
+  .bind(userEmail, userEmail)
+  .first();
+const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
+
+    // ---------- Стрик за последний год (независим от range) ----------
+    const streakSinceTs = Date.now() - 365 * 24 * 60 * 60 * 1000;
+    const streakStmt = await d1
+      .prepare(
+        `SELECT DATE(date/1000, 'unixepoch') AS day,
+                COUNT(*) AS count
+         FROM dreams
+         WHERE user = ? AND date > ?
+         GROUP BY day
+         ORDER BY day DESC`
+      )
+      .bind(userEmail, streakSinceTs)
+      .all();
+
+    const dailyDreams = streakStmt.results || [];
     let streak = 0;
     let currentDate = new Date();
     currentDate.setHours(0, 0, 0, 0);
@@ -3431,7 +4354,8 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       dreamDate.setHours(0, 0, 0, 0);
 
       if (i === 0) {
-        const diffDays = (currentDate.getTime() - dreamDate.getTime()) / (1000 * 60 * 60 * 24);
+        const diffDays =
+          (currentDate.getTime() - dreamDate.getTime()) / (1000 * 60 * 60 * 24);
         if (diffDays <= 1) {
           streak = 1;
           currentDate = dreamDate;
@@ -3488,22 +4412,22 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
 
     // 9.1 Aggregation per day (GROUP BY day) within requested period (or all)
     const aggSql = `
-      SELECT
-        DATE(date/1000, 'unixepoch') as day,
-        MIN(date) as day_first_ts,
-        COUNT(*) as total,
-        SUM(CASE WHEN globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '' THEN 1 ELSE 0 END) as interpreted,
-        SUM(CASE WHEN dreamSummary IS NOT NULL AND dreamSummary != '' THEN 1 ELSE 0 END) as summarized,
-        SUM(CASE WHEN similarArtworks IS NOT NULL AND similarArtworks != '' AND similarArtworks != '[]' THEN 1 ELSE 0 END) as artworks,
-        SUM(CASE WHEN EXISTS (SELECT 1 FROM messages m WHERE m.user = dreams.user AND m.dream_id = dreams.id AND m.role = 'assistant') THEN 1 ELSE 0 END) as dialogs
-      FROM dreams
-      WHERE user = ? ${isAll ? '' : 'AND date >= ?'}
-      GROUP BY day
-      ORDER BY day ASC
-    `;
+  SELECT
+    DATE(date/1000, 'unixepoch') as day,
+    MIN(date) as day_first_ts,
+    COUNT(*) as total,
+    SUM(CASE WHEN globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '' THEN 1 ELSE 0 END) as interpreted,
+    SUM(CASE WHEN dreamSummary IS NOT NULL AND dreamSummary != '' THEN 1 ELSE 0 END) as summarized,
+    SUM(CASE WHEN similarArtworks IS NOT NULL AND similarArtworks != '' AND similarArtworks != '[]' THEN 1 ELSE 0 END) as artworks,
+    SUM(CASE WHEN EXISTS (SELECT 1 FROM messages m WHERE m.user = dreams.user AND m.dream_id = dreams.id AND m.role = 'assistant') THEN 1 ELSE 0 END) as dialogs
+  FROM dreams
+  WHERE user = ? ${isAll ? '' : 'AND strftime(\'%s\', date(date/1000, \'unixepoch\')) * 1000 >= ?'}
+  GROUP BY day
+  ORDER BY day ASC
+`;
 
     // Bind params depending on isAll
-    const aggStmt = isAll ? await d1.prepare(aggSql).bind(userEmail) : await d1.prepare(aggSql).bind(userEmail, sinceTs);
+    const aggStmt = isAll ? d1.prepare(aggSql).bind(userEmail) : d1.prepare(aggSql).bind(userEmail, sinceTs);
     const aggRes = await aggStmt.all();
     const aggRows = aggRes.results || [];
 
@@ -3579,36 +4503,61 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     const highestPoint = historyOut.reduce((acc, p) => (acc === null || p.score > acc.score ? p : acc), null);
 
     // 9.5 recentDreams (last N)
-    const recentLimit = 12;
-    const recentSql = `SELECT id, title, date, (globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '') as interpreted
-                       FROM dreams WHERE user = ? ${isAll ? '' : 'AND date >= ?'} ORDER BY date DESC LIMIT ?`;
-    const recentStmt = isAll ? await d1.prepare(recentSql).bind(userEmail, recentLimit) : await d1.prepare(recentSql).bind(userEmail, sinceTs, recentLimit);
-    const recentRes = await recentStmt.all();
-    const recentDreams = (recentRes.results || []).map(r => ({
-      id: r.id,
-      title: r.title || null,
-      date: new Date(Number(r.date)).toISOString(),
-      interpreted: Boolean(r.interpreted)
-    }));
+    // ---------- recentDreams (за период / all) ----------
+    // ---------- recentDreams (за период / all) ----------
+const recentLimit = 12;
+
+console.log('[recentDreams] sinceTs:', sinceTs, 'isAll:', isAll);
+console.log('[recentDreams] sinceTs date:', new Date(sinceTs).toISOString());
+
+const recentSql = `
+  SELECT
+    id,
+    title,
+    date,
+    (globalFinalInterpretation IS NOT NULL
+      AND globalFinalInterpretation != '') AS interpreted
+  FROM dreams
+  WHERE user = ? ${isAll ? '' : 'AND date >= ?'}
+  ORDER BY date DESC
+  LIMIT ?
+`;
+
+const recentStmt = isAll
+  ? d1.prepare(recentSql).bind(userEmail, recentLimit)
+  : d1.prepare(recentSql).bind(userEmail, sinceTs, recentLimit);
+
+const recentRes = await recentStmt.all();
+
+console.log('[recentDreams] Found:', recentRes.results?.length || 0);
+
+const recentDreams =
+  (recentRes.results || []).map((r) => ({
+    id: r.id,
+    title: r.title || null,
+    date: new Date(Number(r.date)).toISOString(),
+    interpreted: Boolean(r.interpreted),
+  }));
 
     // 9.6 breakdownCounts & breakdownPercent (from final cumulative)
     const finalCounts = history.length ? history[history.length - 1].counts : { total: 0, interpreted: 0, summarized: 0, artworks: 0, dialogs: 0 };
-    const bc = {
+    const breakdownCounts = {
       interpreted: finalCounts.interpreted || 0,
       summarized: finalCounts.summarized || 0,
       artworks: finalCounts.artworks || 0,
       dialogs: finalCounts.dialogs || 0
     };
     const totalForPct = Math.max(1, finalCounts.total || 0);
-    const bp = {
-      interpreted: Math.round((bc.interpreted / totalForPct) * 100),
-      summarized: Math.round((bc.summarized / totalForPct) * 100),
-      artworks: Math.round((bc.artworks / totalForPct) * 100),
-      dialogs: Math.round((bc.dialogs / totalForPct) * 100)
+    const totalDreamsInPeriod = finalCounts.total || 0;
+    const breakdownPercent = {
+      interpreted: Math.round((breakdownCounts.interpreted / totalForPct) * 100),
+      summarized: Math.round((breakdownCounts.summarized / totalForPct) * 100),
+      artworks: Math.round((breakdownCounts.artworks / totalForPct) * 100),
+      dialogs: Math.round((breakdownCounts.dialogs / totalForPct) * 100)
     };
 
     // =============================
-    // ✅ НОВЫЙ БЛОК: АГРЕГАЦИЯ НАСТРОЕНИЙ
+    // ✅ АГРЕГАЦИЯ НАСТРОЕНИЙ С УЧЁТОМ ПЕРИОДА
     // =============================
 
     let moodCounts = {};
@@ -3616,12 +4565,16 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
 
     try {
       const moodsSql = isAll
-        ? `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? GROUP BY context`
-        : `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? AND date >= ? GROUP BY context`;
+  ? `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? GROUP BY context`
+  : `SELECT context, COUNT(*) AS cnt 
+     FROM moods 
+     WHERE user_email = ? 
+       AND date >= date(?, 'unixepoch', 'start of day')
+     GROUP BY context`;
 
-      const moodsStmt = isAll
-        ? await d1.prepare(moodsSql).bind(userEmail)
-        : await d1.prepare(moodsSql).bind(userEmail, sinceTs);
+const moodsStmt = isAll
+  ? d1.prepare(moodsSql).bind(userEmail)
+  : d1.prepare(moodsSql).bind(userEmail, Math.floor(sinceTs / 1000)); // ⚠️ Конвертируем в секунды!
 
       const moodsRes = await moodsStmt.all();
       const moodRows = moodsRes?.results ?? [];
@@ -3668,8 +4621,8 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
         `;
 
       const insightsStmt = isAll
-        ? await d1.prepare(insightsSql).bind(userEmail)
-        : await d1.prepare(insightsSql).bind(userEmail, sinceTs);
+        ? d1.prepare(insightsSql).bind(userEmail)
+        : d1.prepare(insightsSql).bind(userEmail, sinceTs);
 
       const insightsRes = await insightsStmt.first();
       const colInsights = Number(insightsRes?.insights_sum_col ?? 0);
@@ -3705,8 +4658,8 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
         `;
 
       const msgsStmt = isAll
-        ? await d1.prepare(msgsSql).bind(userEmail)
-        : await d1.prepare(msgsSql).bind(userEmail, sinceTs);
+        ? d1.prepare(msgsSql).bind(userEmail)
+        : d1.prepare(msgsSql).bind(userEmail, sinceTs);
 
       const msgsRes = await msgsStmt.first();
       const dreamsWithInsight = Number(msgsRes?.dreams_with_insight ?? 0);
@@ -3725,59 +4678,262 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     }
 
     // === DAILY CONVOS AGGREGATION FOR DASHBOARD ===
-let totalDailyConvos = 0;
-let dailyConvoInsightsCount = 0;
-try {
-  const dailyCountRes = await d1.prepare(`SELECT COUNT(*) AS cnt FROM daily_convos WHERE user = ?`).bind(userEmail).first();
-  totalDailyConvos = Number(dailyCountRes?.cnt ?? 0);
+    let totalDailyConvos = 0;
+    let dailyConvoInsightsCount = 0;
+    try {
+      const dailyCountRes = await d1.prepare(`SELECT COUNT(*) AS cnt FROM daily_convos WHERE user = ?`).bind(userEmail).first();
+      totalDailyConvos = Number(dailyCountRes?.cnt ?? 0);
 
-  // Count insights from messages linked to daily_convos (dream_id used)
-  const dailyInsightsRes = await d1.prepare(`
-    SELECT
-      COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS daily_convos_with_insight,
-      SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS daily_artwork_insight_msgs
-    FROM messages
-    WHERE user = ? AND dream_id IN (SELECT id FROM daily_convos WHERE user = ?)
-  `).bind(userEmail, userEmail).first();
+      // Count insights from messages linked to daily_convos (dream_id used)
+      const dailyInsightsRes = await d1.prepare(`
+        SELECT
+          COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS daily_convos_with_insight,
+          SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS daily_artwork_insight_msgs
+        FROM messages
+        WHERE user = ? AND dream_id IN (SELECT id FROM daily_convos WHERE user = ?)
+      `).bind(userEmail, userEmail).first();
 
-  dailyConvoInsightsCount = Number(dailyInsightsRes?.daily_convos_with_insight ?? 0);
-} catch (e) {
-  console.warn('Failed to aggregate daily_convos metrics for dashboard:', e);
-  totalDailyConvos = totalDailyConvos || 0;
-  dailyConvoInsightsCount = dailyConvoInsightsCount || 0;
-}
+      dailyConvoInsightsCount = Number(dailyInsightsRes?.daily_convos_with_insight ?? 0);
+    } catch (e) {
+      console.warn('Failed to aggregate daily_convos metrics for dashboard:', e);
+      totalDailyConvos = totalDailyConvos || 0;
+      dailyConvoInsightsCount = dailyConvoInsightsCount || 0;
+    }
 
-    // 10) Compose response payload (includes old and new fields)
+    // =============================
+    // 10) ФОРМИРОВАНИЕ ОТВЕТА
+    // =============================
+
+    // ✅ ПЕРИОДНЫЕ ДАННЫЕ (для графиков, истории, активностей)
+    const dashboardDataPeriod = {
+      totalDreams: totalDreamsInPeriod, // количество снов в выбранном периоде
+      totalDreamsInPeriod: totalDreamsInPeriod,
+      breakdownCounts: breakdownCounts, // из периода
+      breakdownPercent: breakdownPercent, // из периода
+      streak: streak, // стрик всегда за год
+      insights: insightsDreamsCount, // из периода
+      depthScore: 0,
+    };
+    dashboardDataPeriod.depthScore = calculateDepthScore(dashboardDataPeriod);
+
+    // ✅ ОБЩИЕ ДАННЫЕ (ЗА ВСЁ ВРЕМЯ) — для Depth Score, уровня, бейджей
+    const dashboardDataTotal = {
+      totalDreams: totalDreams, // ВСЕ сны за всё время
+      totalDreamsInPeriod: totalDreams, // важно: для расчета используем ВСЕ сны
+      breakdownCounts: {
+        interpreted: interpretedCount, // за всё время
+        summarized: summarizedForScoreResult?.count || 0,
+        artworks: artworksCount, // за всё время
+        dialogs: dialogDreamsCount, // за всё время
+      },
+      breakdownPercent: {
+        interpreted: totalDreams > 0 ? Math.round((interpretedCount / totalDreams) * 100) : 0,
+        summarized: totalDreams > 0 ? Math.round(((summarizedForScoreResult?.count || 0) / totalDreams) * 100) : 0,
+        artworks: totalDreams > 0 ? Math.round((artworksCount / totalDreams) * 100) : 0,
+        dialogs: totalDreams > 0 ? Math.round((dialogDreamsCount / totalDreams) * 100) : 0,
+      },
+      streak: streak,
+      insights: insightsDreamsCount, // за всё время (из all-time запроса выше)
+      depthScore: 0,
+    };
+    dashboardDataTotal.depthScore = calculateDepthScore(dashboardDataTotal);
+
+    // ✅ DEPTH SCORE С DECAY (всегда одинаковый, не зависит от фильтра)
+    const now = Date.now();
+    const baseDepthScoreTotal = dashboardDataTotal.depthScore;
+
+    // Загружаем сохраненное состояние decay
+    let storedScore = baseDepthScoreTotal;
+    let lastAt = now;
+    try {
+      const row = await d1
+        .prepare('SELECT depth_score_stored, last_depth_update_at FROM user_depth_state WHERE user_email = ?')
+        .bind(userEmail)
+        .first();
+      if (row) {
+        storedScore = Number(row.depth_score_stored);
+        lastAt = Number(row.last_depth_update_at);
+      }
+    } catch (e) {
+      console.warn('Failed to load depth state:', e);
+    }
+
+    function applyDepthDecay({ baseScore, storedScore, lastAt, now, halfLifeDays = 30 }) {
+      const hlMs = halfLifeDays * 24 * 60 * 60 * 1000;
+      const dt = Math.max(0, now - (lastAt || now));
+      const k = hlMs > 0 ? Math.pow(0.5, dt / hlMs) : 0;
+      const decayed = baseScore + (storedScore - baseScore) * k;
+      return Math.max(baseScore, decayed);
+    }
+
+    const depthScoreTotal = Math.round(applyDepthDecay({
+  baseScore: baseDepthScoreTotal,
+  storedScore,
+  lastAt,
+  now,
+  halfLifeDays: 30,
+}));
+
+    // Сохраняем состояние decay (только если изменилось)
+    try {
+      await d1.prepare(`
+        INSERT INTO user_depth_state (user_email, depth_score_stored, last_depth_update_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_email) DO UPDATE SET
+          depth_score_stored = excluded.depth_score_stored,
+          last_depth_update_at = excluded.last_depth_update_at
+      `).bind(userEmail, depthScoreTotal, now).run();
+    } catch (e) {
+      console.warn('Failed to save depth state:', e);
+    }
+
+    // ✅ ГЕЙМИФИКАЦИЯ (всегда за всё время)
+    const level = getLevel(depthScoreTotal);
+
+// ✅ Проверяем, новый ли уровень
+const lastSeenLevelRow = await env.DB.prepare(
+  'SELECT last_seen_level FROM user_depth_state WHERE user_email = ?'
+)
+  .bind(userEmail)
+  .first();
+
+const isNew = level.level > (lastSeenLevelRow?.last_seen_level || 0);
+
+// Возвращаем уровень с флагом isNew
+const levelWithNew = {
+  ...level,
+  isNew,
+};
+    const badgesInfo = await checkAndUnlockBadges(d1, userEmail, dashboardDataTotal);
+    const recommendedGoal = getNextGoal(level, badgesInfo.unlocked, dashboardDataTotal);
+    const advice = generateAdvice(level, recommendedGoal, dashboardDataTotal);
+
+    let currentBadgeGoalId = null;
+    try {
+      const row = await d1
+        .prepare('SELECT current_badge_goal_id FROM user_goal_settings WHERE user_email = ?')
+        .bind(userEmail)
+        .first();
+      currentBadgeGoalId = row?.current_badge_goal_id ?? null;
+    } catch (e) {
+      currentBadgeGoalId = null;
+    }
+
+    const currentGoal = (currentBadgeGoalId && BADGES[currentBadgeGoalId])
+      ? {
+          badgeId: currentBadgeGoalId,
+          name: BADGES[currentBadgeGoalId].name,
+          emoji: BADGES[currentBadgeGoalId].emoji,
+          description: BADGES[currentBadgeGoalId].description,
+          progress: calculateBadgeProgress(currentBadgeGoalId, dashboardDataTotal),
+          advice: generateAdvice(level, { badgeId: currentBadgeGoalId }, dashboardDataTotal),
+        }
+      : null;
+
+    // ✅ ФИНАЛЬНЫЙ PAYLOAD
     const payload = {
-      period: isAll ? 'all' : `${days}d`,
-      totalDreams,
+      period: rangeParam, // '7d' | '30d' | '60d' | '90d' | '365d' | 'all'
+
+      // =============================
+      // ALL-TIME МЕТРИКИ (не зависят от фильтра)
+      // =============================
+      totalDreams, // всегда за всё время
       entriesCount: totalDreams,
-      score: lastScore,
-      scoreDelta,
-      history: historyOut,
-      highestScore: highestPoint ? { value: highestPoint.score, date: highestPoint.date } : null,
-      monthlyBlocks,
-      interpretedCount: interpretedCount,
+      interpretedCount, // всегда за всё время
       interpretedPercent: totalDreams > 0 ? Math.round((interpretedCount / totalDreams) * 100) : 0,
-      artworksCount,
-      dialogDreamsCount,
-      streak,
-      improvementScore,
-      breakdownCounts: bc,
-      breakdownPercent: bp,
-      recentDreams,
+      artworksCount, // всегда за всё время
+      dialogDreamsCount, // всегда за всё время
+      streak, // всегда за последний год
+      monthlyBlocks, // всегда за последние 30 дней
+
+      // =============================
+      // ПЕРИОДНЫЕ МЕТРИКИ (зависят от фильтра)
+      // =============================
+      totalDreamsInPeriod, // количество снов в выбранном периоде
+      score: lastScore, // score из истории за период
+      scoreDelta,
+      history: historyOut, // история за период
+      highestScore: highestPoint ? { score: highestPoint.score, date: highestPoint.date } : null,
+      breakdownCounts, // за период
+      breakdownPercent, // за период
+      recentDreams, // за период
+      moodCounts, // за период
+      moodTotal, // за период
+      insightsDreamsCount, // за период
+      insightsArtworksCount, // за период
+      totalDailyConvos, // всегда за всё время (или можно фильтровать)
+      dailyConvoInsightsCount, // всегда за всё время
+
       lastUpdated: new Date().toISOString(),
 
-      // === НОВЫЕ ПОЛЯ ===
-      moodCounts,
-      moodTotal,
-      insightsDreamsCount,
-      insightsArtworksCount
+      // =============================
+      // ГЕЙМИФИКАЦИЯ (всегда за всё время)
+      // =============================
+      gamification: {
+        depthScoreTotal, // ✅ ВСЕГДА ОДИНАКОВЫЙ (за всё время с decay)
+        engagementScorePeriod: dashboardDataPeriod.depthScore, // ✅ МЕНЯЕТСЯ (за период)
+        level: {
+          name: level.name,
+          emoji: level.emoji,
+          color: level.color,
+          min: level.min,
+          max: level.max,
+        },
+        badges: {
+          unlocked: badgesInfo.unlocked.map((id) => ({
+            id,
+            name: BADGES[id].name,
+            emoji: BADGES[id].emoji,
+            category: BADGES[id].category,
+            description: BADGES[id].description,
+            unlockedAt: badgesInfo.unlockedAtById?.get(id) ?? null,
+          })),
+          new: badgesInfo.new.map((id) => ({
+            id,
+            name: BADGES[id].name,
+            emoji: BADGES[id].emoji,
+            category: BADGES[id].category,
+            description: BADGES[id].description,
+            unlockedAt: badgesInfo.unlockedAtById?.get(id) ?? null,
+          })),
+          unseen: badgesInfo.unseen.map((id) => ({
+            id,
+            name: BADGES[id].name,
+            emoji: BADGES[id].emoji,
+            category: BADGES[id].category,
+            description: BADGES[id].description,
+            unlockedAt: badgesInfo.unlockedAtById?.get(id) ?? null,
+          })),
+          all: Object.entries(BADGES).map(([id, badge]) => {
+            const unlocked = badgesInfo.unlocked.includes(id);
+            return {
+              id,
+              name: badge.name,
+              emoji: badge.emoji,
+              category: badge.category,
+              description: badge.description,
+              unlocked,
+              unlockedAt: unlocked ? badgesInfo.unlockedAtById?.get(id) ?? null : null,
+            };
+          }),
+        },
+        currentGoal,
+        recommendedGoal: recommendedGoal
+          ? {
+              badgeId: recommendedGoal.badgeId,
+              name: recommendedGoal.name,
+              emoji: recommendedGoal.emoji,
+              description: recommendedGoal.description,
+              progress: recommendedGoal.progress,
+              advice,
+            }
+          : null,
+      },
     };
 
     return new Response(JSON.stringify(payload), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
 
   } catch (e) {
@@ -3789,8 +4945,11 @@ try {
   }
 }
 
-// POST /me/avatar/upload (JavaScript)
-if (url.pathname === '/me/avatar/upload' && request.method === 'POST') {
+// =============================
+// ✅ ОТМЕТИТЬ БЕЙДЖИ КАК ПРОСМОТРЕННЫЕ
+// =============================
+
+if (url.pathname === '/mark-badges-seen' && request.method === 'POST') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
@@ -3799,96 +4958,34 @@ if (url.pathname === '/me/avatar/upload' && request.method === 'POST') {
     });
   }
 
-  const ct = request.headers.get('content-type') || '';
-  if (!ct.includes('multipart/form-data')) {
-    return new Response(JSON.stringify({ error: 'Expected multipart/form-data' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-
-  let form;
   try {
-    form = await request.formData();
-  } catch (err) {
-    return new Response(JSON.stringify({ error: 'Invalid form data' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+    const body = await request.json();
+    const badgeIds = body.badgeIds || [];
 
-  const file = form.get('file');
-  // В Workers файл представлен как Blob (File может не существовать)
-  if (!file || !(file instanceof Blob)) {
-    return new Response(JSON.stringify({ error: 'No file provided' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-
-  const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
-  const maxSize = 2 * 1024 * 1024; // 2MB
-
-  if (!allowedTypes.includes(file.type)) {
-    return new Response(JSON.stringify({ error: 'Unsupported file type' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-  if (file.size > maxSize) {
-    return new Response(JSON.stringify({ error: 'File too large (max 2MB)' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-
-  try {
-    // Получаем текущего пользователя для удаления старого аватара
-    const currentUser = await env.DB.prepare(
-      'SELECT avatar_image_url FROM users WHERE email = ?'
-    ).bind(userEmail).first();
-
-    if (currentUser && currentUser.avatar_image_url) {
-      try {
-        const oldKey = new URL(currentUser.avatar_image_url).pathname.replace('/avatars/', '');
-        if (oldKey) {
-          await env.AVATARS.delete(oldKey);
-        }
-      } catch (e) {
-        console.warn('Failed to delete old avatar (ignored):', e);
-      }
+    if (badgeIds.length === 0) {
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
     }
 
-    // Генерируем ключ безопасно
-    const ext = (file.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '');
-    const ts = Date.now();
-    const randArr = new Uint32Array(2);
-    crypto.getRandomValues(randArr);
-    const rand = Array.from(randArr).map(n => n.toString(36)).join('');
-    const key = `avatars/${encodeURIComponent(userEmail)}-${ts}-${rand}.${ext}`;
+    const now = Date.now();
 
-    // Загружаем в R2. Blob.stream() работает в Workers.
-    await env.AVATARS.put(key, file.stream(), {
-      httpMetadata: { contentType: file.type },
-    });
+    const d1 = env.DB;
 
-    const origin = new URL(request.url).origin;
-    const publicUrl = `${origin}/avatars/${key}`;
+    for (const badgeId of badgeIds) {
+      await d1
+        .prepare('UPDATE user_badges SET seen_at = ? WHERE user_email = ? AND badge_id = ?')
+        .bind(now, userEmail, badgeId)
+        .run();
+    }
 
-    await env.DB.prepare(
-      'UPDATE users SET avatar_image_url = ? WHERE email = ?'
-    ).bind(publicUrl, userEmail).run();
-
-    const updatedUser = await env.DB.prepare(
-      'SELECT id, email, name, avatar_icon, avatar_image_url, created_at FROM users WHERE email = ?'
-    ).bind(userEmail).first();
-
-    return new Response(JSON.stringify({ ok: true, user: updatedUser }), {
+    return new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   } catch (e) {
-    console.error('Avatar upload error:', e);
+    console.error('Failed to mark badges as seen:', e);
     return new Response(JSON.stringify({ error: 'internal_error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -3896,26 +4993,43 @@ if (url.pathname === '/me/avatar/upload' && request.method === 'POST') {
   }
 }
 
-if (url.pathname.startsWith('/avatars/') && request.method === 'GET') {
-  const key = url.pathname.replace('/avatars/', '');
-  if (!key) {
-    return new Response('Not Found', { status: 404 });
-  }
-
+if (url.pathname === '/api/gamification/mark-level-seen' && request.method === 'POST') {
   try {
-    const object = await env.AVATARS.get(key);
-    if (!object) {
-      return new Response('Not Found', { status: 404 });
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
     }
 
-    const headers = new Headers();
-    headers.set('Content-Type', object.httpMetadata?.contentType || 'application/octet-stream');
-    headers.set('Cache-Control', 'public, max-age=3600, s-maxage=86400'); // CDN кеширует 1 день
+    const token = authHeader.substring(7);
+    const payload = await verifyJWT(token, JWT_SECRET);
+    const userEmail = payload.email;
 
-    return new Response(object.body, { status: 200, headers });
-  } catch (e) {
-    console.error('R2 get error:', e);
-    return new Response('Internal Error', { status: 500 });
+    const body = await request.json();
+    const { level } = body;
+
+    await env.DB.prepare(
+      'UPDATE user_depth_state SET last_seen_level = ? WHERE user_email = ?'
+    )
+      .bind(level, userEmail)
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+
+  } catch (err) {
+    console.error('Error in /api/gamification/mark-level-seen:', err);
+    return new Response(JSON.stringify({ 
+      error: 'internal_error',
+      message: err.message 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
   }
 }
 
@@ -4040,6 +5154,71 @@ if ((url.pathname === '/me' || url.pathname === '/api/me') && request.method ===
   } catch (e) {
     console.error('PUT /me error:', e);
     return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+}
+
+if (url.pathname === '/set-current-goal' && request.method === 'POST') {
+  try {
+    const userEmail = await getUserEmail(request);
+    if (!userEmail) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    let body = {};
+    try { body = await request.json(); } catch {}
+
+    const badgeId = body?.badgeId;
+
+    // ✅ Разрешаем null для снятия цели
+    if (badgeId !== null && (!badgeId || typeof badgeId !== 'string')) {
+      return new Response(JSON.stringify({ error: 'badgeId must be string or null' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    // ✅ Проверяем существование бейджа только если badgeId не null
+    if (badgeId !== null && !BADGES[badgeId]) {
+      return new Response(JSON.stringify({ error: 'unknown_badge' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    const now = Date.now();
+
+    // ✅ ДОБАВЬ ЛОГИРОВАНИЕ
+    console.log('🎯 Setting current goal:', { userEmail, badgeId, now });
+
+    await env.DB.prepare(`
+      INSERT INTO user_goal_settings (user_email, current_badge_goal_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_email) DO UPDATE SET
+        current_badge_goal_id = excluded.current_badge_goal_id,
+        updated_at = excluded.updated_at
+    `).bind(userEmail, badgeId, now).run();
+
+    console.log('✅ Current goal updated successfully');
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('❌ POST /set-current-goal error:', e);
+    
+    // ✅ ВАЖНО: Возвращаем CORS заголовки даже при ошибке!
+    return new Response(JSON.stringify({ 
+      error: 'internal_error', 
+      message: e?.message || String(e),
+      stack: e?.stack // ✅ добавь stack trace для отладки
+    }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });

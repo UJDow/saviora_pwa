@@ -569,11 +569,38 @@ export function DreamDetail() {
               }}
             />
             <Box>
-              <Typography variant="h5" sx={{ mb: 1, color: '#fff' }}>
-                {dateStr}
-              </Typography>
+              {dateStr && (
+                <Chip
+                  label={dateStr}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    mb: dream.title ? 1 : 1.2,
+                    borderColor: alpha('#ffffff', 0.24),
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+                    color: alpha('#ffffff', 0.92),
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                    '& .MuiChip-label': {
+                      px: 1.6,
+                      py: 0.38,
+                      fontWeight: 600,
+                      letterSpacing: 0.2,
+                    },
+                  }}
+                />
+              )}
+
               {dream.title && (
-                <Typography variant="h6" sx={{ mb: 1, color: '#fff' }}>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    mb: dream.category ? 1 : 0.75,
+                    color: '#fff',
+                    fontWeight: 600,
+                    letterSpacing: 0.1,
+                  }}
+                >
                   {dream.title}
                 </Typography>
               )}
@@ -1238,30 +1265,72 @@ export function DreamDetail() {
               }}
             />
 
-            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+            <Box sx={{ display: 'flex', gap: 1.5, mt: 2, flexWrap: 'wrap' }}>
               <Button
                 variant="contained"
                 onClick={handleSave}
                 disabled={!editedText.trim()}
                 sx={{
-                  bgcolor: accentColor,
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  px: 2.6,
+                  py: 1.05,
+                  borderRadius: 2,
+                  background: 'linear-gradient(135deg, rgba(120,140,255,0.32), rgba(170,120,255,0.26))',
+                  border: '1px solid rgba(220,230,255,0.45)',
                   color: '#fff',
+                  boxShadow: '0 14px 34px rgba(46,60,140,0.32)',
+                  backdropFilter: 'blur(14px)',
+                  WebkitBackdropFilter: 'blur(14px)',
+                  letterSpacing: 0.25,
+                  transition: 'all 0.24s ease',
                   '&:hover': {
-                    bgcolor: 'rgba(88,120,255,0.85)',
+                    background: 'linear-gradient(135deg, rgba(120,140,255,0.38), rgba(170,120,255,0.32))',
+                    boxShadow: '0 18px 38px rgba(46,60,140,0.36)',
+                    transform: 'translateY(-1px)',
+                  },
+                  '&:active': {
+                    transform: 'translateY(0)',
+                    boxShadow: '0 10px 24px rgba(46,60,140,0.3)',
+                  },
+                  '&.Mui-disabled': {
+                    color: alpha('#ffffff', 0.52),
+                    border: '1px solid rgba(220,230,255,0.25)',
+                    background: 'linear-gradient(135deg, rgba(130,150,255,0.16), rgba(170,120,255,0.12))',
+                    boxShadow: 'none',
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
                   },
                 }}
               >
                 Сохранить
               </Button>
               <Button
-                variant="outlined"
+                variant="contained"
                 onClick={() => setEditing(false)}
                 sx={{
-                  borderColor: 'rgba(255,255,255,0.2)',
-                  color: '#fff',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.4,
+                  py: 1,
+                  borderRadius: 2,
+                  background: 'linear-gradient(135deg, rgba(255,255,255,0.12), rgba(180,200,255,0.1))',
+                  border: '1px solid rgba(220,230,255,0.32)',
+                  color: alpha('#ffffff', 0.88),
+                  boxShadow: '0 12px 28px rgba(30,40,90,0.26)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  letterSpacing: 0.2,
+                  transition: 'all 0.24s ease',
                   '&:hover': {
-                    borderColor: accentColor,
-                    bgcolor: 'rgba(88,120,255,0.1)',
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(190,206,255,0.16))',
+                    color: '#fff',
+                    boxShadow: '0 14px 32px rgba(30,40,90,0.3)',
+                    transform: 'translateY(-1px)',
+                  },
+                  '&:active': {
+                    transform: 'translateY(0)',
+                    boxShadow: '0 8px 20px rgba(30,40,90,0.24)',
                   },
                 }}
               >

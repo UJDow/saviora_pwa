@@ -721,3 +721,185 @@ export const toggleDailyConvoArtworkInsight = (
     },
     true
   ).then(mapChatMessage);
+
+  // ===== GOALS API =====
+
+export interface GoalFromServer {
+  goal_id: string;
+  user_id: string;
+  title: string;
+  description?: string | null;
+  category?: string | null;
+  goal_type: string;
+  target_count?: number | null;
+  unit?: string | null;
+  period?: string | null;
+  start_date: number;
+  due_date?: number | null;
+  status?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  total_done: number;
+  progress_percent: number | null;
+}
+
+export interface TimelinePointFromServer {
+  date: string;
+  cumulative_amount: number;
+  percent?: number; // 👈 добавить
+}
+
+export interface GoalsResponse {
+  goals: GoalFromServer[];
+}
+
+export interface TimelineResponse {
+  points: TimelinePointFromServer[];
+}
+
+export const getGoals = () =>
+  request<GoalsResponse>('/goals', {}, true);
+
+export type GoalsTimelineRange = '7d' | '30d' | '60d' | '90d' | '365d' | 'all';
+
+export const getGoalsTimeline = (range: GoalsTimelineRange = '30d') =>
+  request<TimelineResponse>(
+    `/goals/timeline?range=${encodeURIComponent(range)}`,
+    {},
+    true,
+  );
+
+export const createGoal = (body: {
+  title: string;
+  description?: string | null;
+  category?: string | null;
+  goalType: string;
+  targetCount: number;
+  unit?: string | null;
+  period?: string | null;
+  startDate: number;
+  dueDate?: number | null;
+}) =>
+  request<{ id: string }>('/goals', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, true);
+
+export const updateGoal = (goalId: string, body: {
+  title?: string;
+  description?: string | null;
+  category?: string | null;
+  targetCount?: number;
+  unit?: string | null;
+  period?: string | null;
+  dueDate?: number | null;
+}) =>
+  request<{ success: boolean }>(`/goals/${goalId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  }, true);
+
+export const deleteGoal = (goalId: string) =>
+  request<{ success: boolean }>(`/goals/${goalId}`, {
+    method: 'DELETE',
+  }, true);
+
+export const addGoalEvent = (goalId: string, amount: number) =>
+  request<{ success: boolean }>(`/goals/${goalId}/event`, {
+    method: 'POST',
+    body: JSON.stringify({ amount }),
+  }, true);
+
+// ===== GAMIFICATION API =====
+
+export interface Level {
+  name: string;
+  emoji: string;
+  color: string;
+  min: number;
+  max: number;
+  level?: number | null;        // ✅ измени на number | null
+  isNew?: boolean;
+  icon?: string;
+  description?: string;
+}
+
+export interface Badge {
+  id: string;
+  name: string;
+  emoji: string;
+  category: string;
+  description: string;
+  unlocked?: boolean;
+  unlockedAt?: number | null;
+}
+
+export interface GoalBadgeProgress {
+  current: number;
+  target: number;
+}
+
+export interface GoalBadge {
+  badgeId: string;
+  name: string;
+  emoji: string;
+  description: string;
+  progress: GoalBadgeProgress;
+  advice?: string; // лучше optional
+  pinned?: boolean; // optional, если захочешь
+}
+
+export interface NextGoal {
+  badgeId: string;
+  name: string;
+  emoji: string;
+  description: string;
+  progress: {
+    current: number;
+    target: number;
+  };
+  advice: string;
+}
+
+export interface BadgeCategory {
+  name: string;
+  emoji: string;
+  badges: Badge[];
+}
+
+export interface GamificationData {
+  depthScoreTotal: number;
+  engagementScorePeriod?: number;
+
+  level: Level;
+  badges: {
+    unlocked: Badge[];
+    new: Badge[];
+    unseen: Badge[];
+    all: Badge[];
+    categories?: BadgeCategory[]; // ✅ добавили это поле
+  };
+
+  currentGoal?: GoalBadge | null;
+  recommendedGoal?: GoalBadge | null;
+}
+
+export const setCurrentGoal = (badgeId: string | null) =>
+  request<{ success: boolean }>(
+    '/set-current-goal',
+    {
+      method: 'POST',
+      body: JSON.stringify({ badgeId }),
+    },
+    true
+  );
+
+export const markBadgesAsSeen = (badgeIds: string[]) =>
+  request<{ success: boolean }>(
+    '/mark-badges-seen',
+    {
+      method: 'POST',
+      body: JSON.stringify({ badgeIds }),
+    },
+    true
+  );

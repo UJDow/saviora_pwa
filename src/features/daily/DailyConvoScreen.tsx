@@ -26,7 +26,6 @@ import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
-import InsightsIcon from '@mui/icons-material/Insights';
 import MoodIcon from '@mui/icons-material/Mood';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -249,16 +248,18 @@ export function DailyConvoScreen() {
       try {
         const raw = await api.getDailyConvoInsights(convo.id);
         if (!mounted) return;
-        // Нормализация ответа инсайтов, если требуется, или прямое использование
-        const normalized = raw.map(insight => ({
-          ...insight,
-          createdAt: new Date(toMs(insight.createdAt) ?? Date.now()).toISOString(),
-          text: insight.text,
-          messageId: insight.messageId,
-          blockId: insight.blockId ?? null,
-          insightLiked: insight.insightLiked ?? false,
-          meta: insight.meta ?? {},
-        }));
+        const list = Array.isArray(raw) ? raw : [];
+        const normalized = list
+          .filter((insight) => Boolean(insight?.text?.trim?.()))
+          .map((insight) => ({
+            ...insight,
+            createdAt: new Date(toMs(insight?.createdAt) ?? Date.now()).toISOString(),
+            text: insight?.text ?? '',
+            messageId: insight?.messageId ?? `insight-${Math.random().toString(36).slice(2)}`,
+            blockId: insight?.blockId ?? null,
+            insightLiked: insight?.insightLiked ?? Boolean(insight?.meta?.insightLiked),
+            meta: insight?.meta ?? {},
+          }));
         setInsights(normalized);
       } catch (err: any) {
         if (!mounted) return;
@@ -375,14 +376,12 @@ export function DailyConvoScreen() {
     });
   }, [convoDate]);
 
-  const filteredInsights = useMemo(() => {
+  const displayInsights = useMemo(() => {
     if (!insights) return [];
-    return insights.filter((insight) => {
-      return insight.insightLiked === true || (insight.meta && (insight.meta as Record<string, unknown>).insightLiked === true);
-    });
+    return [...insights].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [insights]);
 
-  const insightsCount = filteredInsights.length;
+  const insightsCount = displayInsights.length;
 
   const effectiveMoodId = useMemo(() => {
     return selectedMood ?? dayMood ?? null;
@@ -479,22 +478,38 @@ export function DailyConvoScreen() {
               }}
             />
             <Box>
-              <Typography variant="h5" sx={{ mb: 1, color: '#fff' }}>
-                {dateStr}
-              </Typography>
-              {convo.title && (
-                <Typography variant="h6" sx={{ mb: 1, color: '#fff' }}>
-                  {convo.title}
-                </Typography>
-              )}
-              {convo.category && (
-                <Chip
-                  label={convo.category}
-                  size="small"
-                  sx={{
-                    bgcolor: 'rgba(255,255,255,0.1)',
-                    color: '#fff',
-                    mb: 1,
+  <Chip
+    label={dateStr}
+    size="small"
+    variant="outlined"
+    sx={{
+      mb: convo.title ? 1 : 1.2,
+      borderColor: alpha('#ffffff', 0.24),
+      background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+      color: alpha('#ffffff', 0.92),
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      '& .MuiChip-label': {
+        px: 1.6,
+        py: 0.38,
+        fontWeight: 600,
+        letterSpacing: 0.2,
+      },
+    }}
+  />
+  {convo.title && (
+    <Typography variant="h6" sx={{ mb: 1, color: '#fff' }}>
+      {convo.title}
+    </Typography>
+  )}
+  {convo.category && (
+    <Chip
+      label={convo.category}
+      size="small"
+      sx={{
+        bgcolor: 'rgba(255,255,255,0.1)',
+        color: '#fff',
+        mb: 1,
                   }}
                 />
               )}
@@ -634,16 +649,13 @@ export function DailyConvoScreen() {
           </Box>
 
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <IconButton aria-label="Редактировать" onClick={() => setEditing(true)} sx={iconBtnSxLight}>
-              <EditIcon fontSize="small" />
-            </IconButton>
-            <IconButton aria-label="Удалить" onClick={() => setDeleting(true)} sx={iconBtnSxLight}>
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-            <IconButton aria-label="Открыть чат" onClick={() => navigate(`/daily/${convo.id}/chat`)} sx={iconBtnSxLight}>
-              <ChatBubbleOutlineRoundedIcon fontSize="small" />
-            </IconButton>
-          </Box>
+  <IconButton aria-label="Редактировать" onClick={() => setEditing(true)} sx={iconBtnSxLight}>
+    <EditIcon fontSize="small" />
+  </IconButton>
+  <IconButton aria-label="Удалить" onClick={() => setDeleting(true)} sx={iconBtnSxLight}>
+    <DeleteIcon fontSize="small" />
+  </IconButton>
+</Box>
         </Box>
 
         {!editing ? (
@@ -697,7 +709,7 @@ export function DailyConvoScreen() {
 
               {!insightsLoading && !insightsError && insightsCount > 0 && (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                  {filteredInsights.map((insight, index) => {
+                  {displayInsights.map((insight, index) => {
                     const displayDate = formatDateTimeRu(insight.createdAt);
                     const liked = insight.insightLiked ?? Boolean(insight.meta?.insightLiked);
                     return (
@@ -761,21 +773,30 @@ export function DailyConvoScreen() {
 
             {convo.context && (
               <Paper
-                sx={{
-                  p: 2,
-                  mb: 2,
-                  background: 'rgba(255,255,255,0.05)',
-                  border: `1px solid ${glassBorder}`,
-                  borderRadius: 2,
-                }}
-              >
-                <Typography variant="subtitle2" sx={{ mb: 1, color: 'rgba(255,255,255,0.8)' }}>
-                  Контекст:
-                </Typography>
-                <Typography variant="body2" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
-                  {convo.context}
-                </Typography>
-              </Paper>
+  sx={{
+    p: 2,
+    mb: 3,
+    background: 'rgba(255,255,255,0.05)',
+    border: `1px solid ${glassBorder}`,
+    borderRadius: 2,
+    position: 'relative',
+    minHeight: 200,
+    overflow: 'visible',
+  }}
+>
+  <Typography variant="body1" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
+    {convo.notes ?? convo.body}
+  </Typography>
+
+  <Box sx={{ display: 'flex', gap: 1 }}>
+  <IconButton aria-label="Редактировать" onClick={() => setEditing(true)} sx={iconBtnSxLight}>
+    <EditIcon fontSize="small" />
+  </IconButton>
+  <IconButton aria-label="Удалить" onClick={() => setDeleting(true)} sx={iconBtnSxLight}>
+    <DeleteIcon fontSize="small" />
+  </IconButton>
+</Box>
+</Paper>
             )}
 
             {convo.autoSummary && (
@@ -798,21 +819,42 @@ export function DailyConvoScreen() {
             )}
 
             <Paper
-              sx={{
-                p: 2,
-                mb: 3,
-                background: 'rgba(255,255,255,0.05)',
-                border: `1px solid ${glassBorder}`,
-                borderRadius: 2,
-                position: 'relative',
-                minHeight: 200,
-                overflow: 'visible',
-              }}
-            >
-              <Typography variant="body1" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
-                {convo.notes ?? convo.body}
-              </Typography>
-            </Paper>
+  sx={{
+    p: 2,
+    mb: 3,
+    background: 'rgba(255,255,255,0.05)',
+    border: `1px solid ${glassBorder}`,
+    borderRadius: 2,
+    position: 'relative',
+    minHeight: 200,
+    overflow: 'visible',
+  }}
+>
+  <Typography variant="body1" sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}>
+    {convo.notes ?? convo.body}
+  </Typography>
+
+  {/* Плавающая кнопка перехода к чату в правом нижнем углу карточки */}
+  <Box
+    sx={{
+      position: 'absolute',
+      right: 24,
+      bottom: 24,
+      display: 'flex',
+      gap: 1,
+      alignItems: 'center',
+      zIndex: 6,
+    }}
+  >
+    <IconButton
+      aria-label="Открыть чат"
+      onClick={() => navigate(`/daily/${convo.id}/chat`)}
+      sx={iconBtnSxLight}
+    >
+      <ChatBubbleOutlineRoundedIcon fontSize="small" />
+    </IconButton>
+  </Box>
+</Paper>
           </>
         ) : (
           <Box component="form" sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
