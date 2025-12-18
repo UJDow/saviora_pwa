@@ -50,31 +50,34 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
           }
         }}
         InputProps={{
-          sx: {
-            bgcolor: 'rgba(255,255,255,0.22)',
-            borderRadius: 2,
-            backdropFilter: 'blur(4px)',
-            color: '#fff',
-            fontWeight: 500,
-            input: { color: '#fff', fontWeight: 500 },
-            '& .MuiOutlinedInput-notchedOutline': {
-              borderColor: 'rgba(255,255,255,0.4)',
-              borderWidth: '1px',
-            },
-            '&:hover .MuiOutlinedInput-notchedOutline': {
-              borderColor: '#fff',
-              borderWidth: '1px',
-            },
-            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-              borderColor: '#fff',
-              borderWidth: '1px',
-              boxShadow: 'none',
-            },
-            '&.Mui-focused': {
-              bgcolor: 'rgba(255,255,255,0.22)',
-            },
-          }
-        }}
+  sx: {
+    bgcolor: 'rgba(255,255,255,0.22)',
+    borderRadius: 2,
+    backdropFilter: 'blur(4px)',
+    WebkitBackdropFilter: 'blur(4px)', // для iOS
+    backgroundClip: 'padding-box',
+    WebkitBackgroundClip: 'padding-box',
+    color: '#fff',
+    fontWeight: 500,
+    input: { color: '#fff', fontWeight: 500 },
+    '& .MuiOutlinedInput-notchedOutline': {
+      borderColor: 'rgba(255,255,255,0.4)',
+      borderWidth: '1px',
+    },
+    '&:hover .MuiOutlinedInput-notchedOutline': {
+      borderColor: '#fff',
+      borderWidth: '1px',
+    },
+    '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+      borderColor: '#fff',
+      borderWidth: '1px',
+      boxShadow: 'none',
+    },
+    '&.Mui-focused': {
+      bgcolor: 'rgba(255,255,255,0.22)',
+    },
+  }
+}}
       />
       <TextField
         label="Пароль"
