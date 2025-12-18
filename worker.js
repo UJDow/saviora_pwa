@@ -5,6 +5,8 @@ const allowedOrigins = [
   'https://saviorasn.vercel.app',
   'https://saviorasn-alexandr-snitkos-projects.vercel.app',
   'https://vercel.com/alexandr-snitkos-projects/saviora.app/deployments',
+  'https://saviora-pwa-alexandr-snitkos-projects.vercel.app',
+  'https://saviora-pwa.vercel.app',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:5173',
