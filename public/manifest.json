@@ -1,0 +1,26 @@
+{
+  "name": "Saviora App",
+  "short_name": "Saviora",
+  "description": "Приложение для записи и сохранения сновидений",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#182848",
+  "theme_color": "#4B6CB7",
+  "lang": "ru",
+  "dir": "ltr",
+  "categories": ["productivity"],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "prefer_related_applications": false
+}
