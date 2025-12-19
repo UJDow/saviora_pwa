@@ -26,6 +26,9 @@ import { ArtworkChat } from './features/dreams/ArtworkChat';
 import DailyConvoScreen from './features/daily/DailyConvoScreen';
 import DailyConvoChat from './features/daily/DailyConvoChat';
 
+// Импорт компонента установки PWA
+import { InstallPWA } from './components/InstallPWA'; // Убедитесь, что путь правильный
+
 function DreamBlocksRedirect() {
   const { id } = useParams<{ id: string }>();
   if (!id) {
@@ -46,6 +49,9 @@ function App() {
   return (
     <ProfileProvider>
       <BrowserRouter>
+        {/* Компонент установки PWA */}
+        <InstallPWA />
+
         <Routes>
           <Route path="/auth" element={<AuthScreen />} />
 
@@ -58,18 +64,16 @@ function App() {
             }
           />
 
-          {/* Daily list / entry points (ProfileScreen также умеет обрабатывать календарь/фильтрацию) */}
+          {/* Daily list / entry points */}
           <Route
             path="/daily"
             element={
               <PrivateRoute>
-                {/* Можно заменить на Dedicated DailyListScreen при желании */}
                 <ProfileScreen />
               </PrivateRoute>
             }
           />
 
-          {/* Просмотр отдельной дневной записи */}
           <Route
             path="/daily/:id"
             element={
@@ -79,7 +83,6 @@ function App() {
             }
           />
 
-          {/* Чат для дневной записи */}
           <Route
             path="/daily/:id/chat"
             element={
@@ -97,6 +100,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/new"
             element={
@@ -105,6 +109,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/:id/blocks"
             element={
@@ -113,6 +118,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/:id/chat"
             element={
@@ -121,6 +127,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/:id/final"
             element={
@@ -129,6 +136,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/date/:date"
             element={
@@ -137,6 +145,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/:id"
             element={
@@ -145,6 +154,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/:id/similar"
             element={
@@ -153,6 +163,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/dreams/:id/artwork-chat/:artworkIdx"
             element={
@@ -161,6 +172,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/calendar/month"
             element={
@@ -169,6 +181,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/stats/:metricKey"
             element={
@@ -177,6 +190,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/profile/user"
             element={
@@ -185,6 +199,7 @@ function App() {
               </PrivateRoute>
             }
           />
+
           <Route
             path="/profile/edit"
             element={
