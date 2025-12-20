@@ -526,7 +526,7 @@ const Footer = () => {
     <Box
       sx={{
         position: 'fixed',
-        bottom: 30,
+        bottom: 62, // было 30, подняли на 50% высоты (32px)
         left: '50%',
         transform: 'translateX(-50%)',
         width: '90%',
