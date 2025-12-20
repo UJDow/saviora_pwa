@@ -117,49 +117,47 @@ export function ProfileScreen() {
     p: 0,
   } as const;
 
-  // --- adaptive header/footer state (new) ---
-  const [headerExtraPadding, setHeaderExtraPadding] = useState(0); // px
+  // --- adaptive header state (обновлённый) ---
+  const [headerExtra, setHeaderExtra] = useState(0); // px, дополнительный сдвиг вниз для header
   const [keyboardHeight, setKeyboardHeight] = useState(0); // px
 
-  // track visual viewport to estimate keyboard/panel height (mobile)
   useEffect(() => {
     const vv = (window as any).visualViewport;
-
-    const updateViewport = () => {
+    const update = () => {
       if (vv && typeof vv.height === 'number') {
         const kb = Math.max(0, window.innerHeight - vv.height);
         setKeyboardHeight(kb);
       } else {
-        // fallback: no visualViewport support
         setKeyboardHeight(0);
       }
     };
 
     if (vv) {
-      vv.addEventListener('resize', updateViewport);
-      vv.addEventListener('scroll', updateViewport);
-      updateViewport();
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      update();
       return () => {
-        vv.removeEventListener('resize', updateViewport);
-        vv.removeEventListener('scroll', updateViewport);
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
       };
     } else {
-      // fallback: listen resize only (desktop / older)
       const onResize = () => setKeyboardHeight(0);
       window.addEventListener('resize', onResize);
-      updateViewport();
+      update();
       return () => window.removeEventListener('resize', onResize);
     }
   }, []);
 
-  // compute header extra padding heuristically based on keyboard height or inputOpen
+  // headerExtra — небольшая величина, чтобы при открытии input/клавиатуры
+  // сдвинуть header вниз (чтобы не накрывал системные элементы)
   useEffect(() => {
     if (inputOpen || keyboardHeight > 0) {
-      // heuristic: small fraction of keyboard height + base, clamped
-      const computed = Math.min(48, Math.max(10, Math.round(keyboardHeight * 0.06) + 12));
-      setHeaderExtraPadding(computed);
+      // подберём небольшую величину, чтобы header отступил вниз
+      // используем clamp: минимум 6px, максимум 48px
+      const computed = Math.min(48, Math.max(6, Math.round(keyboardHeight * 0.03) + 8));
+      setHeaderExtra(computed);
     } else {
-      setHeaderExtraPadding(0);
+      setHeaderExtra(0);
     }
   }, [inputOpen, keyboardHeight]);
 
@@ -480,34 +478,35 @@ export function ProfileScreen() {
 
   const showMainSlider = !(profile?.loading) && !profile?.todayMood;
 
-  // --- computed sizing (new) ---
-  const headerBase = 56; // px
+  // --- computed sizing (обновлённое поведение header) ---
+  const headerBase = 56; // px — внутренняя высота хедера (контент)
   const footerHeight = 64; // px
-  const headerHeightStr = `calc(${headerBase}px + env(safe-area-inset-top) + ${headerExtraPadding}px)`;
-  const headerPaddingTopStr = `calc(env(safe-area-inset-top) + ${headerExtraPadding}px)`;
 
+  // headerTop учитывает системный safe-area и динамический сдвиг headerExtra
+  const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
+  const headerHeightStr = `${headerBase}px`;
+
+  // scroll контейнер должен начинаться ниже header + safe-area + headerExtra
+  const scrollMt = `calc(${headerBase}px + env(safe-area-inset-top) + ${headerExtra}px)`;
+
+  // footer (оставим адаптивным, чтобы он не попадал в клавиатуру)
   const footerBottomStr =
-    keyboardHeight > 0
-      ? `${Math.max(18, Math.ceil(keyboardHeight) + 12)}px`
-      : '62px';
-
-  const scrollMt = headerHeightStr;
+    keyboardHeight > 0 ? `${Math.max(18, Math.ceil(keyboardHeight) + 12)}px` : '62px';
   const scrollMb = `${footerHeight + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
 
   const Header = () => (
     <Box
       sx={{
         position: 'fixed',
-        top: 0,
+        top: headerTopStr,
         left: 0,
         right: 0,
         height: headerHeightStr,
-        paddingTop: headerPaddingTopStr,
         px: 2,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        zIndex: 1300,
+        zIndex: 1400,
         userSelect: 'none',
         background: 'rgba(255,255,255,0.10)',
         backdropFilter: 'blur(10px)',
@@ -518,10 +517,9 @@ export function ProfileScreen() {
         borderTopRightRadius: 0,
         borderBottomLeftRadius: 24,
         borderBottomRightRadius: 24,
-        transition: 'height 0.28s ease, padding-top 0.28s ease',
+        transition: 'top 0.28s ease, height 0.18s ease',
       }}
     >
-      {/* Название */}
       <Typography
         sx={{
           fontFamily:
@@ -536,7 +534,6 @@ export function ProfileScreen() {
         Saviora
       </Typography>
 
-      {/* Профиль */}
       <Box
         onClick={handleUserMenuOpen}
         role="button"
