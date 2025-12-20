@@ -443,17 +443,20 @@ const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMo
       right: 0,
       height: 56,
       px: 2,
-      pt: 'env(safe-area-inset-top)', // добавлено
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       zIndex: 1300,
       userSelect: 'none',
+
+      /* glass style */
       background: 'rgba(255,255,255,0.10)',
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
       border: '1px solid rgba(255,255,255,0.14)',
       boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+
+      /* скругляем только нижние углы с радиусом 24px, как в футере */
       borderTopLeftRadius: 0,
       borderTopRightRadius: 0,
       borderBottomLeftRadius: 24,
@@ -511,108 +514,153 @@ const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMo
   </Box>
 );
 
-const Footer = () => (
-  <Box
-    sx={{
-      position: 'fixed',
-      bottom: 0, // лучше 0, а не 30, чтобы не было лишнего пространства
-      left: '50%',
-      transform: 'translateX(-50%)',
-      width: '90%',
-      maxWidth: 420,
-      height: 64,
-      pb: 'env(safe-area-inset-bottom)', // добавлено
-      background: 'rgba(255, 255, 255, 0.12)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      borderRadius: 24,
-      border: '1px solid rgba(255, 255, 255, 0.18)',
-      boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-around',
-      zIndex: 1300,
-      userSelect: 'none',
-      px: 1,
-    }}
-  >
-    {/* Беседа — heroicons (две округлые пузыри) */}
-    <Box
-      onClick={() => openCreateBox('daily')}
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        cursor: 'pointer',
-        color: 'rgba(255,255,255,0.85)',
-        '&:hover': { color: 'rgba(255,255,255,1)' },
-        userSelect: 'none',
-      }}
-      aria-label="Создать тему беседы"
-      role="button"
-      tabIndex={0}
-    >
-      <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
-      <Typography variant="caption" sx={{ mt: 0.5 }}>
-        Беседа
-      </Typography>
-    </Box>
+const Footer = () => {
+  const [activeButton, setActiveButton] = useState<string | null>(null);
 
-    {/* График */}
-    <Box
-      onClick={() => navigate('/calendar/month')}
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        cursor: 'pointer',
-        color: 'rgba(255,255,255,0.85)',
-        '&:hover': { color: 'rgba(255,255,255,1)' },
-        userSelect: 'none',
-      }}
-      aria-label="Открыть график"
-      role="button"
-      tabIndex={0}
-    >
-      <AutoGraphIcon fontSize="medium" />
-      <Typography variant="caption" sx={{ mt: 0.5 }}>
-        График
-      </Typography>
-    </Box>
+  const handlePressStart = (buttonName: string) => {
+    setActiveButton(buttonName);
+  };
 
-    {/* Сон — луна */}
+  const handlePressEnd = () => {
+    setActiveButton(null);
+  };
+
+  return (
     <Box
-      onClick={() => {
-        setSelectedDate(new Date());
-        openCreateBox('dream');
-      }}
       sx={{
+        position: 'fixed',
+        bottom: 30,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '90%',
+        maxWidth: 420,
+        height: 64,
+        background: 'rgba(255, 255, 255, 0.12)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderRadius: 24,
+        border: '1px solid rgba(255, 255, 255, 0.18)',
+        boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
-        cursor: 'pointer',
-        color: 'rgba(255,255,255,0.9)',
-        '&:hover': { color: 'rgba(255,255,255,1)' },
+        justifyContent: 'space-around',
+        zIndex: 1300,
         userSelect: 'none',
+        px: 1,
       }}
-      aria-label="Добавить сон"
-      role="button"
-      tabIndex={0}
     >
-      <NightlightRoundIcon fontSize="medium" />
-      <Typography variant="caption" sx={{ mt: 0.5 }}>
-        Сон
-      </Typography>
+      {/* Беседа — heroicons (две округлые пузыри) */}
+      <Box
+        onClick={() => openCreateBox('daily')}
+        onMouseDown={() => handlePressStart('daily')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('daily')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          userSelect: 'none',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'daily' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': {
+            color: 'rgba(255,255,255,1)',
+          },
+        }}
+        aria-label="Создать тему беседы"
+        role="button"
+        tabIndex={0}
+      >
+        <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
+        <Typography variant="caption" sx={{ mt: 0.5 }}>
+          Беседа
+        </Typography>
+      </Box>
+
+      {/* График */}
+      <Box
+        onClick={() => navigate('/calendar/month')}
+        onMouseDown={() => handlePressStart('graph')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('graph')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          userSelect: 'none',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'graph' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': {
+            color: 'rgba(255,255,255,1)',
+          },
+        }}
+        aria-label="Открыть график"
+        role="button"
+        tabIndex={0}
+      >
+        <AutoGraphIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5 }}>
+          График
+        </Typography>
+      </Box>
+
+      {/* Сон — луна */}
+      <Box
+        onClick={() => {
+          setSelectedDate(new Date());
+          openCreateBox('dream');
+        }}
+        onMouseDown={() => handlePressStart('dream')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('dream')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.9)',
+          userSelect: 'none',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'dream' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': {
+            color: 'rgba(255,255,255,1)',
+          },
+        }}
+        aria-label="Добавить сон"
+        role="button"
+        tabIndex={0}
+      >
+        <NightlightRoundIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5 }}>
+          Сон
+        </Typography>
+      </Box>
     </Box>
-  </Box>
-);
+  );
+};
 
 return (
   <Box
     sx={{
-      height: '100dvh',
-      paddingTop: 'env(safe-area-inset-top)',
-      paddingBottom: 'env(safe-area-inset-bottom)',
+      height: '100vh',
       width: '100vw',
       display: 'flex',
       flexDirection: 'column',
