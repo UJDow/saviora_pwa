@@ -443,20 +443,17 @@ const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMo
       right: 0,
       height: 56,
       px: 2,
+      pt: 'env(safe-area-inset-top)', // добавлено
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       zIndex: 1300,
       userSelect: 'none',
-
-      /* glass style */
       background: 'rgba(255,255,255,0.10)',
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
       border: '1px solid rgba(255,255,255,0.14)',
       boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
-
-      /* скругляем только нижние углы с радиусом 24px, как в футере */
       borderTopLeftRadius: 0,
       borderTopRightRadius: 0,
       borderBottomLeftRadius: 24,
@@ -518,12 +515,13 @@ const Footer = () => (
   <Box
     sx={{
       position: 'fixed',
-      bottom: 30, // поднял футер выше
+      bottom: 0, // лучше 0, а не 30, чтобы не было лишнего пространства
       left: '50%',
       transform: 'translateX(-50%)',
       width: '90%',
       maxWidth: 420,
       height: 64,
+      pb: 'env(safe-area-inset-bottom)', // добавлено
       background: 'rgba(255, 255, 255, 0.12)',
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
@@ -612,7 +610,9 @@ const Footer = () => (
 return (
   <Box
     sx={{
-      height: '100vh',
+      height: '100dvh',
+      paddingTop: 'env(safe-area-inset-top)',
+      paddingBottom: 'env(safe-area-inset-bottom)',
       width: '100vw',
       display: 'flex',
       flexDirection: 'column',
