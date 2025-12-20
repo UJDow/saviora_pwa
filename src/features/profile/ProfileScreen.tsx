@@ -441,22 +441,19 @@ const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMo
       top: 0,
       left: 0,
       right: 0,
-      height: 56,
+      height: `calc(56px + env(safe-area-inset-top))`,
+      paddingTop: 'env(safe-area-inset-top)',
       px: 2,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       zIndex: 1300,
       userSelect: 'none',
-
-      /* glass style */
       background: 'rgba(255,255,255,0.10)',
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
       border: '1px solid rgba(255,255,255,0.14)',
       boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
-
-      /* скругляем только нижние углы с радиусом 24px, как в футере */
       borderTopLeftRadius: 0,
       borderTopRightRadius: 0,
       borderBottomLeftRadius: 24,
@@ -527,28 +524,29 @@ const Footer = () => {
 
   return (
     <Box
-      sx={{
-        position: 'fixed',
-        bottom: 30,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: '90%',
-        maxWidth: 420,
-        height: 64,
-        background: 'rgba(255, 255, 255, 0.12)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        borderRadius: 24,
-        border: '1px solid rgba(255, 255, 255, 0.18)',
-        boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-around',
-        zIndex: 1300,
-        userSelect: 'none',
-        px: 1,
-      }}
-    >
+    sx={{
+      position: 'fixed',
+      bottom: 0,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: '90%',
+      maxWidth: 420,
+      height: `calc(64px + env(safe-area-inset-bottom))`,
+      paddingBottom: 'env(safe-area-inset-bottom)',
+      background: 'rgba(255, 255, 255, 0.12)',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+      borderRadius: 24,
+      border: '1px solid rgba(255, 255, 255, 0.18)',
+      boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-around',
+      zIndex: 1300,
+      userSelect: 'none',
+      px: 1,
+    }}
+  >
       {/* Беседа — heroicons (две округлые пузыри) */}
       <Box
         onClick={() => openCreateBox('daily')}
@@ -659,17 +657,19 @@ const Footer = () => {
 
 return (
   <Box
-    sx={{
-      height: '100vh',
-      width: '100vw',
-      display: 'flex',
-      flexDirection: 'column',
-      background: screenGradient,
-      color: '#fff',
-      overflow: 'hidden',
-      position: 'relative',
-    }}
-  >
+  sx={{
+    height: '100vh',
+    width: '100vw',
+    display: 'flex',
+    flexDirection: 'column',
+    background: screenGradient,
+    color: '#fff',
+    overflow: 'hidden',
+    position: 'relative',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  }}
+>
     <Header />
 
     <Box
