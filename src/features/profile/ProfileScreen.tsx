@@ -84,10 +84,10 @@ export function ProfileScreen() {
 
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 2000);
-    return () => clearTimeout(timer);
-  }, []);
+useEffect(() => {
+  const timer = setTimeout(() => setLoading(false), 2000);
+  return () => clearTimeout(timer);
+}, []);
 
   const toMs = (raw?: number | string | null): number => {
     if (raw == null || raw === '') return Date.now();
@@ -116,50 +116,6 @@ export function ProfileScreen() {
     justifyContent: 'center',
     p: 0,
   } as const;
-
-  // --- adaptive header state (обновлённый) ---
-  const [headerExtra, setHeaderExtra] = useState(0); // px, дополнительный сдвиг вниз для header
-  const [keyboardHeight, setKeyboardHeight] = useState(0); // px
-
-  useEffect(() => {
-    const vv = (window as any).visualViewport;
-    const update = () => {
-      if (vv && typeof vv.height === 'number') {
-        const kb = Math.max(0, window.innerHeight - vv.height);
-        setKeyboardHeight(kb);
-      } else {
-        setKeyboardHeight(0);
-      }
-    };
-
-    if (vv) {
-      vv.addEventListener('resize', update);
-      vv.addEventListener('scroll', update);
-      update();
-      return () => {
-        vv.removeEventListener('resize', update);
-        vv.removeEventListener('scroll', update);
-      };
-    } else {
-      const onResize = () => setKeyboardHeight(0);
-      window.addEventListener('resize', onResize);
-      update();
-      return () => window.removeEventListener('resize', onResize);
-    }
-  }, []);
-
-  // headerExtra — небольшая величина, чтобы при открытии input/клавиатуры
-  // сдвинуть header вниз (чтобы не накрывал системные элементы)
-  useEffect(() => {
-    if (inputOpen || keyboardHeight > 0) {
-      // подберём небольшую величину, чтобы header отступил вниз
-      // используем clamp: минимум 6px, максимум 48px
-      const computed = Math.min(48, Math.max(6, Math.round(keyboardHeight * 0.03) + 8));
-      setHeaderExtra(computed);
-    } else {
-      setHeaderExtra(0);
-    }
-  }, [inputOpen, keyboardHeight]);
 
   useEffect(() => {
     const fetchDreams = async () => {
@@ -384,7 +340,7 @@ export function ProfileScreen() {
   };
 
   const displayMonth = selectedDate.toLocaleString('ru-RU', { month: 'long' });
-  const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMonth.slice(1);
+const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMonth.slice(1);
 
   const pageSx = {
     minHeight: '100vh',
@@ -478,514 +434,499 @@ export function ProfileScreen() {
 
   const showMainSlider = !(profile?.loading) && !profile?.todayMood;
 
-  // --- computed sizing (обновлённое поведение header) ---
-  const headerBase = 56; // px — внутренняя высота хедера (контент)
-  const footerHeight = 64; // px
-
-  // headerTop учитывает системный safe-area и динамический сдвиг headerExtra
-  const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
-  const headerHeightStr = `${headerBase}px`;
-
-  // scroll контейнер должен начинаться ниже header + safe-area + headerExtra
-  const scrollMt = `calc(${headerBase}px + env(safe-area-inset-top) + ${headerExtra}px)`;
-
-  // footer (оставим адаптивным, чтобы он не попадал в клавиатуру)
-  const footerBottomStr =
-    keyboardHeight > 0 ? `${Math.max(18, Math.ceil(keyboardHeight) + 12)}px` : '62px';
-  const scrollMb = `${footerHeight + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
-
   const Header = () => (
-    <Box
+  <Box
+    sx={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: `calc(56px + env(safe-area-inset-top))`,
+      paddingTop: 'env(safe-area-inset-top)',
+      px: 2,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      zIndex: 1300,
+      userSelect: 'none',
+      background: 'rgba(255,255,255,0.10)',
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      border: '1px solid rgba(255,255,255,0.14)',
+      boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+      borderTopLeftRadius: 0,
+      borderTopRightRadius: 0,
+      borderBottomLeftRadius: 24,
+      borderBottomRightRadius: 24,
+    }}
+  >
+    {/* Название */}
+    <Typography
       sx={{
-        position: 'fixed',
-        top: headerTopStr,
-        left: 0,
-        right: 0,
-        height: headerHeightStr,
-        px: 2,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        zIndex: 1400,
+        fontFamily: '"Poppins", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial',
+        fontWeight: 600,
+        fontSize: '1.05rem',
+        color: 'rgba(255,255,255,0.95)',
+        letterSpacing: 0.4,
         userSelect: 'none',
-        background: 'rgba(255,255,255,0.10)',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.14)',
-        boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
-        borderTopLeftRadius: 0,
-        borderTopRightRadius: 0,
-        borderBottomLeftRadius: 24,
-        borderBottomRightRadius: 24,
-        transition: 'top 0.28s ease, height 0.18s ease',
       }}
     >
-      <Typography
-        sx={{
-          fontFamily:
-            '"Poppins", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial',
-          fontWeight: 600,
-          fontSize: '1.05rem',
-          color: 'rgba(255,255,255,0.95)',
-          letterSpacing: 0.4,
-          userSelect: 'none',
-        }}
-      >
-        Saviora
-      </Typography>
+      Saviora
+    </Typography>
 
-      <Box
-        onClick={handleUserMenuOpen}
-        role="button"
-        tabIndex={0}
-        aria-label="Профиль"
+    {/* Профиль */}
+    <Box
+      onClick={handleUserMenuOpen}
+      role="button"
+      tabIndex={0}
+      aria-label="Профиль"
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 44,
+        height: 44,
+        borderRadius: '50%',
+        bgcolor: 'rgba(255,255,255,0.10)',
+        transition: 'background-color 0.18s, transform 0.12s',
+        cursor: 'pointer',
+        '&:hover': { bgcolor: 'rgba(255,255,255,0.16)', transform: 'translateY(-1px)' },
+        boxShadow: '0 6px 18px rgba(10,14,30,0.12)',
+        border: '1px solid rgba(255,255,255,0.08)',
+      }}
+    >
+      <Avatar
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 44,
-          height: 44,
-          borderRadius: '50%',
-          bgcolor: 'rgba(255,255,255,0.10)',
-          transition: 'background-color 0.18s, transform 0.12s',
-          cursor: 'pointer',
-          '&:hover': { bgcolor: 'rgba(255,255,255,0.16)', transform: 'translateY(-1px)' },
-          boxShadow: '0 6px 18px rgba(10,14,30,0.12)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          width: 36,
+          height: 36,
+          bgcolor: avatarColor,
+          color: '#fff',
+          border: 'none',
+          boxShadow: 'none',
         }}
       >
-        <Avatar
-          sx={{
-            width: 36,
-            height: 36,
-            bgcolor: avatarColor,
-            color: '#fff',
-            border: 'none',
-            boxShadow: 'none',
-          }}
-        >
-          {IconComp ? <IconComp /> : <PersonIcon />}
-        </Avatar>
-      </Box>
+        {IconComp ? <IconComp /> : <PersonIcon />}
+      </Avatar>
     </Box>
-  );
+  </Box>
+);
 
-  const Footer = () => {
-    const [activeButton, setActiveButton] = useState<string | null>(null);
+const Footer = () => {
+  const [activeButton, setActiveButton] = useState<string | null>(null);
 
-    const handlePressStart = (buttonName: string) => {
-      setActiveButton(buttonName);
-    };
+  const handlePressStart = (buttonName: string) => {
+    setActiveButton(buttonName);
+  };
 
-    const handlePressEnd = () => {
-      setActiveButton(null);
-    };
-
-    return (
-      <Box
-        sx={{
-          position: 'fixed',
-          bottom: footerBottomStr,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: '90%',
-          maxWidth: 420,
-          height: footerHeight,
-          background: 'rgba(255, 255, 255, 0.12)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          borderRadius: 24,
-          border: '1px solid rgba(255, 255, 255, 0.18)',
-          boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-around',
-          zIndex: 1300,
-          userSelect: 'none',
-          px: 1,
-          transition: 'bottom 0.22s ease',
-        }}
-      >
-        {/* Беседа */}
-        <Box
-          onClick={() => openCreateBox('daily')}
-          onMouseDown={() => handlePressStart('daily')}
-          onMouseUp={handlePressEnd}
-          onMouseLeave={handlePressEnd}
-          onTouchStart={() => handlePressStart('daily')}
-          onTouchEnd={handlePressEnd}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: 'rgba(255,255,255,0.85)',
-            userSelect: 'none',
-            transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
-            ...(activeButton === 'daily' && {
-              transform: 'scale(0.92)',
-              color: 'rgba(255,255,255,1)',
-            }),
-            '&:hover': {
-              color: 'rgba(255,255,255,1)',
-            },
-          }}
-          aria-label="Создать тему беседы"
-          role="button"
-          tabIndex={0}
-        >
-          <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
-          <Typography variant="caption" sx={{ mt: 0.5 }}>
-            Беседа
-          </Typography>
-        </Box>
-
-        {/* График */}
-        <Box
-          onClick={() => navigate('/calendar/month')}
-          onMouseDown={() => handlePressStart('graph')}
-          onMouseUp={handlePressEnd}
-          onMouseLeave={handlePressEnd}
-          onTouchStart={() => handlePressStart('graph')}
-          onTouchEnd={handlePressEnd}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: 'rgba(255,255,255,0.85)',
-            userSelect: 'none',
-            transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
-            ...(activeButton === 'graph' && {
-              transform: 'scale(0.92)',
-              color: 'rgba(255,255,255,1)',
-            }),
-            '&:hover': {
-              color: 'rgba(255,255,255,1)',
-            },
-          }}
-          aria-label="Открыть график"
-          role="button"
-          tabIndex={0}
-        >
-          <AutoGraphIcon fontSize="medium" />
-          <Typography variant="caption" sx={{ mt: 0.5 }}>
-            График
-          </Typography>
-        </Box>
-
-        {/* Сон */}
-        <Box
-          onClick={() => {
-            setSelectedDate(new Date());
-            openCreateBox('dream');
-          }}
-          onMouseDown={() => handlePressStart('dream')}
-          onMouseUp={handlePressEnd}
-          onMouseLeave={handlePressEnd}
-          onTouchStart={() => handlePressStart('dream')}
-          onTouchEnd={handlePressEnd}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: 'rgba(255,255,255,0.9)',
-            userSelect: 'none',
-            transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
-            ...(activeButton === 'dream' && {
-              transform: 'scale(0.92)',
-              color: 'rgba(255,255,255,1)',
-            }),
-            '&:hover': {
-              color: 'rgba(255,255,255,1)',
-            },
-          }}
-          aria-label="Добавить сон"
-          role="button"
-          tabIndex={0}
-        >
-          <NightlightRoundIcon fontSize="medium" />
-          <Typography variant="caption" sx={{ mt: 0.5 }}>
-            Сон
-          </Typography>
-        </Box>
-      </Box>
-    );
+  const handlePressEnd = () => {
+    setActiveButton(null);
   };
 
   return (
     <Box
       sx={{
-        height: '100vh',
-        width: '100vw',
+        position: 'fixed',
+        bottom: 62, // было 30, подняли на 50% высоты (32px)
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '90%',
+        maxWidth: 420,
+        height: 64,
+        background: 'rgba(255, 255, 255, 0.12)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderRadius: 24,
+        border: '1px solid rgba(255, 255, 255, 0.18)',
+        boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
         display: 'flex',
-        flexDirection: 'column',
-        background: screenGradient,
-        color: '#fff',
-        overflow: 'hidden',
-        position: 'relative',
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
+        alignItems: 'center',
+        justifyContent: 'space-around',
+        zIndex: 1300,
+        userSelect: 'none',
+        px: 1,
       }}
     >
-      <Header />
-
+      {/* Беседа — heroicons (две округлые пузыри) */}
       <Box
-        ref={scrollContainerRef}
+        onClick={() => openCreateBox('daily')}
+        onMouseDown={() => handlePressStart('daily')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('daily')}
+        onTouchEnd={handlePressEnd}
         sx={{
-          flexGrow: 1,
-          mt: scrollMt,
-          mb: scrollMb,
-          overflowY: 'auto',
-          px: 2,
-          py: 1,
-          position: 'relative',
-          maxWidth: 840,
-          mx: 'auto',
-          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          userSelect: 'none',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'daily' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': {
+            color: 'rgba(255,255,255,1)',
+          },
         }}
+        aria-label="Создать тему беседы"
+        role="button"
+        tabIndex={0}
       >
-        <Typography
-          variant="subtitle2"
-          align="center"
-          sx={{
-            color: alpha('#ffffff', 0.525),
-            userSelect: 'none',
-            fontWeight: 500,
-            textShadow: '0 2px 12px rgba(4,6,26,0.28)',
-            mb: 2,
-            mt: 1,
-          }}
-        >
-          {displayMonthCapitalized}
+        <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
+        <Typography variant="caption" sx={{ mt: 0.5 }}>
+          Беседа
         </Typography>
-
-        {calendarView === 'week' && (
-          <Box sx={{ mt: 2, mb: 2 }}>
-            <CalendarLine
-              eventDates={eventDates}
-              selectedDate={selectedDate}
-              onDateClick={handleDreamDateSelect}
-              onMonthYearClick={handleMonthYearClick}
-              onDateChange={setSelectedDate}
-              hideMonthYearTitle
-            />
-          </Box>
-        )}
-
-        {showMainSlider && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45 }}
-          >
-            <Box
-              sx={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                p: 0,
-                mb: 3,
-                mt: 1,
-              }}
-            >
-              <Box sx={{ width: '100%', maxWidth: 760, textAlign: 'center', px: 1 }}>
-                <Typography
-                  variant="subtitle1"
-                  sx={{
-                    mb: 2,
-                    fontWeight: 500,
-                    color: '#fff',
-                    textShadow: '0 2px 10px rgba(6,8,30,0.18)',
-                  }}
-                >
-                  Какое у тебя сегодня настроение?
-                </Typography>
-
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    height: 84,
-                  }}
-                >
-                  {moodSaving ? (
-                    <CircularProgress size={28} sx={{ color: accentColor }} />
-                  ) : (
-                    <Box
-                      sx={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <MoodSlider
-                        value={profile?.todayMood ?? null}
-                        onChange={handleMoodSelect}
-                        loading={moodSaving}
-                        transferToProfileOnSelect={false}
-                        profileRoute="/profile/user"
-                        ready={!profile?.loading}
-                      />
-                    </Box>
-                  )}
-                </Box>
-
-                {moodSaving && (
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      display: 'block',
-                      mt: 1,
-                      color: 'primary.main',
-                      fontWeight: 500,
-                    }}
-                  >
-                    Сохраняем...
-                  </Typography>
-                )}
-              </Box>
-            </Box>
-          </motion.div>
-        )}
-
-        <Box
-          sx={{
-            flexGrow: 1,
-            mt: 0,
-            maxWidth: 760,
-            mx: 'auto',
-            overflowY: 'auto',
-            position: 'relative',
-            width: '100%',
-            px: 0,
-          }}
-        >
-          <AnimatePresence mode="wait">
-            {selectedDreamDate ? (
-              <motion.div
-                key="dreamsList"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.3 }}
-              >
-                <DreamsByDateScreen
-                  date={selectedDreamDate}
-                  onBack={handleBackToCalendar}
-                  usePaper={false}
-                  dreams={filteredDreams}
-                  dailyConvos={filteredDailyConvos}
-                />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="calendarView"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.3 }}
-              >
-                {calendarView === 'month' && (
-                  <MonthView
-                    dreamDates={eventDates}
-                    selectedDate={selectedDate}
-                    onDateClick={handleDreamDateSelect}
-                    onWeekClick={(weekStartDate: Date) => {
-                      setPreviousMonthDate(selectedDate);
-                      setSelectedDate(weekStartDate);
-                      setCalendarView('week');
-                    }}
-                    onYearClick={() => setCalendarView('year')}
-                    onDateChange={setSelectedDate}
-                    onBackToWeek={goToWeekView}
-                  />
-                )}
-                {calendarView === 'year' && (
-                  <YearView
-                    dreamDates={eventDates}
-                    selectedYear={selectedDate.getFullYear()}
-                    onMonthClick={(monthDate: Date) => {
-                      setSelectedDate(monthDate);
-                      setCalendarView('month');
-                    }}
-                    onYearChange={(year: number) => {
-                      setSelectedDate(new Date(year, selectedDate.getMonth(), 1));
-                    }}
-                    onBackToWeek={goToWeekView}
-                  />
-                )}
-                {calendarView === 'day' && (
-                  <DayView
-                    dreamDates={eventDates}
-                    selectedDate={selectedDate}
-                    onDateClick={handleDreamDateSelect}
-                    onDateChange={setSelectedDate}
-                    onBackToWeek={goToWeekView}
-                  />
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <AnimatePresence>
-            {inputOpen && (
-              <motion.div
-                key="inputBox"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                transition={{ duration: 0.25 }}
-                style={{ position: 'relative', margin: '0 12px' }}
-              >
-                <Box sx={{ bgcolor: 'transparent', borderRadius: 2, p: 1 }}>
-                  <GlassInputBox
-                    value={createText}
-                    onChange={setCreateText}
-                    onSend={handleCreateSubmit}
-                    disabled={saving}
-                    onClose={handleCreateClose}
-                    placeholder={
-                      createMode === 'daily'
-                        ? 'Напишите тему или заметку для беседы…'
-                        : 'Опишите сон…'
-                    }
-                  />
-                </Box>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </Box>
       </Box>
 
-      <Footer />
-
-      <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={3000}
-        onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      {/* График */}
+      <Box
+        onClick={() => navigate('/calendar/month')}
+        onMouseDown={() => handlePressStart('graph')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('graph')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          userSelect: 'none',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'graph' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': {
+            color: 'rgba(255,255,255,1)',
+          },
+        }}
+        aria-label="Открыть график"
+        role="button"
+        tabIndex={0}
       >
-        <Alert
-          severity={snackbarSeverity}
-          sx={{
-            width: '100%',
-            '& .MuiAlert-message': { fontSize: '0.95rem' },
-            bgcolor: 'rgba(0,0,0,0.35)',
-            color: '#fff',
-            border: `1px solid ${glassBorder}`,
-            backdropFilter: 'blur(6px)',
-          }}
-        >
-          {snackbarMessage}
-        </Alert>
-      </Snackbar>
+        <AutoGraphIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5 }}>
+          График
+        </Typography>
+      </Box>
+
+      {/* Сон — луна */}
+      <Box
+        onClick={() => {
+          setSelectedDate(new Date());
+          openCreateBox('dream');
+        }}
+        onMouseDown={() => handlePressStart('dream')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('dream')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.9)',
+          userSelect: 'none',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'dream' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': {
+            color: 'rgba(255,255,255,1)',
+          },
+        }}
+        aria-label="Добавить сон"
+        role="button"
+        tabIndex={0}
+      >
+        <NightlightRoundIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5 }}>
+          Сон
+        </Typography>
+      </Box>
     </Box>
   );
+};
+
+return (
+  <Box
+  sx={{
+    height: '100vh',
+    width: '100vw',
+    display: 'flex',
+    flexDirection: 'column',
+    background: screenGradient,
+    color: '#fff',
+    overflow: 'hidden',
+    position: 'relative',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  }}
+>
+    <Header />
+
+    <Box
+      ref={scrollContainerRef}
+      sx={{
+        flexGrow: 1,
+        mt: '56px',
+        mb: '56px',
+        overflowY: 'auto',
+        px: 2,
+        py: 1,
+        position: 'relative',
+        maxWidth: 840,
+        mx: 'auto',
+        width: '100%',
+      }}
+    >
+
+      <Typography
+  variant="subtitle2"
+  align="center"
+  sx={{
+    color: alpha('#ffffff', 0.525),
+    userSelect: 'none',
+    fontWeight: 500,
+    textShadow: '0 2px 12px rgba(4,6,26,0.28)',
+    mb: 2, // увеличенный отступ снизу
+    mt: 1, // небольшой отступ сверху, чтобы не прилипало к верху
+  }}
+>
+  {displayMonthCapitalized}
+</Typography>
+
+      {calendarView === 'week' && (
+        <Box sx={{ mt: 2, mb: 2 }}>
+  <CalendarLine
+    eventDates={eventDates}
+    selectedDate={selectedDate}
+    onDateClick={handleDreamDateSelect}
+    onMonthYearClick={handleMonthYearClick}
+    onDateChange={setSelectedDate}
+    hideMonthYearTitle
+  />
+</Box>
+      )}
+
+      {showMainSlider && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45 }}
+        >
+          <Box
+            sx={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              p: 0,
+              mb: 3,
+              mt: 1,
+            }}
+          >
+            <Box sx={{ width: '100%', maxWidth: 760, textAlign: 'center', px: 1 }}>
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  mb: 2,
+                  fontWeight: 500,
+                  color: '#fff',
+                  textShadow: '0 2px 10px rgba(6,8,30,0.18)',
+                }}
+              >
+                Какое у тебя сегодня настроение?
+              </Typography>
+
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: 84,
+                }}
+              >
+                {moodSaving ? (
+                  <CircularProgress size={28} sx={{ color: accentColor }} />
+                ) : (
+                  <Box
+                    sx={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <MoodSlider
+                      value={profile?.todayMood ?? null}
+                      onChange={handleMoodSelect}
+                      loading={moodSaving}
+                      transferToProfileOnSelect={false}
+                      profileRoute="/profile/user"
+                      ready={!profile?.loading}
+                    />
+                  </Box>
+                )}
+              </Box>
+
+              {moodSaving && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    display: 'block',
+                    mt: 1,
+                    color: 'primary.main',
+                    fontWeight: 500,
+                  }}
+                >
+                  Сохраняем...
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        </motion.div>
+      )}
+
+      <Box
+        sx={{
+          flexGrow: 1,
+          mt: 0,
+          maxWidth: 760,
+          mx: 'auto',
+          overflowY: 'auto',
+          position: 'relative',
+          width: '100%',
+          px: 0,
+        }}
+      >
+        <AnimatePresence mode="wait">
+          {selectedDreamDate ? (
+            <motion.div
+              key="dreamsList"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.3 }}
+            >
+              <DreamsByDateScreen
+                date={selectedDreamDate}
+                onBack={handleBackToCalendar}
+                usePaper={false}
+                dreams={filteredDreams}
+                dailyConvos={filteredDailyConvos}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="calendarView"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.3 }}
+            >
+              {calendarView === 'month' && (
+                <MonthView
+                  dreamDates={eventDates}
+                  selectedDate={selectedDate}
+                  onDateClick={handleDreamDateSelect}
+                  onWeekClick={(weekStartDate: Date) => {
+                    setPreviousMonthDate(selectedDate);
+                    setSelectedDate(weekStartDate);
+                    setCalendarView('week');
+                  }}
+                  onYearClick={() => setCalendarView('year')}
+                  onDateChange={setSelectedDate}
+                  onBackToWeek={goToWeekView}
+                />
+              )}
+              {calendarView === 'year' && (
+                <YearView
+                  dreamDates={eventDates}
+                  selectedYear={selectedDate.getFullYear()}
+                  onMonthClick={(monthDate: Date) => {
+                    setSelectedDate(monthDate);
+                    setCalendarView('month');
+                  }}
+                  onYearChange={(year: number) => {
+                    setSelectedDate(new Date(year, selectedDate.getMonth(), 1));
+                  }}
+                  onBackToWeek={goToWeekView}
+                />
+              )}
+              {calendarView === 'day' && (
+                <DayView
+                  dreamDates={eventDates}
+                  selectedDate={selectedDate}
+                  onDateClick={handleDreamDateSelect}
+                  onDateChange={setSelectedDate}
+                  onBackToWeek={goToWeekView}
+                />
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {inputOpen && (
+            <motion.div
+              key="inputBox"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              transition={{ duration: 0.25 }}
+              style={{ position: 'relative', margin: '0 12px' }}
+            >
+              <Box sx={{ bgcolor: 'transparent', borderRadius: 2, p: 1 }}>
+                <GlassInputBox
+                  value={createText}
+                  onChange={setCreateText}
+                  onSend={handleCreateSubmit}
+                  disabled={saving}
+                  onClose={handleCreateClose}
+                  placeholder={
+                    createMode === 'daily'
+                      ? 'Напишите тему или заметку для беседы…'
+                      : 'Опишите сон…'
+                  }
+                />
+              </Box>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Box>
+    </Box>
+
+    <Footer />
+
+    <Snackbar
+      open={snackbarOpen}
+      autoHideDuration={3000}
+      onClose={() => setSnackbarOpen(false)}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+    >
+      <Alert
+        severity={snackbarSeverity}
+        sx={{
+          width: '100%',
+          '& .MuiAlert-message': { fontSize: '0.95rem' },
+          bgcolor: 'rgba(0,0,0,0.35)',
+          color: '#fff',
+          border: `1px solid ${glassBorder}`,
+          backdropFilter: 'blur(6px)',
+        }}
+      >
+        {snackbarMessage}
+      </Alert>
+    </Snackbar>
+  </Box>
+);
 }
 
 export default ProfileScreen;
