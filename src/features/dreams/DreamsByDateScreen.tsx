@@ -46,22 +46,22 @@ type TimelineItem =
 
 const pastelGlassTokens = {
   dream: {
-    chipBg: 'linear-gradient(135deg, rgba(255,235,160,0.78), rgba(235,165,200,0.72))',
-    chipBorder: 'rgba(255,255,255,0.5)',
-    chipColor: '#302342',
-    cardBg: 'linear-gradient(145deg, rgba(255,235,160,0.18), rgba(235,165,200,0.16))',
-    cardBorder: 'rgba(255,235,200,0.35)',
-    cardHoverBg: 'linear-gradient(145deg, rgba(255,235,160,0.28), rgba(235,165,200,0.24))',
-    cardShadow: '0 18px 36px rgba(223,180,225,0.32)',
+    chipBg: 'linear-gradient(135deg, rgba(255, 243, 204, 0.25), rgba(255, 224, 230, 0.22))',
+    chipBorder: 'rgba(255, 243, 204, 0.3)',
+    chipColor: '#ffffff', // белый текст
+    cardBg: 'rgba(255, 243, 204, 0.15)',
+    cardBorder: 'rgba(255, 224, 230, 0.25)',
+    cardHoverBg: 'rgba(255, 243, 204, 0.22)',
+    cardShadow: 'none',
   },
   daily: {
-    chipBg: 'linear-gradient(135deg, rgba(185,230,205,0.78), rgba(160,185,230,0.74))',
-    chipBorder: 'rgba(220,245,240,0.55)',
-    chipColor: '#23303f',
-    cardBg: 'linear-gradient(145deg, rgba(185,230,205,0.2), rgba(160,185,230,0.18))',
-    cardBorder: 'rgba(200,235,230,0.36)',
-    cardHoverBg: 'linear-gradient(145deg, rgba(185,230,205,0.3), rgba(160,185,230,0.26))',
-    cardShadow: '0 18px 36px rgba(170,210,235,0.3)',
+    chipBg: 'linear-gradient(135deg, rgba(204, 229, 255, 0.25), rgba(204, 255, 229, 0.22))',
+    chipBorder: 'rgba(204, 229, 255, 0.3)',
+    chipColor: '#ffffff', // белый текст
+    cardBg: 'rgba(204, 229, 255, 0.15)',
+    cardBorder: 'rgba(204, 255, 229, 0.25)',
+    cardHoverBg: 'rgba(204, 229, 255, 0.22)',
+    cardShadow: 'none',
   },
 } as const;
 
@@ -269,47 +269,63 @@ export function DreamsByDateScreen({
 
             return (
               <ListItem
-                key={`${item.kind}-${item.id}`}
-                onClick={() => navigate(targetRoute)}
-                sx={{
-                  borderRadius: 3,
-                  px: { xs: 1.45, sm: 1.85 },
-                  py: { xs: 1.4, sm: 1.65 },
-                  background: tokens.cardBg,
-                  border: `1px solid ${tokens.cardBorder}`,
-                  boxShadow: tokens.cardShadow,
-                  cursor: 'pointer',
-                  transition: 'transform 180ms ease, box-shadow 180ms ease, background 200ms ease',
-                  display: 'block',
-                  backdropFilter: 'blur(16px)',
-                  WebkitBackdropFilter: 'blur(16px)',
-                  '&:hover': {
-                    transform: 'translateY(-4px)',
-                    boxShadow: '0 22px 40px rgba(12,18,40,0.18)',
-                    background: tokens.cardHoverBg,
-                  },
-                }}
-              >
+  key={`${item.kind}-${item.id}`}
+  onClick={() => navigate(targetRoute)}
+  sx={{
+    borderRadius: 3,
+    px: { xs: 1.45, sm: 1.85 },
+    py: { xs: 1.4, sm: 1.65 },
+    background: tokens.cardBg,
+    border: `1px solid ${tokens.cardBorder}`,
+    // Добавляем мягкое свечение по краям плитки
+    boxShadow: item.kind === 'dream'
+      ? '0 0 20px 6px rgba(235, 165, 200, 0.10)'
+      : '0 0 20px 6px rgba(160, 185, 230, 0.10)',
+    cursor: 'pointer',
+    transition: 'transform 180ms ease, background 160ms ease, box-shadow 180ms ease',
+    display: 'block',
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    '&:hover': {
+      transform: 'translateY(-3px)',
+      background: tokens.cardHoverBg,
+      // Усиливаем свечение на hover
+      boxShadow: item.kind === 'dream'
+        ? '0 0 28px 10px rgba(235, 165, 200, 0.14)'
+        : '0 0 28px 10px rgba(160, 185, 230, 0.14)',
+    },
+    '&:focus-visible': {
+      outline: '2px solid rgba(255, 255, 255, 0.6)',
+      outlineOffset: 2,
+    },
+  }}
+>
                 <Stack spacing={1.2}>
                   <Chip
-                    label={label}
-                    size="small"
-                    sx={{
-                      fontWeight: 600,
-                      letterSpacing: 0.3,
-                      border: `1px solid ${tokens.chipBorder}`,
-                      background: tokens.chipBg,
-                      color: tokens.chipColor,
-                      backdropFilter: 'blur(14px)',
-                      WebkitBackdropFilter: 'blur(14px)',
-                      width: 'fit-content',
-                      '& .MuiChip-label': {
-                        px: 1.6,
-                        py: 0.4,
-                      },
-                    }}
-                  />
-
+  label={label}
+  size="small"
+  sx={{
+    fontWeight: 600,
+    letterSpacing: 0.3,
+    border: `1px solid ${tokens.chipBorder}`,
+    background: tokens.chipBg,
+    color: '#ffffff', // белый текст
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    width: 'fit-content',
+    borderRadius: 2.5,
+    boxShadow: 'inset 0 -6px 18px rgba(0,0,0,0.06)',
+    '& .MuiChip-label': {
+      px: 2.2,
+      py: 0.4,
+      fontSize: 13,
+    },
+    '&:hover': {
+      transform: 'translateY(-1px)',
+      background: 'linear-gradient(135deg, rgba(255,255,255,0.095), rgba(255,255,255,0.045))',
+    },
+  }}
+/>
                   {item.title && (
                     <Typography
                       variant="body1"
@@ -327,7 +343,7 @@ export function DreamsByDateScreen({
                     <Typography
                       variant="body2"
                       sx={{
-                        color: alpha('#ffffff', 0.78),
+                        color: alpha('#ffffff', 0.88),
                         lineHeight: 1.55,
                         display: '-webkit-box',
                         WebkitLineClamp: { xs: 2, sm: 3 },
