@@ -1,4 +1,4 @@
-// ProfileEditForm.tsx
+// src/screens/ProfileEditForm.tsx
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Box,
@@ -40,7 +40,7 @@ export const AVATAR_OPTIONS = [
 
 const VALID_AVATAR_NAMES = AVATAR_OPTIONS.map(o => o.icon);
 
-const HEADER_HEIGHT = 56;
+const HEADER_BASE = 56;
 const FOOTER_HEIGHT = 64;
 
 export function ProfileEditForm() {
@@ -67,6 +67,10 @@ export function ProfileEditForm() {
   const [snackMsg, setSnackMsg] = useState('');
   const [snackSeverity, setSnackSeverity] = useState<'success' | 'error' | 'info'>('success');
   const [openAvatarDialog, setOpenAvatarDialog] = useState(false);
+
+  const [inputOpen, setInputOpen] = useState(false); // фокус инпута (для корректного headerExtra на iOS)
+  const [headerExtra, setHeaderExtra] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const IconComp = getIconComponent(selectedAvatarIcon ?? profile.avatarIcon ?? null);
 
@@ -273,6 +277,48 @@ export function ProfileEditForm() {
     },
   };
 
+  // visualViewport handling (подобно ProfileScreen)
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    const update = () => {
+      if (vv && typeof vv.height === 'number') {
+        const kb = Math.max(0, window.innerHeight - vv.height);
+        setKeyboardHeight(kb);
+      } else {
+        setKeyboardHeight(0);
+      }
+    };
+
+    if (vv) {
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      update();
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    } else {
+      const onResize = () => setKeyboardHeight(0);
+      window.addEventListener('resize', onResize);
+      update();
+      return () => window.removeEventListener('resize', onResize);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (inputOpen || keyboardHeight > 0) {
+      const computed = Math.min(48, Math.max(6, Math.round(keyboardHeight * 0.03) + 8));
+      setHeaderExtra(computed);
+    } else {
+      setHeaderExtra(0);
+    }
+  }, [inputOpen, keyboardHeight]);
+
+  const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
+  const headerHeightStr = `${HEADER_BASE}px`;
+  const contentMarginTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + ${headerExtra}px)`;
+  const contentMarginBottom = `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
+
   return (
     <>
       <Box
@@ -284,18 +330,21 @@ export function ProfileEditForm() {
           color: '#fff',
           overflow: 'hidden',
           position: 'relative',
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
         }}
       >
-        {/* Хедер фиксированный сверху */}
+        {/* Хедер фиксированный сверху с учётом safe-area и headerExtra */}
         <Box
           sx={{
             position: 'fixed',
-            top: 0,
+            top: headerTopStr,
             left: 0,
             right: 0,
-            height: HEADER_HEIGHT,
+            height: headerHeightStr,
             background: 'rgba(255,255,255,0.10)',
             backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -305,8 +354,28 @@ export function ProfileEditForm() {
             border: '1px solid rgba(255,255,255,0.14)',
             boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
             userSelect: 'none',
+            px: 2,
+            transition: 'top 0.28s ease, height 0.18s ease',
           }}
         >
+          <IconButton
+            aria-label="Назад"
+            onClick={() => navigate(-1)}
+            sx={{
+              position: 'absolute',
+              left: 12,
+              color: '#fff',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 1,
+              zIndex: 1500,
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
+            }}
+            size="large"
+          >
+            <ArrowBackIosNewIcon fontSize="small" />
+          </IconButton>
+
           <Typography
             sx={{
               fontWeight: 600,
@@ -329,45 +398,17 @@ export function ProfileEditForm() {
           }}
           sx={{
             flexGrow: 1,
-            marginTop: `${HEADER_HEIGHT}px`,
-            marginBottom: `${FOOTER_HEIGHT}px`,
+            marginTop: contentMarginTop,
+            marginBottom: contentMarginBottom,
             overflowY: 'auto',
             px: { xs: 2, sm: 4 },
             py: 3,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
+            position: 'relative',
           }}
         >
-          {/* Кнопка назад */}
-          <IconButton
-            onClick={() => navigate(-1)}
-            aria-label="Назад"
-            sx={{
-              position: 'absolute',
-              top: 16,
-              left: 16,
-              color: '#fff',
-              bgcolor: 'transparent',
-              borderRadius: '50%',
-              p: 1,
-              transition: 'background-color 0.18s, box-shadow 0.18s, transform 0.12s',
-              '&:hover': {
-                bgcolor: 'rgba(255,255,255,0.08)',
-                boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-                transform: 'translateY(-1px)',
-              },
-              '&:focus-visible': {
-                outline: '2px solid rgba(255,255,255,0.12)',
-                outlineOffset: 3,
-              },
-              zIndex: 10,
-            }}
-            size="large"
-          >
-            <ArrowBackIosNewIcon fontSize="small" />
-          </IconButton>
-
           <Typography
             variant="h5"
             align="center"
@@ -383,11 +424,11 @@ export function ProfileEditForm() {
           </Typography>
 
           {/* Profile summary */}
-          <Box sx={{ 
-            display: 'flex', 
-            gap: 2, 
-            alignItems: 'center', 
-            mt: 1, 
+          <Box sx={{
+            display: 'flex',
+            gap: 2,
+            alignItems: 'center',
+            mt: 1,
             mb: 4,
             width: '100%',
             maxWidth: 520
@@ -468,7 +509,7 @@ export function ProfileEditForm() {
           </Box>
 
           {/* Name edit */}
-          <Box sx={{ 
+          <Box sx={{
             mb: 3,
             width: '100%',
             maxWidth: 520
@@ -489,14 +530,16 @@ export function ProfileEditForm() {
                 '& .MuiInputBase-input': { color: '#fff' },
               }}
               InputLabelProps={{ style: { color: 'rgba(255,255,255,0.85)' } }}
+              onFocus={() => setInputOpen(true)}
+              onBlur={() => setInputOpen(false)}
             />
           </Box>
 
           {/* Actions */}
-          <Box sx={{ 
-            display: 'flex', 
-            gap: 2, 
-            mt: 2, 
+          <Box sx={{
+            display: 'flex',
+            gap: 2,
+            mt: 2,
             mb: 3,
             width: '100%',
             maxWidth: 520
@@ -538,7 +581,7 @@ export function ProfileEditForm() {
           </Box>
 
           {/* Logout button centered at bottom */}
-          <Box sx={{ 
+          <Box sx={{
             mt: 'auto',
             mb: 2,
             display: 'flex',
