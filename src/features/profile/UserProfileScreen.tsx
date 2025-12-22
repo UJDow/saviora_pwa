@@ -21,17 +21,12 @@ import { setMoodForDate } from 'src/utils/api';
 import { getLocalDateStr } from 'src/utils/dateUtils';
 import RecentInsightsGrid from 'src/features/insights/RecentInsightsGrid';
 
-const HEADER_HEIGHT = 56;
-const FOOTER_HEIGHT = 64;
+const HEADER_BASE_HEIGHT = 56; // внутренняя высота хедера (контент)
+const FOOTER_HEIGHT = 64; // высота "невидимого" футера (мы учитываем как отступ снизу)
 
 export function UserProfileScreen() {
   const navigate = useNavigate();
-  const {
-    profile,
-    getIconComponent,
-    refreshProfile,
-    updateProfile,
-  } = useProfile();
+  const { profile, getIconComponent, refreshProfile, updateProfile } = useProfile();
 
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -67,15 +62,15 @@ export function UserProfileScreen() {
           url: shareUrl,
         });
         return;
-      } catch (err) {
-        // ignore
+      } catch {
+        // ignore share failure, fallback to clipboard
       }
     }
     try {
       await navigator.clipboard.writeText(shareText);
       setSnackbarMessage('Текст приглашения скопирован в буфер обмена.');
       setSnackbarSeverity('success');
-    } catch (err) {
+    } catch {
       setSnackbarMessage('Не удалось скопировать текст.');
       setSnackbarSeverity('error');
     } finally {
@@ -86,12 +81,9 @@ export function UserProfileScreen() {
   const handleSaveMood = async (moodId: string) => {
     setMoodSaving(true);
     try {
-      if (!moodId) {
-        throw new Error('Не выбрано настроение для сохранения.');
-      }
+      if (!moodId) throw new Error('Не выбрано настроение для сохранения.');
 
       const todayStr = getLocalDateStr();
-
       await setMoodForDate(todayStr, moodId);
       updateProfile?.({ todayMood: moodId });
       await refreshProfile();
@@ -116,6 +108,14 @@ export function UserProfileScreen() {
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
 
+  // Отступ сверху для хедера: безопасная зона + небольшой offset (8px)
+  const headerTop = `calc(env(safe-area-inset-top) + 8px)`;
+  const headerHeight = `${HEADER_BASE_HEIGHT}px`;
+
+  // Отступы для скроллящейся области: учитывать высоту хедера + safe area + маленький offset
+  const contentMarginTop = `calc(${HEADER_BASE_HEIGHT}px + env(safe-area-inset-top) + 8px)`;
+  const contentMarginBottom = `${FOOTER_HEIGHT}px`;
+
   return (
     <Box
       sx={{
@@ -126,28 +126,35 @@ export function UserProfileScreen() {
         color: '#fff',
         overflow: 'hidden',
         position: 'relative',
+        // чтобы iOS корректно показывал safe area снизу/сверху
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {/* Хедер фиксированный сверху */}
+      {/* ========== Header (fixed, с safe-area) ========== */}
       <Box
         sx={{
           position: 'fixed',
-          top: 0,
+          top: headerTop,
           left: 0,
           right: 0,
-          height: HEADER_HEIGHT,
-          background: 'rgba(255,255,255,0.10)',
-          backdropFilter: 'blur(10px)',
+          height: headerHeight,
+          px: 2,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1400,
-          borderBottomLeftRadius: 24,
-          borderBottomRightRadius: 24,
+          userSelect: 'none',
+          background: 'rgba(255,255,255,0.10)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,255,255,0.14)',
           boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
-          userSelect: 'none',
-          px: 2,
+          borderTopLeftRadius: 0,
+          borderTopRightRadius: 0,
+          borderBottomLeftRadius: 24,
+          borderBottomRightRadius: 24,
+          transition: 'top 0.28s ease, height 0.18s ease',
         }}
       >
         <IconButton
@@ -199,43 +206,45 @@ export function UserProfileScreen() {
         </IconButton>
       </Box>
 
-      {/* Контент под хедером */}
+      {/* ========== Content (scrollable, учитывает header & footer) ========== */}
       <Box
         sx={{
           flexGrow: 1,
-          marginTop: `${HEADER_HEIGHT}px`,
-          marginBottom: `${FOOTER_HEIGHT}px`,
+          marginTop: contentMarginTop,
+          marginBottom: contentMarginBottom,
           overflowY: 'auto',
           px: { xs: 2, sm: 4 },
           py: 3,
           position: 'relative',
         }}
       >
-        {/* Меню (позиционируется под кнопкой — vertical: 'bottom') */}
+        {/* Меню — открывается "под" кнопкой (нижняя привязка), glass style, скругления сверху */}
         <Menu
-  anchorEl={anchorEl}
-  open={open}
-  onClose={handleMenuClose}
-  anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-  transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-  PaperProps={{
-    sx: {
-      mt: '6px',
-      background: 'rgba(255, 255, 255, 0.12)',
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-      border: `1px solid rgba(255, 255, 255, 0.3)`,
-      color: '#fff',
-      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-      zIndex: 1600,
-    },
-  }}
->
+          anchorEl={anchorEl}
+          open={open}
+          onClose={handleMenuClose}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{
+            sx: {
+              mt: '6px',
+              background: 'rgba(255, 255, 255, 0.12)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: `1px solid rgba(255, 255, 255, 0.3)`,
+              color: '#fff',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+              zIndex: 1600,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+            },
+          }}
+        >
           <MenuItem onClick={handleEdit}>Изменить</MenuItem>
           <MenuItem onClick={handleShare}>Поделиться</MenuItem>
         </Menu>
 
-        {/* Header: avatar + name (left) and MoodSlider (right) */}
+        {/* Header area in content: avatar + name (left) and MoodSlider (right) */}
         <Box
           sx={{
             display: 'grid',
@@ -306,6 +315,7 @@ export function UserProfileScreen() {
         </Box>
       </Box>
 
+      {/* Snackbar */}
       <Snackbar
         open={snackbarOpen}
         autoHideDuration={4000}
@@ -329,3 +339,5 @@ export function UserProfileScreen() {
     </Box>
   );
 }
+
+export default UserProfileScreen;
