@@ -29,9 +29,6 @@ const SubscriptionPlanSelector: React.FC<Props> = ({
   onSelectPlan,
   dialogPaperSx,
 }) => {
-  const glassBorder = 'rgba(255,255,255,0.06)';
-  const accentColor = 'rgba(88,120,255,0.95)';
-
   return (
     <Dialog
       open={open}
@@ -41,112 +38,146 @@ const SubscriptionPlanSelector: React.FC<Props> = ({
       PaperProps={{
         sx: {
           mt: '80px',
-          p: 2,
+          p: 3,
           borderRadius: 3,
-          background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          border: `1px solid ${glassBorder}`,
+          background: 'rgba(255, 255, 255, 0.12)',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+          border: `1px solid rgba(255, 255, 255, 0.08)`,
           color: '#fff',
-          boxShadow: '0 8px 28px rgba(12,20,40,0.18)',
           ...dialogPaperSx,
         },
       }}
     >
-      <Box sx={{ position: 'relative' }}>
-        <IconButton
-          onClick={onClose}
-          aria-label="close"
-          sx={{
-            position: 'absolute',
-            right: 8,
-            top: 8,
-            color: 'rgba(255,255,255,0.9)',
-            bgcolor: 'transparent',
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.04)' },
-          }}
-        >
-          <CloseIcon />
-        </IconButton>
+      <Box>
+        {/* Header: close button + centered title + right spacer */}
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+          <IconButton
+            onClick={onClose}
+            aria-label="Закрыть"
+            sx={{
+              color: 'rgba(255,255,255,0.9)',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 1,
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.06)' },
+            }}
+            size="large"
+          >
+            <CloseIcon />
+          </IconButton>
 
-        <Typography
-          variant="h6"
-          align="center"
-          mb={2}
-          sx={{ fontWeight: 700, color: 'rgba(255,255,255,0.95)' }}
-        >
-          Выберите тарифный план
-        </Typography>
+          <Box sx={{ flex: 1, textAlign: 'center' }}>
+            <Typography
+              variant="h6"
+              sx={{ fontWeight: 700, color: '#fff', userSelect: 'none', lineHeight: 1.2 }}
+            >
+              Выберите план
+            </Typography>
+          </Box>
+
+          {/* Invisible spacer same width as IconButton */}
+          <Box sx={{ width: 48, height: 1 }} />
+        </Box>
 
         <Swiper
           slidesPerView={3}
-          spaceBetween={16}
+          spaceBetween={8}
           centeredSlides
           breakpoints={{
-            0: { slidesPerView: 1.2 },
-            480: { slidesPerView: 1.6 },
-            768: { slidesPerView: 2.4 },
+            0: { slidesPerView: 1.1 },
+            480: { slidesPerView: 1.5 },
+            768: { slidesPerView: 2.2 },
             1024: { slidesPerView: 3 },
           }}
-          style={{ paddingBottom: 24 }}
+          style={{ paddingBottom: 12 }}
         >
           {plans.map((plan) => {
-            const isSelected = String(plan.id) === String(selectedPlanId);
+            const planIdStr = String(plan.id ?? '');
+            const isSelected = planIdStr === String(selectedPlanId ?? '');
+
             return (
-              <SwiperSlide key={plan.id} style={{ cursor: 'pointer' }}>
+              <SwiperSlide key={planIdStr} style={{ cursor: 'pointer' }}>
                 <Box
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={isSelected}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      onSelectPlan(plan);
+                    }
+                  }}
                   onClick={() => onSelectPlan(plan)}
-                  title={`${plan.title} — ${plan.price}`}
+                  title={plan.title ?? 'Тариф'}
                   sx={{
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
-                    p: 1.5,
-                    borderRadius: 3,
-                    minWidth: 140,
-                    border: isSelected ? `2px solid ${accentColor}` : `1px solid transparent`,
-                    backgroundColor: isSelected ? 'rgba(88,120,255,0.15)' : 'rgba(255,255,255,0.9)',
-                    color: '#222',
+                    p: 2,
+                    borderRadius: 12,
+                    border: isSelected
+                      ? '1px solid rgba(255,255,255,0.32)'
+                      : '0.8px solid rgba(255,255,255,0.15)',
+                    background: 'transparent',
                     userSelect: 'none',
-                    transition: 'all 0.3s ease',
-                    boxShadow: isSelected ? '0 0 12px rgba(88,120,255,0.5)' : 'none',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    transition: 'border-color 0.2s ease, transform 160ms ease',
                     '&:hover': {
-                      boxShadow: '0 0 10px rgba(88,120,255,0.3)',
-                      backgroundColor: 'rgba(88,120,255,0.1)',
+                      borderColor: 'rgba(255,255,255,0.4)',
+                      transform: 'translateY(-3px)',
                     },
                   }}
                 >
                   <Avatar
                     sx={{
-                      width: 64,
-                      height: 64,
-                      bgcolor: isSelected ? accentColor : 'rgba(200,200,200,0.3)',
-                      color: isSelected ? '#fff' : '#555',
-                      fontSize: '2rem',
+                      width: 72,
+                      height: 72,
+                      bgcolor: 'transparent',
+                      color: '#fff',
+                      fontSize: '3rem',
                       mb: 1,
+                      userSelect: 'none',
                     }}
                   >
-                    {plan.emoji}
+                    {plan.emoji ?? '★'}
                   </Avatar>
 
                   <Typography
                     variant="subtitle1"
-                    sx={{ fontWeight: 700, textAlign: 'center', mb: 0.5, color: '#222' }}
+                    sx={{
+                      fontWeight: 700,
+                      textAlign: 'center',
+                      color: '#fff',
+                      userSelect: 'none',
+                    }}
                   >
                     {plan.title}
-                  </Typography>
-
-                  <Typography
-                    variant="body2"
-                    sx={{ color: '#555', textAlign: 'center', fontWeight: 600 }}
-                  >
-                    {plan.price}
                   </Typography>
                 </Box>
               </SwiperSlide>
             );
           })}
         </Swiper>
+
+        {/* Compact italic explanation below plans, centered */}
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'rgba(255,255,255,0.5)',
+            mt: 1,
+            userSelect: 'none',
+            fontWeight: 400,
+            letterSpacing: 0.2,
+            textAlign: 'center',
+            px: 1,
+            maxWidth: 320,
+            mx: 'auto',
+            fontStyle: 'italic',
+          }}
+        >
+          Это поможет нам понять ваш интерес к приложению
+        </Typography>
       </Box>
     </Dialog>
   );

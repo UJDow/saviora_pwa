@@ -700,22 +700,19 @@ export function ProfileEditForm() {
                   }}
                   title="Нажмите, чтобы выбрать тариф"
                 >
-                  {selectingPlan ? (
-                    <CircularProgress size={16} sx={{ color: '#fff' }} />
-                  ) : selectedPlan ? (
-                    <>
-                      <Box sx={{ fontSize: '1.05rem' }}>{selectedPlan.emoji}</Box>
-                      <Box sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140, textAlign: 'left' }}>
-                        <span>{selectedPlan.title}</span>
-                      </Box>
-                      {selectedPlan.price ? <Box sx={{ opacity: 0.95, fontWeight: 800, ml: 1 }}>{selectedPlan.price}</Box> : null}
-                    </>
-                  ) : (
-                    <>
-                      <Box sx={{ fontSize: '1.05rem' }}>✨</Box>
-                      <Box>Подписка</Box>
-                    </>
-                  )}
+                  {selectedPlan ? (
+  <>
+    <Box sx={{ fontSize: '1.05rem' }}>{selectedPlan.emoji}</Box>
+    <Box sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180, textAlign: 'left' }}>
+      <span>{selectedPlan.title}</span>
+    </Box>
+  </>
+) : (
+  <>
+    <Box sx={{ fontSize: '1.05rem' }}>✨</Box>
+    <Box>Подписка</Box>
+  </>
+)}
                 </Box>
               </Box>
             </Box>
@@ -830,19 +827,22 @@ export function ProfileEditForm() {
         }}
       />
 
-      {/* Subscription selector */}
       <SubscriptionPlanSelector
-        open={openPlanDialog}
-        onClose={() => setOpenPlanDialog(false)}
-        plans={plans}
-        selectedPlanId={selectedPlan?.id ?? null}
-        onSelectPlan={handleSelectPlan}
-        dialogPaperSx={{
-          background: 'linear-gradient(180deg, rgba(24,24,48,0.96), rgba(12,12,24,0.94))',
-          border: `1px solid ${glassBorder}`,
-          color: '#fff',
-        }}
-      />
+  open={openPlanDialog}
+  onClose={() => setOpenPlanDialog(false)}
+  plans={plans}
+  selectedPlanId={selectedPlan?.id ?? null}
+  onSelectPlan={handleSelectPlan}
+  dialogPaperSx={{
+    background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
+    border: `1px solid ${glassBorder}`,
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    borderRadius: 3,
+    p: 1,
+    color: '#fff',
+  }}
+/>
 
       {/* Logout confirm */}
       <Dialog
