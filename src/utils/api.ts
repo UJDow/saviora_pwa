@@ -903,3 +903,43 @@ export const markBadgesAsSeen = (badgeIds: string[]) =>
     },
     true
   );
+
+  // === SUBSCRIPTIONS ===
+
+export type Plan = {
+  id: string;
+  plan_code?: string | null;
+  title: string;
+  description?: string | null;
+  price: string; // human readable, e.g. "5 BYN" or "5"
+  emoji: string;
+  visible?: boolean;
+};
+
+export const getPlans = () =>
+  request<{ plans: Plan[] }>('/plans', {}, true).then(res => res.plans || []);
+
+export const postSubscriptionChoice = (body: {
+  plan_id?: string | null;
+  plan_code?: string | null;
+  chosen_emoji?: string | null;
+  chosen_price?: string | null;
+  is_custom_price?: 0 | 1;
+  trial_days_left?: number | null;
+  source?: string | null;
+  notes?: string | null;
+}) =>
+  request<{ ok?: boolean; choice?: any }>('/subscription/choice', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, true);
+
+export const postSubscriptionModalOpen = (body: { choice_id?: string | null } = {}) =>
+  request<{ ok?: boolean }>('/subscription/modal-open', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, true);
+
+export const getSubscriptionChoices = (limit = 50) =>
+  request<{ choices: any[] }>(`/subscription/choices?limit=${encodeURIComponent(String(limit))}`, {}, true)
+    .then(res => res.choices || []);

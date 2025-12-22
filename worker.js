@@ -1304,6 +1304,123 @@ async function getOrCreateUserRowByEmail(env, email) {
   return row;
 }
 
+// ----------------------------
+// Subscription helpers
+// ----------------------------
+async function getVisiblePlans(env) {
+  const res = await env.DB.prepare(
+    `SELECT id, plan_code, title, description, price, emoji, visible, created_at, updated_at
+     FROM subscription_plans
+     WHERE visible = 1
+     ORDER BY CAST(price AS REAL) ASC`
+  ).all();
+  return (res?.results || []);
+}
+
+async function createSubscriptionChoice(env, userEmail, payload = {}) {
+  // payload: { plan_id, plan_code, chosen_emoji, chosen_price, is_custom_price, trial_days_left, source, notes }
+  const id = crypto.randomUUID();
+  const now = Date.now();
+
+  const {
+    plan_id = null,
+    plan_code = null,
+    chosen_emoji = null,
+    chosen_price = null,
+    is_custom_price = 0,
+    trial_days_left = null,
+    source = null,
+    notes = null
+  } = payload;
+
+  await env.DB.prepare(`
+    INSERT INTO user_subscription_choices
+      (id, user_id, plan_id, plan_code, chosen_emoji, chosen_price, is_custom_price, trial_days_left, modal_open_count, selection_count, confirmed_purchase, purchase_timestamp, purchase_amount, source, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    userEmail,
+    plan_id,
+    plan_code,
+    chosen_emoji,
+    chosen_price,
+    is_custom_price ? 1 : 0,
+    trial_days_left,
+    0,    // modal_open_count
+    1,    // selection_count (first selection)
+    0,    // confirmed_purchase
+    null, // purchase_timestamp
+    null, // purchase_amount
+    source,
+    notes,
+    now,
+    now
+  ).run();
+
+  const row = await env.DB.prepare('SELECT * FROM user_subscription_choices WHERE id = ?').bind(id).first();
+  return row ?? null;
+}
+
+async function incrementModalOpenCount(env, userEmail, opts = {}) {
+  // opts: { choice_id } -- если есть, инкрементим ту запись; иначе создаём lightweight запись "modal_open"
+  if (opts.choice_id) {
+    const res = await env.DB.prepare(`
+      UPDATE user_subscription_choices
+      SET modal_open_count = COALESCE(modal_open_count, 0) + 1, updated_at = ?
+      WHERE id = ? AND user_id = ?
+    `).bind(Date.now(), opts.choice_id, userEmail).run();
+    return res;
+  } else {
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    await env.DB.prepare(`
+      INSERT INTO user_subscription_choices
+        (id, user_id, plan_id, plan_code, chosen_emoji, chosen_price, is_custom_price, trial_days_left, modal_open_count, selection_count, confirmed_purchase, purchase_timestamp, purchase_amount, source, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id,
+      userEmail,
+      null,
+      'modal_open',
+      null,
+      null,
+      0,
+      null,
+      1,   // modal_open_count
+      0,   // selection_count
+      0,   // confirmed_purchase
+      null,
+      null,
+      'modal', // source
+      null,
+      now,
+      now
+    ).run();
+    const row = await env.DB.prepare('SELECT * FROM user_subscription_choices WHERE id = ?').bind(id).first();
+    return row ?? null;
+  }
+}
+
+async function confirmPurchaseForChoice(env, userEmail, choiceId, purchaseAmountText) {
+  const ts = Date.now();
+  const res = await env.DB.prepare(`
+    UPDATE user_subscription_choices
+    SET confirmed_purchase = 1, purchase_timestamp = ?, purchase_amount = ?, updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).bind(ts, purchaseAmountText, ts, choiceId, userEmail).run();
+  return res;
+}
+
+async function getUserSubscriptionChoices(env, userEmail, limit = 50) {
+  const res = await env.DB.prepare(`
+    SELECT * FROM user_subscription_choices
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).bind(userEmail, limit).all();
+  return res?.results || [];
+}
+
 // ===== Personal goals helpers =====
 
 async function getUserIdByEmail(env, email) {
@@ -1937,6 +2054,25 @@ if (url.pathname === '/me' && request.method === 'GET') {
   const msLeft = (created || now) + trialPeriod - now;
   const daysLeft = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
 
+  // Получаем последнюю подписку пользователя из user_subscription_choices и subscription_plans
+  const subscriptionChoice = await env.DB.prepare(`
+    SELECT usc.plan_id, sp.title, sp.emoji, sp.price
+    FROM user_subscription_choices usc
+    LEFT JOIN subscription_plans sp ON sp.id = usc.plan_id
+    WHERE usc.user_id = ?
+    ORDER BY usc.created_at DESC
+    LIMIT 1
+  `).bind(userEmail).first();
+
+  const subscription_plan_id = subscriptionChoice?.plan_id ?? null;
+  const subscription_plan_title = subscriptionChoice?.title ?? null;
+  const subscription = subscriptionChoice ? {
+    id: subscriptionChoice.plan_id,
+    title: subscriptionChoice.title,
+    emoji: subscriptionChoice.emoji,
+    price: subscriptionChoice.price,
+  } : null;
+
   return new Response(JSON.stringify({
     email: userEmail,
     created,
@@ -1946,11 +2082,168 @@ if (url.pathname === '/me' && request.method === 'GET') {
     avatar_icon,
     avatarIcon: avatar_icon,             // alias для фронтенда
     avatar_image_url,
-    avatarImageUrl: avatar_image_url     // alias
+    avatarImageUrl: avatar_image_url,   // alias
+    subscription_plan_id,
+    subscription_plan_title,
+    subscription,
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json', ...corsHeaders }
   });
+}
+
+// ----------------------------
+// SUBSCRIPTION API
+// ----------------------------
+
+// GET /plans
+if (url.pathname === '/plans' && request.method === 'GET') {
+  try {
+    const plans = await getVisiblePlans(env);
+    return new Response(JSON.stringify({ plans }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('GET /plans error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// POST /subscription/choice
+if (url.pathname === '/subscription/choice' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const ct = request.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  let body;
+  try { body = await request.json(); } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    // expected body: { plan_id, plan_code, chosen_emoji, chosen_price, is_custom_price, trial_days_left, source, notes }
+    const choice = await createSubscriptionChoice(env, userEmail, body || {});
+    return new Response(JSON.stringify({ ok: true, choice }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('POST /subscription/choice error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// POST /subscription/modal-open
+if (url.pathname === '/subscription/modal-open' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  let body = {};
+  try { body = await request.json(); } catch { body = {}; }
+
+  try {
+    const row = await incrementModalOpenCount(env, userEmail, { choice_id: body?.choice_id || null });
+    return new Response(JSON.stringify({ ok: true, row }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('POST /subscription/modal-open error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// POST /subscription/confirm
+if (url.pathname === '/subscription/confirm' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  let body = {};
+  try { body = await request.json(); } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+  }
+
+  const { choiceId, purchaseAmount } = body || {};
+  if (!choiceId) {
+    return new Response(JSON.stringify({ error: 'choiceId required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    await confirmPurchaseForChoice(env, userEmail, choiceId, purchaseAmount ?? null);
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('POST /subscription/confirm error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+// GET /subscription/choices
+if (url.pathname === '/subscription/choices' && request.method === 'GET') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const choices = await getUserSubscriptionChoices(env, userEmail, 50);
+    return new Response(JSON.stringify({ choices }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('GET /subscription/choices error', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
 }
 
 // --- MOODS API (multi-user) ---

@@ -20,6 +20,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { request } from 'src/utils/api';
 import AvatarSelector from './AvatarSelector';
+import SubscriptionPlanSelector from 'src/features/profile/SubscriptionPlanSelector';
+import type { Plan } from 'src/utils/api';
 
 // --- Avatar options ---
 export const AVATAR_OPTIONS = [
@@ -67,11 +69,18 @@ export function ProfileEditForm() {
   const [snackSeverity, setSnackSeverity] = useState<'success' | 'error' | 'info'>('success');
   const [openAvatarDialog, setOpenAvatarDialog] = useState(false);
 
-  const [inputOpen, setInputOpen] = useState(false); // фокус инпута (для корректного headerExtra на iOS)
+  const [inputOpen, setInputOpen] = useState(false);
   const [headerExtra, setHeaderExtra] = useState(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const IconComp = getIconComponent(selectedAvatarIcon ?? profile.avatarIcon ?? null);
+
+  // Subscription states
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [openPlanDialog, setOpenPlanDialog] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [selectingPlan, setSelectingPlan] = useState(false);
 
   // Sync local state when profile changes
   useEffect(() => {
@@ -81,23 +90,33 @@ export function ProfileEditForm() {
 
   useEffect(() => {
     let mounted = true;
+
+    type MeResponse = {
+      email?: string;
+      created?: number;
+      trialDaysLeft?: number;
+      name?: string;
+      avatarIcon?: string;
+      avatar_icon?: string;
+      subscription_plan_id?: string | number | null;
+      subscription_plan_title?: string | null;
+      subscription?: { 
+        id?: string | number; 
+        title?: string | null; 
+        emoji?: string | null; 
+        price?: string | null 
+      } | null;
+    };
+
     async function loadMe() {
       try {
-        const data = await request<{
-          email: string;
-          created: number;
-          trialDaysLeft: number;
-          name?: string;
-          avatarIcon?: string;
-          avatar_icon?: string;
-        }>('/me', {}, true);
-
-        if (!mounted) return;
+        const data = await request<MeResponse>('/me', {}, true);
+        if (!mounted || !data) return;
 
         setServerMeta({
           email: data.email,
-          created: data.created,
-          trialDaysLeft: data.trialDaysLeft,
+          created: typeof data.created === 'number' ? data.created : undefined,
+          trialDaysLeft: typeof data.trialDaysLeft === 'number' ? data.trialDaysLeft : undefined,
         });
 
         const serverAvatar = data.avatarIcon ?? data.avatar_icon;
@@ -112,13 +131,65 @@ export function ProfileEditForm() {
           updateProfile({ avatarIcon: serverAvatar });
           setSelectedAvatarIcon(serverAvatar);
         }
+
+        // Handle subscription data with proper type conversion
+        let planData: Plan | null = null;
+        
+        if (data.subscription) {
+          const sub = data.subscription;
+          planData = {
+            id: String(sub.id ?? ''),
+            title: String(sub.title ?? 'Подписка'),
+            emoji: sub.emoji ?? '★',
+            price: sub.price ?? '',
+          };
+        } else if (data.subscription_plan_id && data.subscription_plan_title) {
+          planData = {
+            id: String(data.subscription_plan_id),
+            title: String(data.subscription_plan_title),
+            emoji: '★',
+            price: '',
+          };
+        }
+        
+        setSelectedPlan(planData);
       } catch (e) {
         console.debug('Could not load /api/me', e);
       }
     }
+
     loadMe();
     return () => { mounted = false; };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    async function fetchPlans() {
+      setPlanLoading(true);
+      try {
+        const json = await request<{ plans: Plan[] }>('/plans', {}, true);
+        if (!mounted) return;
+        const visible = (json.plans || []).filter(p => (p as any).visible !== false);
+        setPlans(visible);
+      } catch (e) {
+        console.error('Failed to load plans', e);
+      } finally {
+        if (mounted) setPlanLoading(false);
+      }
+    }
+    fetchPlans();
+    return () => { mounted = false; };
+  }, []);
+
+  // Sync selected plan with plans list
+  useEffect(() => {
+    if (plans.length > 0 && selectedPlan) {
+      const matchedPlan = plans.find(p => String(p.id) === String(selectedPlan.id));
+      if (matchedPlan && matchedPlan !== selectedPlan) {
+        setSelectedPlan(matchedPlan);
+      }
+    }
+  }, [plans, selectedPlan]);
 
   function resetSnack() {
     setSnackOpen(false);
@@ -276,7 +347,7 @@ export function ProfileEditForm() {
     },
   };
 
-  // visualViewport handling (подобно ProfileScreen)
+  // visualViewport handling
   useEffect(() => {
     const vv = (window as any).visualViewport;
     const update = () => {
@@ -318,10 +389,86 @@ export function ProfileEditForm() {
   const contentMarginTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + ${headerExtra}px)`;
   const contentMarginBottom = `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
 
-  // Design tokens for action buttons
-  const ACTION_BUTTON_HEIGHT = 44;
-  const ACTION_BORDER_RADIUS = 12;
-  const ACTION_FONT_SIZE = '0.95rem';
+  // Subscription interactions
+  const openSubscriptionDialog = async () => {
+    try {
+      await request('/subscription/modal-open', { method: 'POST' }, true);
+    } catch (e) {
+      // ignore
+    }
+    setOpenPlanDialog(true);
+  };
+
+  const handleSelectPlan = async (plan: Plan) => {
+    setSelectingPlan(true);
+    setSelectedPlan(plan); // optimistic update
+    setOpenPlanDialog(false);
+
+    try {
+      await request<{ ok?: boolean; choice?: any }>('/subscription/choice', {
+        method: 'POST',
+        body: JSON.stringify({
+          plan_id: plan.id,
+          plan_code: plan.plan_code ?? plan.title,
+          chosen_emoji: plan.emoji,
+          chosen_price: plan.price,
+          is_custom_price: 0,
+        }),
+      }, true);
+
+      // Refresh user data after successful plan selection
+      try {
+        const me = await request<{
+          subscription?: { 
+            id?: string | number; 
+            title?: string | null; 
+            emoji?: string | null; 
+            price?: string | null 
+          } | null;
+          subscription_plan_id?: string | number | null;
+          subscription_plan_title?: string | null;
+        }>('/me', {}, true);
+
+        let updatedPlan: Plan | null = null;
+        
+        if (me?.subscription) {
+          const sub = me.subscription;
+          updatedPlan = {
+            id: String(sub.id ?? plan.id),
+            title: String(sub.title ?? plan.title),
+            emoji: sub.emoji ?? plan.emoji ?? '★',
+            price: sub.price ?? plan.price ?? '',
+          };
+        } else if (me?.subscription_plan_id && me.subscription_plan_title) {
+          updatedPlan = {
+            id: String(me.subscription_plan_id),
+            title: String(me.subscription_plan_title),
+            emoji: plan.emoji ?? '★',
+            price: plan.price ?? '',
+          };
+        } else {
+          // Keep optimistic update if server doesn't return subscription data
+          updatedPlan = plan;
+        }
+        
+        setSelectedPlan(updatedPlan);
+      } catch (e) {
+        console.debug('Failed to refresh /me after subscription', e);
+        // Keep optimistic update
+      }
+
+      setSnackSeverity('success');
+      setSnackMsg('Тариф выбран');
+      setSnackOpen(true);
+    } catch (e: any) {
+      console.error('Failed to select plan', e);
+      setSnackSeverity('error');
+      setSnackMsg('Ошибка при выборе тарифа');
+      setSnackOpen(true);
+    } finally {
+      setSelectingPlan(false);
+    }
+  };
 
   return (
     <>
@@ -338,7 +485,7 @@ export function ProfileEditForm() {
           paddingBottom: 'env(safe-area-inset-bottom)',
         }}
       >
-        {/* Хедер фиксированный сверху с учётом safe-area и headerExtra */}
+        {/* Header */}
         <Box
           sx={{
             position: 'fixed',
@@ -392,7 +539,6 @@ export function ProfileEditForm() {
             Saviora
           </Typography>
 
-          {/* Logout in header (right corner) */}
           <IconButton
             aria-label="Выйти"
             onClick={handleLogoutClick}
@@ -412,7 +558,7 @@ export function ProfileEditForm() {
           </IconButton>
         </Box>
 
-        {/* Контент на весь экран под хедером */}
+        {/* Content */}
         <Box
           component="form"
           onSubmit={(e) => {
@@ -488,7 +634,7 @@ export function ProfileEditForm() {
                 {serverMeta?.email ?? profile.email ?? '—'}
               </Typography>
 
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
                 <Box sx={{
                   px: 1.25,
                   py: 0.5,
@@ -527,6 +673,50 @@ export function ProfileEditForm() {
                     </Typography>
                   </Box>
                 )}
+
+                {/* Subscription pill */}
+                <Box
+                  onClick={openSubscriptionDialog}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openSubscriptionDialog(); }}
+                  sx={{
+                    px: 1.5,
+                    py: 0.6,
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    border: selectedPlan ? `1.75px solid ${accentColor}` : `1px solid ${glassBorder}`,
+                    bgcolor: selectedPlan ? 'rgba(88,120,255,0.12)' : 'rgba(255,255,255,0.02)',
+                    color: '#fff',
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                    '&:hover': {
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 8px 20px rgba(88,120,255,0.08)',
+                    },
+                  }}
+                  title="Нажмите, чтобы выбрать тариф"
+                >
+                  {selectingPlan ? (
+                    <CircularProgress size={16} sx={{ color: '#fff' }} />
+                  ) : selectedPlan ? (
+                    <>
+                      <Box sx={{ fontSize: '1.05rem' }}>{selectedPlan.emoji}</Box>
+                      <Box sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140, textAlign: 'left' }}>
+                        <span>{selectedPlan.title}</span>
+                      </Box>
+                      {selectedPlan.price ? <Box sx={{ opacity: 0.95, fontWeight: 800, ml: 1 }}>{selectedPlan.price}</Box> : null}
+                    </>
+                  ) : (
+                    <>
+                      <Box sx={{ fontSize: '1.05rem' }}>✨</Box>
+                      <Box>Подписка</Box>
+                    </>
+                  )}
+                </Box>
               </Box>
             </Box>
           </Box>
@@ -558,7 +748,7 @@ export function ProfileEditForm() {
             />
           </Box>
 
-          {/* Actions (Cancel + Save) */}
+          {/* Actions */}
           <Box
             sx={{
               display: 'flex',
@@ -582,10 +772,10 @@ export function ProfileEditForm() {
                 borderColor: 'rgba(255,255,255,0.12)',
                 color: '#fff',
                 py: 0,
-                height: ACTION_BUTTON_HEIGHT,
+                height: 44,
                 flex: 1,
-                borderRadius: ACTION_BORDER_RADIUS,
-                fontSize: ACTION_FONT_SIZE,
+                borderRadius: 12,
+                fontSize: '0.95rem',
                 textTransform: 'none',
                 '&:hover': { borderColor: accentColor, bgcolor: 'rgba(88,120,255,0.06)' },
                 '&.Mui-disabled': { opacity: 0.6 },
@@ -601,11 +791,11 @@ export function ProfileEditForm() {
               sx={{
                 bgcolor: accentColor,
                 color: '#fff',
-                height: ACTION_BUTTON_HEIGHT,
+                height: 44,
                 px: 3,
                 flex: 1,
-                borderRadius: ACTION_BORDER_RADIUS,
-                fontSize: ACTION_FONT_SIZE,
+                borderRadius: 12,
+                fontSize: '0.95rem',
                 textTransform: 'none',
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -618,8 +808,6 @@ export function ProfileEditForm() {
               {savingProfile ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : 'Сохранить'}
             </Button>
           </Box>
-
-          {/* убрали кнопку "Выйти" снизу — теперь она в хедере */}
         </Box>
       </Box>
 
@@ -638,6 +826,20 @@ export function ProfileEditForm() {
           WebkitBackdropFilter: 'blur(12px)',
           borderRadius: 3,
           p: 1,
+          color: '#fff',
+        }}
+      />
+
+      {/* Subscription selector */}
+      <SubscriptionPlanSelector
+        open={openPlanDialog}
+        onClose={() => setOpenPlanDialog(false)}
+        plans={plans}
+        selectedPlanId={selectedPlan?.id ?? null}
+        onSelectPlan={handleSelectPlan}
+        dialogPaperSx={{
+          background: 'linear-gradient(180deg, rgba(24,24,48,0.96), rgba(12,12,24,0.94))',
+          border: `1px solid ${glassBorder}`,
           color: '#fff',
         }}
       />
@@ -673,8 +875,8 @@ export function ProfileEditForm() {
             disabled={logoutLoading}
             sx={{
               color: '#fff',
-              borderRadius: ACTION_BORDER_RADIUS,
-              height: ACTION_BUTTON_HEIGHT,
+              borderRadius: 12,
+              height: 44,
               textTransform: 'none',
             }}
           >
@@ -687,8 +889,8 @@ export function ProfileEditForm() {
             sx={{
               bgcolor: 'rgba(255,100,100,0.95)',
               '&:hover': { bgcolor: 'rgba(255,100,100,0.85)' },
-              borderRadius: ACTION_BORDER_RADIUS,
-              height: ACTION_BUTTON_HEIGHT,
+              borderRadius: 12,
+              height: 44,
               textTransform: 'none',
             }}
           >
