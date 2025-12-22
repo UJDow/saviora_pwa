@@ -21,6 +21,9 @@ import { setMoodForDate } from 'src/utils/api';
 import { getLocalDateStr } from 'src/utils/dateUtils';
 import RecentInsightsGrid from 'src/features/insights/RecentInsightsGrid';
 
+const HEADER_HEIGHT = 56;
+const FOOTER_HEIGHT = 64;
+
 export function UserProfileScreen() {
   const navigate = useNavigate();
   const {
@@ -80,7 +83,6 @@ export function UserProfileScreen() {
     }
   };
 
-  // Обработчик сохранения — использует локальную дату через getLocalDateStr
   const handleSaveMood = async (moodId: string) => {
     setMoodSaving(true);
     try {
@@ -90,13 +92,8 @@ export function UserProfileScreen() {
 
       const todayStr = getLocalDateStr();
 
-      // 1) Сохранение в БД
       await setMoodForDate(todayStr, moodId);
-
-      // 2) Обновляем контекст оптимистично
       updateProfile?.({ todayMood: moodId });
-
-      // 3) Перезапрашиваем профиль из БД для полной синхронизации
       await refreshProfile();
 
       setSnackbarMessage('Настроение сохранено.');
@@ -116,41 +113,41 @@ export function UserProfileScreen() {
   const avatarColor =
     AVATAR_OPTIONS.find((o) => o.icon === (profile.avatarIcon ?? 'Pets'))?.color ?? '#f0f0f0';
 
-  const accentColor = 'rgba(88,120,255,0.95)';
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
 
   return (
     <Box
       sx={{
-        minHeight: '100vh',
-        background: screenGradient,
+        height: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        position: 'relative',
+        background: screenGradient,
+        color: '#fff',
         overflow: 'hidden',
-        p: { xs: 2, sm: 4 },
+        position: 'relative',
       }}
     >
+      {/* Хедер фиксированный сверху */}
       <Box
         sx={{
-          width: '100%',
-          maxWidth: 840,
-          borderRadius: 3,
-          background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          border: `1px solid ${glassBorder}`,
-          boxShadow: '0 12px 60px rgba(24,32,80,0.28)',
-          position: 'relative',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: HEADER_HEIGHT,
+          background: 'rgba(255,255,255,0.10)',
+          backdropFilter: 'blur(10px)',
           display: 'flex',
-          flexDirection: 'column',
-          minHeight: '78vh',
-          overflow: 'hidden',
-          color: '#fff',
-          p: { xs: 2, sm: 3 },
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1400,
+          borderBottomLeftRadius: 24,
+          borderBottomRightRadius: 24,
+          border: '1px solid rgba(255,255,255,0.14)',
+          boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+          userSelect: 'none',
+          px: 2,
         }}
       >
         <IconButton
@@ -158,50 +155,82 @@ export function UserProfileScreen() {
           onClick={() => navigate(-1)}
           sx={{
             position: 'absolute',
-            top: 16,
-            left: 16,
+            left: 12,
             color: '#fff',
             bgcolor: 'transparent',
             borderRadius: '50%',
             p: 1,
-            zIndex: 10,
+            zIndex: 1500,
+            '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
           }}
+          size="large"
         >
           <ArrowBackIosNewIcon fontSize="small" />
         </IconButton>
+
+        <Typography
+          sx={{
+            fontWeight: 600,
+            fontSize: '1.05rem',
+            color: 'rgba(255,255,255,0.95)',
+            letterSpacing: 0.4,
+            userSelect: 'none',
+          }}
+        >
+          Saviora
+        </Typography>
 
         <IconButton
           aria-label="дополнительные опции"
           onClick={handleMenuClick}
           sx={{
             position: 'absolute',
-            top: 16,
-            right: 16,
+            right: 12,
             color: '#fff',
             bgcolor: 'transparent',
             borderRadius: '50%',
             p: 1,
-            zIndex: 10,
+            zIndex: 1500,
+            '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
           }}
+          size="large"
         >
           <MoreVertIcon fontSize="small" />
         </IconButton>
+      </Box>
 
+      {/* Контент под хедером */}
+      <Box
+        sx={{
+          flexGrow: 1,
+          marginTop: `${HEADER_HEIGHT}px`,
+          marginBottom: `${FOOTER_HEIGHT}px`,
+          overflowY: 'auto',
+          px: { xs: 2, sm: 4 },
+          py: 3,
+          position: 'relative',
+        }}
+      >
+        {/* Меню (позиционируется под кнопкой — vertical: 'bottom') */}
         <Menu
-          anchorEl={anchorEl}
-          open={open}
-          onClose={handleMenuClose}
-          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-          PaperProps={{
-            sx: {
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
-              color: '#fff',
-              border: `1px solid ${glassBorder}`,
-              backdropFilter: 'blur(8px)',
-            },
-          }}
-        >
+  anchorEl={anchorEl}
+  open={open}
+  onClose={handleMenuClose}
+  anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+  transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+  PaperProps={{
+    sx: {
+      mt: '6px',
+      background: 'rgba(255, 255, 255, 0.12)',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+      border: `1px solid rgba(255, 255, 255, 0.3)`,
+      color: '#fff',
+      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+      zIndex: 1600,
+    },
+  }}
+>
           <MenuItem onClick={handleEdit}>Изменить</MenuItem>
           <MenuItem onClick={handleShare}>Поделиться</MenuItem>
         </Menu>
@@ -218,7 +247,6 @@ export function UserProfileScreen() {
             width: '100%',
           }}
         >
-          {/* Left: avatar + name */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Avatar
               sx={{
@@ -243,7 +271,6 @@ export function UserProfileScreen() {
             </Box>
           </Box>
 
-          {/* Right: single MoodSlider — в grid правой колонке, выровнен по центру */}
           <Box
             sx={{
               justifySelf: { xs: 'stretch', sm: 'end' },
@@ -268,42 +295,37 @@ export function UserProfileScreen() {
           </Box>
         </Box>
 
-        {/* Остальная разметка профиля (списки, статистика и т.д.) */}
+        {/* Остальная разметка профиля */}
         <Box sx={{ mt: 4, px: { xs: 0, sm: 1 }, pb: 6 }}>
-          {/* Здесь: ProfileCard, StatsTiles, список снов и т.д. */}
-
-          {/* === ВСТАВЛЕННЫЙ БЛОК: Последние инсайты === */}
           <Box sx={{ mt: 3 }}>
             <Typography variant="h6" sx={{ color: '#fff', mb: 1 }}>
               Последние инсайты
             </Typography>
-
-            {/* Показываем недавние инсайты (компонент RecentInsightsGrid) */}
             <RecentInsightsGrid maxItems={12} />
           </Box>
         </Box>
-
-        <Snackbar
-          open={snackbarOpen}
-          autoHideDuration={4000}
-          onClose={() => setSnackbarOpen(false)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        >
-          <Alert
-            onClose={() => setSnackbarOpen(false)}
-            severity={snackbarSeverity}
-            sx={{
-              width: '100%',
-              alignItems: 'center',
-              bgcolor: 'rgba(0,0,0,0.35)',
-              color: '#fff',
-              border: `1px solid ${glassBorder}`,
-            }}
-          >
-            {snackbarMessage}
-          </Alert>
-        </Snackbar>
       </Box>
+
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={4000}
+        onClose={() => setSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setSnackbarOpen(false)}
+          severity={snackbarSeverity}
+          sx={{
+            width: '100%',
+            alignItems: 'center',
+            bgcolor: 'rgba(0,0,0,0.35)',
+            color: '#fff',
+            border: `1px solid ${glassBorder}`,
+          }}
+        >
+          {snackbarMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

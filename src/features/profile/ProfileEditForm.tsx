@@ -20,10 +20,9 @@ import { useProfile } from './ProfileContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { request } from 'src/utils/api';
-import AvatarSelector from './AvatarSelector'; // Предполагается, что AvatarSelector находится здесь
+import AvatarSelector from './AvatarSelector';
 
 // --- Avatar options ---
-// Пастельные цвета, расширенные для всех иконок
 export const AVATAR_OPTIONS = [
   { id: '1', icon: 'Pets', name: 'Плюшевая лапка', color: 'rgba(83,134,136,0.78)' },
   { id: '2', icon: 'Cloud', name: 'Пушистое облачко', color: 'rgba(118,174,186,0.78)' },
@@ -35,11 +34,14 @@ export const AVATAR_OPTIONS = [
   { id: '8', icon: 'LocalFlorist', name: 'Цветочные сны', color: 'rgba(151,194,193,0.78)' },
   { id: '9', icon: 'AcUnit', name: 'Хрустальная снежинка', color: 'rgba(202,216,210,0.78)' },
   { id: '10', icon: 'Bedtime', name: 'Уютная луна', color: 'rgba(201, 193, 183, 0.78)' },
-  { id: '11', icon: 'Palette', name: 'Палитра грез', color: 'rgba(130,150,170,0.78)' }, // Дополнительный пастельный
-  { id: '12', icon: 'Circle', name: 'Мягкий кружок', color: 'rgba(180,200,210,0.78)' }, // Дополнительный пастельный
+  { id: '11', icon: 'Palette', name: 'Палитра грез', color: 'rgba(130,150,170,0.78)' },
+  { id: '12', icon: 'Circle', name: 'Мягкий кружок', color: 'rgba(180,200,210,0.78)' },
 ];
 
 const VALID_AVATAR_NAMES = AVATAR_OPTIONS.map(o => o.icon);
+
+const HEADER_HEIGHT = 56;
+const FOOTER_HEIGHT = 64;
 
 export function ProfileEditForm() {
   const { profile, updateProfile, getIconComponent } = useProfile();
@@ -59,15 +61,13 @@ export function ProfileEditForm() {
   // UI state
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
-  const [savingAvatar, setSavingAvatar] = useState(false); // Это состояние теперь не используется для загрузки изображения, только для иконок
+  const [savingAvatar, setSavingAvatar] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [snackOpen, setSnackOpen] = useState(false);
   const [snackMsg, setSnackMsg] = useState('');
   const [snackSeverity, setSnackSeverity] = useState<'success' | 'error' | 'info'>('success');
   const [openAvatarDialog, setOpenAvatarDialog] = useState(false);
 
-  // Icon component to render currently selected icon (fallback to profile.avatarIcon)
-  // Используем null, чтобы getIconComponent из ProfileContext сам выбрал дефолтную иконку
   const IconComp = getIconComponent(selectedAvatarIcon ?? profile.avatarIcon ?? null);
 
   // Sync local state when profile changes
@@ -115,7 +115,6 @@ export function ProfileEditForm() {
     }
     loadMe();
     return () => { mounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function resetSnack() {
@@ -157,7 +156,6 @@ export function ProfileEditForm() {
 
       updateProfile({
         avatarIcon: serverAvatar,
-        // Если мы сохраняем иконку, то avatarImage должен быть null
         avatarImage: null,
         ...(typeof serverName !== 'undefined' ? { name: serverName } : {}),
       });
@@ -178,7 +176,6 @@ export function ProfileEditForm() {
     }
   }
 
-  // User clicked option inside AvatarSelector (it returns id)
   const handleAvatarSelectorUpdateAvatar = useCallback((id: string) => {
     const opt = AVATAR_OPTIONS.find(o => o.id === id);
     if (!opt) {
@@ -187,13 +184,9 @@ export function ProfileEditForm() {
       setSnackOpen(true);
       return;
     }
-    // Use same flow as before: save by icon name
     void saveAvatarToServer(opt.icon);
-    setOpenAvatarDialog(false); // Закрываем диалог после выбора
+    setOpenAvatarDialog(false);
   }, []);
-
-  // Обработчик для загрузки/сброса изображения аватара удален, так как функционал убран из AvatarSelector.
-  // Если в будущем потребуется, его нужно будет восстановить вместе с UI в AvatarSelector.
 
   const handleSave = async () => {
     setSavingProfile(true);
@@ -222,12 +215,12 @@ export function ProfileEditForm() {
 
       const serverAvatar = user.avatar_icon || user.avatarIcon || selectedAvatarIcon || null;
       const serverName = user.name ?? name;
-      const serverAvatarImage = user.avatar_image_url ?? null; // Получаем avatarImage с сервера
+      const serverAvatarImage = user.avatar_image_url ?? null;
 
       updateProfile({
         name: serverName,
         avatarIcon: serverAvatar,
-        avatarImage: serverAvatarImage, // Обновляем avatarImage из ответа сервера
+        avatarImage: serverAvatarImage,
       });
 
       setSnackSeverity('success');
@@ -258,68 +251,14 @@ export function ProfileEditForm() {
     }
   };
 
-  // Safe created date formatting (avoids Invalid Date)
   const createdDate = typeof serverMeta?.created === 'number' ? new Date(serverMeta!.created) : null;
   const createdDateStr = createdDate && !Number.isNaN(createdDate.getTime())
     ? createdDate.toLocaleDateString('ru-RU')
     : undefined;
 
-  // Styling constants (kept as before)
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
   const accentColor = 'rgba(88,120,255,0.95)';
-
-  const pageSx = {
-    minHeight: '100vh',
-    background: screenGradient,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    position: 'relative' as const,
-    overflow: 'hidden',
-    p: { xs: 2, sm: 4 },
-  };
-
-  const mainCardSx = {
-    width: '100%',
-    maxWidth: { xs: '100%', sm: 520 },
-    borderRadius: 3,
-    background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-    border: `1px solid ${glassBorder}`,
-    boxShadow: '0 12px 60px rgba(24,32,80,0.28)',
-    position: 'relative' as const,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    minHeight: '72vh',
-    overflow: 'hidden',
-    color: '#fff',
-    p: { xs: 3, sm: 4 },
-    mt: { xs: 4, sm: 6 },
-  };
-
-  const unifiedIconBtnSx = {
-    position: 'absolute',
-    top: 16,
-    left: 16,
-    color: '#fff',
-    bgcolor: 'transparent',
-    borderRadius: '50%',
-    p: 1,
-    transition: 'background-color 0.18s, box-shadow 0.18s, transform 0.12s',
-    '&:hover': {
-      bgcolor: 'rgba(255,255,255,0.08)',
-      boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-      transform: 'translateY(-1px)',
-    },
-    '&:focus-visible': {
-      outline: '2px solid rgba(255,255,255,0.12)',
-      outlineOffset: 3,
-    },
-    zIndex: 10,
-  } as const;
 
   const avatarWrapperSx = {
     cursor: 'pointer',
@@ -336,19 +275,94 @@ export function ProfileEditForm() {
 
   return (
     <>
-      <Box sx={pageSx}>
+      <Box
+        sx={{
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          background: screenGradient,
+          color: '#fff',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
+        {/* Хедер фиксированный сверху */}
         <Box
-          sx={mainCardSx}
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: HEADER_HEIGHT,
+            background: 'rgba(255,255,255,0.10)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1400,
+            borderBottomLeftRadius: 24,
+            borderBottomRightRadius: 24,
+            border: '1px solid rgba(255,255,255,0.14)',
+            boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+            userSelect: 'none',
+          }}
+        >
+          <Typography
+            sx={{
+              fontWeight: 600,
+              fontSize: '1.05rem',
+              color: 'rgba(255,255,255,0.95)',
+              letterSpacing: 0.4,
+              userSelect: 'none',
+            }}
+          >
+            Saviora
+          </Typography>
+        </Box>
+
+        {/* Контент на весь экран под хедером */}
+        <Box
           component="form"
           onSubmit={(e) => {
             e.preventDefault();
             handleSave();
           }}
+          sx={{
+            flexGrow: 1,
+            marginTop: `${HEADER_HEIGHT}px`,
+            marginBottom: `${FOOTER_HEIGHT}px`,
+            overflowY: 'auto',
+            px: { xs: 2, sm: 4 },
+            py: 3,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
         >
+          {/* Кнопка назад */}
           <IconButton
             onClick={() => navigate(-1)}
             aria-label="Назад"
-            sx={unifiedIconBtnSx}
+            sx={{
+              position: 'absolute',
+              top: 16,
+              left: 16,
+              color: '#fff',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 1,
+              transition: 'background-color 0.18s, box-shadow 0.18s, transform 0.12s',
+              '&:hover': {
+                bgcolor: 'rgba(255,255,255,0.08)',
+                boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
+                transform: 'translateY(-1px)',
+              },
+              '&:focus-visible': {
+                outline: '2px solid rgba(255,255,255,0.12)',
+                outlineOffset: 3,
+              },
+              zIndex: 10,
+            }}
             size="large"
           >
             <ArrowBackIosNewIcon fontSize="small" />
@@ -358,7 +372,7 @@ export function ProfileEditForm() {
             variant="h5"
             align="center"
             fontWeight="700"
-            mb={1}
+            mb={2}
             sx={{
               mt: 1,
               color: '#fff',
@@ -369,7 +383,15 @@ export function ProfileEditForm() {
           </Typography>
 
           {/* Profile summary */}
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mt: 1, mb: 3 }}>
+          <Box sx={{ 
+            display: 'flex', 
+            gap: 2, 
+            alignItems: 'center', 
+            mt: 1, 
+            mb: 4,
+            width: '100%',
+            maxWidth: 520
+          }}>
             <Box
               onClick={() => setOpenAvatarDialog(true)}
               sx={avatarWrapperSx}
@@ -379,19 +401,19 @@ export function ProfileEditForm() {
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setOpenAvatarDialog(true); }}
             >
               <Avatar
-  sx={{
-    width: 98,
-    height: 98,
-    bgcolor: profile.avatarImage
-      ? undefined
-      : AVATAR_OPTIONS.find((o) => o.icon === (selectedAvatarIcon ?? profile.avatarIcon))?.color ?? '#f0f0f0',
-    color: '#fff', // <- белая заливка иконки
-    border: `2px solid ${accentColor}`,
-  }}
-  src={profile.avatarImage ?? undefined}
->
-  {!profile.avatarImage && <IconComp />}
-</Avatar>
+                sx={{
+                  width: 98,
+                  height: 98,
+                  bgcolor: profile.avatarImage
+                    ? undefined
+                    : AVATAR_OPTIONS.find((o) => o.icon === (selectedAvatarIcon ?? profile.avatarIcon))?.color ?? '#f0f0f0',
+                  color: '#fff',
+                  border: `2px solid ${accentColor}`,
+                }}
+                src={profile.avatarImage ?? undefined}
+              >
+                {!profile.avatarImage && <IconComp />}
+              </Avatar>
             </Box>
 
             <Box sx={{ flex: 1 }}>
@@ -446,7 +468,11 @@ export function ProfileEditForm() {
           </Box>
 
           {/* Name edit */}
-          <Box sx={{ mb: 2 }}>
+          <Box sx={{ 
+            mb: 3,
+            width: '100%',
+            maxWidth: 520
+          }}>
             <TextField
               label="Имя"
               value={name}
@@ -467,7 +493,14 @@ export function ProfileEditForm() {
           </Box>
 
           {/* Actions */}
-          <Box sx={{ display: 'flex', gap: 2, mt: 2, mb: 2 }}>
+          <Box sx={{ 
+            display: 'flex', 
+            gap: 2, 
+            mt: 2, 
+            mb: 3,
+            width: '100%',
+            maxWidth: 520
+          }}>
             <Button
               variant="outlined"
               onClick={() => {
@@ -504,16 +537,19 @@ export function ProfileEditForm() {
             </Button>
           </Box>
 
-          <Box sx={{ flex: 1 }} />
-
-          {/* Simple logout (icon + text) in bottom-right */}
-          <Box sx={{ position: 'absolute', right: 16, bottom: 16 }}>
+          {/* Logout button centered at bottom */}
+          <Box sx={{ 
+            mt: 'auto',
+            mb: 2,
+            display: 'flex',
+            justifyContent: 'center'
+          }}>
             <Button
               onClick={handleLogoutClick}
               startIcon={<LogoutIcon />}
               sx={{
                 textTransform: 'none',
-                color: 'rgba(255,255,255,0.8)', // Нейтральный цвет
+                color: 'rgba(255,255,255,0.8)',
                 bgcolor: 'transparent',
                 '&:hover': { bgcolor: 'rgba(255,255,255,0.04)' },
                 px: 1.25,
@@ -528,19 +564,15 @@ export function ProfileEditForm() {
         </Box>
       </Box>
 
-      {/* AvatarSelector — uses your Swiper-based selector */}
+      {/* AvatarSelector */}
       <AvatarSelector
         open={openAvatarDialog}
         onClose={() => setOpenAvatarDialog(false)}
-        avatarOptions={AVATAR_OPTIONS} // Передаем AVATAR_OPTIONS напрямую
-        profile={profile} // Передаем объект profile напрямую
+        avatarOptions={AVATAR_OPTIONS}
+        profile={profile}
         getIconComponent={getIconComponent}
         updateAvatar={handleAvatarSelectorUpdateAvatar}
-        // updateAvatarImage удален, так как функционал загрузки/сброса изображения убран
-        // Если TypeScript ругается, что updateAvatarImage отсутствует,
-        // убедитесь, что в AvatarSelectorProps он помечен как опциональный (updateAvatarImage?: ...)
         dialogPaperSx={{
-          // glassmorph style (в духе SimilarArtworksScreen)
           background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
           border: `1px solid ${glassBorder}`,
           backdropFilter: 'blur(12px)',
@@ -558,7 +590,6 @@ export function ProfileEditForm() {
         aria-labelledby="logout-dialog-title"
         PaperProps={{
           sx: {
-            // glassmorph paper (как в примере)
             background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
