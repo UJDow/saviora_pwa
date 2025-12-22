@@ -1,5 +1,5 @@
 // src/screens/UserProfileScreen.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Avatar,
@@ -108,12 +108,50 @@ export function UserProfileScreen() {
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
 
-  // Отступ сверху для хедера: безопасная зона + небольшой offset (8px)
-  const headerTop = `calc(env(safe-area-inset-top) + 8px)`;
-  const headerHeight = `${HEADER_BASE_HEIGHT}px`;
+  // ДИНАМИЧЕСКИЙ ОТСТУП ДЛЯ HEADER (как в ProfileEditForm)
+  const [headerExtra, setHeaderExtra] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  // Если на странице будут инпуты, можно добавлять inputOpen state и учитывать его — сейчас достаточно visualViewport
 
-  // Отступы для скроллящейся области: учитывать высоту хедера + safe area + маленький offset
-  const contentMarginTop = `calc(${HEADER_BASE_HEIGHT}px + env(safe-area-inset-top) + 8px)`;
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    const update = () => {
+      if (vv && typeof vv.height === 'number') {
+        const kb = Math.max(0, window.innerHeight - vv.height);
+        setKeyboardHeight(kb);
+      } else {
+        setKeyboardHeight(0);
+      }
+    };
+
+    if (vv) {
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      update();
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    } else {
+      const onResize = () => setKeyboardHeight(0);
+      window.addEventListener('resize', onResize);
+      update();
+      return () => window.removeEventListener('resize', onResize);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (keyboardHeight > 0) {
+      const computed = Math.min(48, Math.max(6, Math.round(keyboardHeight * 0.03) + 8));
+      setHeaderExtra(computed);
+    } else {
+      setHeaderExtra(0);
+    }
+  }, [keyboardHeight]);
+
+  const headerTop = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
+  const headerHeight = `${HEADER_BASE_HEIGHT}px`;
+  const contentMarginTop = `calc(${HEADER_BASE_HEIGHT}px + env(safe-area-inset-top) + ${headerExtra}px)`;
   const contentMarginBottom = `${FOOTER_HEIGHT}px`;
 
   return (
@@ -126,12 +164,11 @@ export function UserProfileScreen() {
         color: '#fff',
         overflow: 'hidden',
         position: 'relative',
-        // чтобы iOS корректно показывал safe area снизу/сверху
         paddingTop: 'env(safe-area-inset-top)',
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {/* ========== Header (fixed, с safe-area) ========== */}
+      {/* ========== Header (fixed, с safe-area и headerExtra) ========== */}
       <Box
         sx={{
           position: 'fixed',

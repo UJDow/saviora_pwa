@@ -7,7 +7,6 @@ import {
   Typography,
   IconButton,
   Dialog,
-  DialogContent,
   DialogActions,
   Snackbar,
   Alert,
@@ -319,6 +318,11 @@ export function ProfileEditForm() {
   const contentMarginTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + ${headerExtra}px)`;
   const contentMarginBottom = `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
 
+  // Design tokens for action buttons
+  const ACTION_BUTTON_HEIGHT = 44;
+  const ACTION_BORDER_RADIUS = 12;
+  const ACTION_FONT_SIZE = '0.95rem';
+
   return (
     <>
       <Box
@@ -387,6 +391,25 @@ export function ProfileEditForm() {
           >
             Saviora
           </Typography>
+
+          {/* Logout in header (right corner) */}
+          <IconButton
+            aria-label="Выйти"
+            onClick={handleLogoutClick}
+            sx={{
+              position: 'absolute',
+              right: 12,
+              color: '#fff',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 1,
+              zIndex: 1500,
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
+            }}
+            size="large"
+          >
+            <LogoutIcon fontSize="small" />
+          </IconButton>
         </Box>
 
         {/* Контент на весь экран под хедером */}
@@ -535,15 +558,17 @@ export function ProfileEditForm() {
             />
           </Box>
 
-          {/* Actions */}
-          <Box sx={{
-            display: 'flex',
-            gap: 2,
-            mt: 2,
-            mb: 3,
-            width: '100%',
-            maxWidth: 520
-          }}>
+          {/* Actions (Cancel + Save) */}
+          <Box
+            sx={{
+              display: 'flex',
+              gap: 2,
+              mt: 2,
+              mb: 3,
+              width: '100%',
+              maxWidth: 520,
+            }}
+          >
             <Button
               variant="outlined"
               onClick={() => {
@@ -556,9 +581,14 @@ export function ProfileEditForm() {
               sx={{
                 borderColor: 'rgba(255,255,255,0.12)',
                 color: '#fff',
-                py: 1.1,
+                py: 0,
+                height: ACTION_BUTTON_HEIGHT,
                 flex: 1,
+                borderRadius: ACTION_BORDER_RADIUS,
+                fontSize: ACTION_FONT_SIZE,
+                textTransform: 'none',
                 '&:hover': { borderColor: accentColor, bgcolor: 'rgba(88,120,255,0.06)' },
+                '&.Mui-disabled': { opacity: 0.6 },
               }}
             >
               Отмена
@@ -567,43 +597,29 @@ export function ProfileEditForm() {
             <Button
               variant="contained"
               type="submit"
+              disabled={savingProfile}
               sx={{
                 bgcolor: accentColor,
                 color: '#fff',
-                py: 1.1,
+                height: ACTION_BUTTON_HEIGHT,
                 px: 3,
+                flex: 1,
+                borderRadius: ACTION_BORDER_RADIUS,
+                fontSize: ACTION_FONT_SIZE,
+                textTransform: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 1,
                 '&:hover': { bgcolor: 'rgba(88,120,255,0.88)', boxShadow: '0 8px 28px rgba(88,120,255,0.18)' },
+                '&.Mui-disabled': { bgcolor: 'rgba(88,120,255,0.6)' },
               }}
-              disabled={savingProfile}
             >
-              {savingProfile ? <CircularProgress size={16} sx={{ color: '#fff' }} /> : 'Сохранить'}
+              {savingProfile ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : 'Сохранить'}
             </Button>
           </Box>
 
-          {/* Logout button centered at bottom */}
-          <Box sx={{
-            mt: 'auto',
-            mb: 2,
-            display: 'flex',
-            justifyContent: 'center'
-          }}>
-            <Button
-              onClick={handleLogoutClick}
-              startIcon={<LogoutIcon />}
-              sx={{
-                textTransform: 'none',
-                color: 'rgba(255,255,255,0.8)',
-                bgcolor: 'transparent',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.04)' },
-                px: 1.25,
-                py: 0.5,
-                borderRadius: 2,
-                border: `1px solid rgba(255,255,255,0.04)`,
-              }}
-            >
-              Выйти
-            </Button>
-          </Box>
+          {/* убрали кнопку "Выйти" снизу — теперь она в хедере */}
         </Box>
       </Box>
 
@@ -651,17 +667,32 @@ export function ProfileEditForm() {
           <Typography sx={{ color: 'rgba(255,255,255,0.85)' }}>Вы действительно хотите выйти из аккаунта?</Typography>
         </Box>
 
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setConfirmOpen(false)} disabled={logoutLoading} sx={{ color: '#fff' }}>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 2 }}>
+          <Button
+            onClick={() => setConfirmOpen(false)}
+            disabled={logoutLoading}
+            sx={{
+              color: '#fff',
+              borderRadius: ACTION_BORDER_RADIUS,
+              height: ACTION_BUTTON_HEIGHT,
+              textTransform: 'none',
+            }}
+          >
             Отмена
           </Button>
           <Button
             onClick={handleConfirmLogout}
             variant="contained"
             disabled={logoutLoading}
-            sx={{ bgcolor: 'rgba(255,100,100,0.95)', '&:hover': { bgcolor: 'rgba(255,100,100,0.85)' } }}
+            sx={{
+              bgcolor: 'rgba(255,100,100,0.95)',
+              '&:hover': { bgcolor: 'rgba(255,100,100,0.85)' },
+              borderRadius: ACTION_BORDER_RADIUS,
+              height: ACTION_BUTTON_HEIGHT,
+              textTransform: 'none',
+            }}
           >
-            {logoutLoading ? 'Выход...' : 'Выйти'}
+            {logoutLoading ? <CircularProgress size={16} sx={{ color: '#fff' }} /> : 'Выйти'}
           </Button>
         </DialogActions>
       </Dialog>
