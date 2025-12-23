@@ -3,7 +3,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   Box,
   Typography,
-  IconButton,
   Snackbar,
   Alert,
   Avatar,
@@ -47,7 +46,7 @@ type NormalizedDailyConvo = Omit<ApiDailyConvo, 'date' | 'createdAt' | 'updatedA
 type CalendarView = 'week' | 'month' | 'year' | 'day';
 
 export function ProfileScreen() {
-  const { logout } = useAuth();
+  const { logout } = useAuth(); // eslint-disable-line @typescript-eslint/no-unused-vars
   const { profile, getIconComponent, updateProfile } = useProfile();
   const [dreams, setDreams] = useState<NormalizedDream[]>([]);
   const [filteredDreams, setFilteredDreams] = useState<NormalizedDream[]>([]);
@@ -82,7 +81,7 @@ export function ProfileScreen() {
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 2000);
@@ -95,27 +94,6 @@ export function ProfileScreen() {
     if (Number.isNaN(n)) return Date.now();
     return n < 1e12 ? n * 1000 : n;
   };
-
-  // === Угловые иконки: общие стили ===
-  const cornerIconOffset = 18;
-  const cornerIconBoxSx = {
-    position: 'absolute' as const,
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    background: 'rgba(255,255,255,0.10)',
-    boxShadow:
-      '0 4px 16px 0 rgba(88,120,255,0.14), 0 1.5px 8px 0 rgba(255,255,255,0.08) inset',
-    border: '1.2px solid rgba(255,255,255,0.14)',
-    backdropFilter: 'blur(8px)',
-    WebkitBackdropFilter: 'blur(8px)',
-    zIndex: 1200,
-    transition: 'all 0.18s cubic-bezier(.4,0,.2,1)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    p: 0,
-  } as const;
 
   useEffect(() => {
     const fetchDreams = async () => {
@@ -342,88 +320,14 @@ export function ProfileScreen() {
   const displayMonth = selectedDate.toLocaleString('ru-RU', { month: 'long' });
   const displayMonthCapitalized = displayMonth.charAt(0).toUpperCase() + displayMonth.slice(1);
 
-  const pageSx = {
-    minHeight: '100vh',
-    background: screenGradient,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    position: 'relative' as const,
-    overflow: 'hidden',
-    p: { xs: 2, sm: 4 },
-  };
+  const headerBase = 56;
+  const footerHeight = 64;
 
-  const mainCardSx = {
-    width: '100%',
-    maxWidth: 840,
-    borderRadius: 3,
-    background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-    border: `1px solid ${glassBorder}`,
-    boxShadow: '0 12px 60px rgba(24,32,80,0.28)',
-    position: 'relative' as const,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    minHeight: '78vh',
-    overflow: 'hidden',
-    color: '#fff',
-    p: { xs: 2, sm: 3 },
-  };
-
-  // FAB‑кнопки внизу
-  const fabSx = {
-    position: 'absolute' as const,
-    bottom: 18,
-    right: 18,
-    bgcolor: 'rgba(88,120,255,0.85)',
-    color: '#fff',
-    borderRadius: '50%',
-    boxShadow:
-      '0 4px 16px 0 rgba(88,120,255,0.18), 0 1.5px 8px 0 rgba(255,255,255,0.10) inset',
-    border: '1.5px solid rgba(255,255,255,0.18)',
-    backdropFilter: 'blur(8px)',
-    WebkitBackdropFilter: 'blur(8px)',
-    transition: 'all 0.18s cubic-bezier(.4,0,.2,1)',
-    '&:hover': {
-      bgcolor: 'rgba(88,120,255,1)',
-      boxShadow:
-        '0 8px 32px 0 rgba(88,120,255,0.28), 0 1.5px 8px 0 rgba(255,255,255,0.16) inset',
-      transform: 'scale(1.08)',
-    },
-    p: 1,
-    minWidth: 40,
-    minHeight: 40,
-    zIndex: 1300,
-  };
-
-  const fabLeftSx = {
-    position: 'absolute' as const,
-    bottom: 18,
-    left: 18,
-    bgcolor: 'rgba(255,255,255,0.18)',
-    color: '#fff',
-    borderRadius: '50%',
-    boxShadow:
-      '0 2px 8px 0 rgba(255,255,255,0.10), 0 1.5px 8px 0 rgba(88,120,255,0.08) inset',
-    border: '1.5px solid rgba(255,255,255,0.12)',
-    backdropFilter: 'blur(8px)',
-    WebkitBackdropFilter: 'blur(8px)',
-    transition: 'all 0.18s cubic-bezier(.4,0,.2,1)',
-    opacity: 0.72,
-    '&:hover': {
-      bgcolor: 'rgba(255,255,255,0.28)',
-      boxShadow:
-        '0 8px 32px 0 rgba(255,255,255,0.18), 0 1.5px 8px 0 rgba(88,120,255,0.18) inset',
-      opacity: 1,
-      transform: 'scale(1.04)',
-    },
-    p: 1,
-    minWidth: 40,
-    minHeight: 40,
-    zIndex: 1300,
-  };
+  const headerTopStr = 'env(safe-area-inset-top)';
+  const headerHeightStr = `${headerBase}px`;
+  const scrollMt = `calc(${headerBase}px + env(safe-area-inset-top))`;
+  const footerBottomStr = '62px';
+  const scrollMb = `${footerHeight + 18}px`;
 
   const avatarSx = {
     width: 40,
@@ -434,28 +338,6 @@ export function ProfileScreen() {
 
   const showMainSlider = !(profile?.loading) && !profile?.todayMood;
 
-  // ---------------------------
-  // Поведение header vs клавиатура: УПРОЩЁННОЕ
-  // ---------------------------
-
-  const headerBase = 56; // px — внутренняя высота хедера (контент)
-  const footerHeight = 64; // px
-
-  // header top учитывает safe-area
-  const headerTopStr = 'env(safe-area-inset-top)';
-  const headerHeightStr = `${headerBase}px`;
-
-  // scroll container mt чтобы контент не уезжал под header
-  const scrollMt = `calc(${headerBase}px + env(safe-area-inset-top))`;
-
-  // footer всегда фиксирован (не двигается при клавиатуре)
-  const footerBottomStr = '62px';
-  // но контент низу учитывает footer + возможную клавиатуру (чтобы input не был закрыт)
-  const scrollMb = `${footerHeight + 18}px`; // упрощено
-
-  // ---------------------------
-  // Header (обновлённый)
-  // ---------------------------
   const Header = () => (
     <Box
       sx={{
@@ -475,14 +357,10 @@ export function ProfileScreen() {
         WebkitBackdropFilter: 'blur(10px)',
         border: '1px solid rgba(255,255,255,0.14)',
         boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
-        borderTopLeftRadius: 0,
-        borderTopRightRadius: 0,
         borderBottomLeftRadius: 24,
         borderBottomRightRadius: 24,
-        transition: 'top 0.28s ease, height 0.18s ease',
       }}
     >
-      {/* Название */}
       <Typography
         sx={{
           fontFamily:
@@ -497,7 +375,6 @@ export function ProfileScreen() {
         Saviora
       </Typography>
 
-      {/* Профиль */}
       <Box
         onClick={handleUserMenuOpen}
         role="button"
@@ -518,35 +395,18 @@ export function ProfileScreen() {
           border: '1px solid rgba(255,255,255,0.08)',
         }}
       >
-        <Avatar
-          sx={{
-            width: 36,
-            height: 36,
-            bgcolor: avatarColor,
-            color: '#fff',
-            border: 'none',
-            boxShadow: 'none',
-          }}
-        >
+        <Avatar sx={avatarSx}>
           {IconComp ? <IconComp /> : <PersonIcon />}
         </Avatar>
       </Box>
     </Box>
   );
 
-  // ---------------------------
-  // Footer (без изменений в позиционировании - всегда фиксирован)
-  // ---------------------------
   const Footer = () => {
     const [activeButton, setActiveButton] = useState<string | null>(null);
 
-    const handlePressStart = (buttonName: string) => {
-      setActiveButton(buttonName);
-    };
-
-    const handlePressEnd = () => {
-      setActiveButton(null);
-    };
+    const handlePressStart = (buttonName: string) => setActiveButton(buttonName);
+    const handlePressEnd = () => setActiveButton(null);
 
     return (
       <Box
@@ -570,7 +430,6 @@ export function ProfileScreen() {
           zIndex: 1300,
           userSelect: 'none',
           px: 1,
-          transition: 'bottom 0.18s ease',
         }}
       >
         {/* Беседа */}
@@ -587,19 +446,13 @@ export function ProfileScreen() {
             alignItems: 'center',
             cursor: 'pointer',
             color: 'rgba(255,255,255,0.85)',
-            userSelect: 'none',
             transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
             ...(activeButton === 'daily' && {
               transform: 'scale(0.92)',
               color: 'rgba(255,255,255,1)',
             }),
-            '&:hover': {
-              color: 'rgba(255,255,255,1)',
-            },
+            '&:hover': { color: 'rgba(255,255,255,1)' },
           }}
-          aria-label="Создать тему беседы"
-          role="button"
-          tabIndex={0}
         >
           <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
           <Typography variant="caption" sx={{ mt: 0.5 }}>
@@ -621,19 +474,13 @@ export function ProfileScreen() {
             alignItems: 'center',
             cursor: 'pointer',
             color: 'rgba(255,255,255,0.85)',
-            userSelect: 'none',
             transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
             ...(activeButton === 'graph' && {
               transform: 'scale(0.92)',
               color: 'rgba(255,255,255,1)',
             }),
-            '&:hover': {
-              color: 'rgba(255,255,255,1)',
-            },
+            '&:hover': { color: 'rgba(255,255,255,1)' },
           }}
-          aria-label="Открыть график"
-          role="button"
-          tabIndex={0}
         >
           <AutoGraphIcon fontSize="medium" />
           <Typography variant="caption" sx={{ mt: 0.5 }}>
@@ -658,19 +505,13 @@ export function ProfileScreen() {
             alignItems: 'center',
             cursor: 'pointer',
             color: 'rgba(255,255,255,0.9)',
-            userSelect: 'none',
             transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
             ...(activeButton === 'dream' && {
               transform: 'scale(0.92)',
               color: 'rgba(255,255,255,1)',
             }),
-            '&:hover': {
-              color: 'rgba(255,255,255,1)',
-            },
+            '&:hover': { color: 'rgba(255,255,255,1)' },
           }}
-          aria-label="Добавить сон"
-          role="button"
-          tabIndex={0}
         >
           <NightlightRoundIcon fontSize="medium" />
           <Typography variant="caption" sx={{ mt: 0.5 }}>
@@ -681,9 +522,7 @@ export function ProfileScreen() {
     );
   };
 
-  // ---------------------------
-  // JSX основного рендера
-  // ---------------------------
+  // ---------- JSX ----------
   return (
     <Box
       sx={{
@@ -705,7 +544,7 @@ export function ProfileScreen() {
         ref={scrollContainerRef}
         sx={{
           flexGrow: 1,
-          mt: scrollMt, // учитываем header + safe-area
+          mt: scrollMt,
           mb: scrollMb,
           overflowY: 'auto',
           px: 2,
@@ -901,36 +740,55 @@ export function ProfileScreen() {
               </motion.div>
             )}
           </AnimatePresence>
-
-          <AnimatePresence>
-            {inputOpen && (
-              <motion.div
-                key="inputBox"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                transition={{ duration: 0.25 }}
-                style={{ position: 'relative', margin: '0 12px' }}
-              >
-                <Box sx={{ bgcolor: 'transparent', borderRadius: 2, p: 1 }}>
-                  <GlassInputBox
-                    value={createText}
-                    onChange={setCreateText}
-                    onSend={handleCreateSubmit}
-                    disabled={saving}
-                    onClose={handleCreateClose}
-                    placeholder={
-                      createMode === 'daily'
-                        ? 'Напишите тему или заметку для беседы…'
-                        : 'Опишите сон…'
-                    }
-                  />
-                </Box>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </Box>
       </Box>
+
+      {/* Всплывающий инпут, приклеенный к низу экрана над футером */}
+      <AnimatePresence>
+        {inputOpen && (
+          <motion.div
+            key="inputBox"
+            initial={{ opacity: 0, y: 30, scaleY: 0.9 }}
+            animate={{ opacity: 1, y: 0, scaleY: 1 }}
+            exit={{ opacity: 0, y: 30, scaleY: 0.9 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            style={{
+              position: 'fixed',
+              left: 0,
+              right: 0,
+              // футер на 62px, делаем инпут чуть выше: 62 + 12 = 74
+              bottom: 'calc(env(safe-area-inset-bottom) + 150px)',
+              display: 'flex',
+              justifyContent: 'center',
+              pointerEvents: 'none',
+              transformOrigin: 'bottom center',
+              zIndex: 1400,
+            }}
+          >
+            <Box
+              sx={{
+                width: '90%',      // как у футера
+                maxWidth: 420,     // как у футера
+                px: 2,
+                pointerEvents: 'auto',
+              }}
+            >
+              <GlassInputBox
+                value={createText}
+                onChange={setCreateText}
+                onSend={handleCreateSubmit}
+                disabled={saving}
+                onClose={handleCreateClose}
+                placeholder={
+                  createMode === 'daily'
+                    ? 'Напишите тему или заметку для беседы…'
+                    : 'Опишите сон…'
+                }
+              />
+            </Box>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Footer />
 

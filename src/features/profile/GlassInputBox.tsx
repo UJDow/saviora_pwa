@@ -34,7 +34,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
   const iconColor = 'rgba(255,255,255,0.85)';
   const maxHeight = 160;
 
-  // Подстраиваем высоту textarea
+  // авто‑высота textarea
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
@@ -47,7 +47,7 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
     }
   }, [value]);
 
-  // Инициализация speech recognition (если доступен)
+  // инициализация SpeechRecognition
   useEffect(() => {
     if (!SpeechRecognition) {
       console.warn('SpeechRecognition API not supported in this browser');
@@ -119,14 +119,12 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
       ref={containerRef}
       sx={{
         position: 'relative',
-        margin: '0 auto',
-        width: 'calc(100% - 32px)',
-        maxWidth: 600,
+        width: '100%',
         bgcolor: 'transparent',
         borderRadius: '24px',
         display: 'flex',
         alignItems: 'center',
-        padding: '0',
+        padding: 0,
         zIndex: 1300,
         boxSizing: 'border-box',
         userSelect: 'none',
@@ -145,6 +143,13 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
         onKeyDown={handleKeyDown}
         disabled={disabled}
         inputRef={inputRef}
+        // глобально для этого TextField
+        sx={{
+          '& .MuiInputBase-input::placeholder': {
+            color: 'rgba(255,255,255,0.55)',
+            opacity: 1,
+          },
+        }}
         InputProps={{
           disableUnderline: true,
           sx: {
@@ -162,11 +167,12 @@ export const GlassInputBox: React.FC<GlassInputBoxProps> = ({
               WebkitTextFillColor: 'white',
               whiteSpace: 'pre-wrap',
               wordWrap: 'break-word',
+              // плейсхолдер более прозрачный
               '&::placeholder': {
-                color: 'white',
+                color: 'rgba(255,255,255,0.55)',
                 opacity: 1,
               },
-              // Кастомный светлый скроллбар:
+              // скроллбар
               '&::-webkit-scrollbar': {
                 width: '8px',
                 background: 'transparent',
