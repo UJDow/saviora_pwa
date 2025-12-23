@@ -97,7 +97,7 @@ export function ProfileScreen() {
   };
 
   // === Угловые иконки: общие стили ===
-  const cornerIconOffset = 18; // подбери под макет (12/16/18)
+  const cornerIconOffset = 18;
   const cornerIconBoxSx = {
     position: 'absolute' as const,
     width: 40,
@@ -435,65 +435,23 @@ export function ProfileScreen() {
   const showMainSlider = !(profile?.loading) && !profile?.todayMood;
 
   // ---------------------------
-  // Новое: поведение header vs клавиатура
+  // Поведение header vs клавиатура: УПРОЩЁННОЕ
   // ---------------------------
-  const [headerExtra, setHeaderExtra] = useState(0); // px - сдвиг вниз для header
-  const [keyboardHeight, setKeyboardHeight] = useState(0); // px - оценка высоты клавиатуры
 
-  useEffect(() => {
-    const vv = (window as any).visualViewport;
-    const update = () => {
-      if (vv && typeof vv.height === 'number') {
-        const kb = Math.max(0, window.innerHeight - vv.height);
-        setKeyboardHeight(kb);
-      } else {
-        setKeyboardHeight(0);
-      }
-    };
-
-    if (vv) {
-      vv.addEventListener('resize', update);
-      vv.addEventListener('scroll', update);
-      update();
-      return () => {
-        vv.removeEventListener('resize', update);
-        vv.removeEventListener('scroll', update);
-      };
-    } else {
-      const onResize = () => setKeyboardHeight(0);
-      window.addEventListener('resize', onResize);
-      update();
-      return () => window.removeEventListener('resize', onResize);
-    }
-  }, []);
-
-  useEffect(() => {
-    // При открытии input или когда видимая высота уменьшается (клавиатура),
-    // сдвигаем header немного вниз, чтобы он не заходил на статус-бар.
-    if (inputOpen || keyboardHeight > 0) {
-      // подбираем небольшое значение: минимум 6px, максимум 48px
-      const computed = Math.min(48, Math.max(6, Math.round(keyboardHeight * 0.03) + 8));
-      setHeaderExtra(computed);
-    } else {
-      setHeaderExtra(0);
-    }
-  }, [inputOpen, keyboardHeight]);
-
-  // размеры для header/footer/scroll
   const headerBase = 56; // px — внутренняя высота хедера (контент)
   const footerHeight = 64; // px
 
-  // header top учитывает safe-area и headerExtra
-  const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
+  // header top учитывает safe-area
+  const headerTopStr = 'env(safe-area-inset-top)';
   const headerHeightStr = `${headerBase}px`;
 
   // scroll container mt чтобы контент не уезжал под header
-  const scrollMt = `calc(${headerBase}px + env(safe-area-inset-top) + ${headerExtra}px)`;
+  const scrollMt = `calc(${headerBase}px + env(safe-area-inset-top))`;
 
   // footer всегда фиксирован (не двигается при клавиатуре)
   const footerBottomStr = '62px';
   // но контент низу учитывает footer + возможную клавиатуру (чтобы input не был закрыт)
-  const scrollMb = `${footerHeight + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
+  const scrollMb = `${footerHeight + 18}px`; // упрощено
 
   // ---------------------------
   // Header (обновлённый)
@@ -747,7 +705,7 @@ export function ProfileScreen() {
         ref={scrollContainerRef}
         sx={{
           flexGrow: 1,
-          mt: scrollMt, // учитываем header + safe-area + extra
+          mt: scrollMt, // учитываем header + safe-area
           mb: scrollMb,
           overflowY: 'auto',
           px: 2,
