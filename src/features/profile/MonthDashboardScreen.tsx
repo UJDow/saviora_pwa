@@ -1066,9 +1066,13 @@ useEffect(() => {
   }, [inputOpen, keyboardHeight]);
 
   const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
-  const headerHeightStr = `${HEADER_BASE}px`;
-  const contentMarginTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + ${headerExtra}px)`;
-  const contentMarginBottom = `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
+const headerHeightStr = `${HEADER_BASE}px`;
+// contentMarginTop больше не нужен — удаляем
+// const contentMarginTop = ...
+
+const contentPaddingTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + 8px)`;
+const contentMarginBottom =
+  `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
 
 
 const goalToShow =
@@ -1465,94 +1469,95 @@ const toggleCategory = (category: string) => {
           </Typography>
 
           {/* Переключатели вкладок справа */}
-          <Box
-            sx={{
-              position: 'absolute',
-              right: 12,
-              display: 'flex',
-              gap: 1,
-              alignItems: 'center',
-            }}
-          >
-            <IconButton
-              aria-label="dashboard"
-              title="Дашборд"
-              onClick={() => setViewTab('dashboard')}
-              sx={{
-                width: 34,
-                height: 34,
-                borderRadius: '50%',
-                color: '#fff',
-                transition: 'all 0.18s ease',
-                ...(viewTab !== 'dashboard' && {
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(209,213,219,0.45)',
-                }),
-                ...(viewTab === 'dashboard' && {
-                  backgroundColor: 'rgba(37,99,235,0.25)',
-                  border: '1px solid rgba(96,165,250,0.95)',
-                }),
-                '&:hover': {
-                  backgroundColor:
-                    viewTab === 'dashboard'
-                      ? 'rgba(37,99,235,0.32)'
-                      : 'rgba(209,213,219,0.12)',
-                },
-              }}
-            >
-              <AutoGraphIcon sx={{ fontSize: 20 }} />
-            </IconButton>
+<Box
+  sx={{
+    position: 'absolute',
+    right: 12,
+    display: 'flex',
+    gap: 1,
+    alignItems: 'center',
+  }}
+>
+  <IconButton
+    aria-label="dashboard"
+    title="Дашборд"
+    onClick={() => setViewTab('dashboard')}
+    sx={{
+      width: 40,
+      height: 40,
+      borderRadius: '50%',
+      color: '#fff',
+      transition: 'all 0.18s ease',
+      ...(viewTab !== 'dashboard' && {
+        backgroundColor: 'transparent',
+        border: '1px solid rgba(209,213,219,0.45)',
+      }),
+      ...(viewTab === 'dashboard' && {
+        backgroundColor: 'rgba(37,99,235,0.25)',
+        border: '1px solid rgba(96,165,250,0.95)',
+      }),
+      '&:hover': {
+        backgroundColor:
+          viewTab === 'dashboard'
+            ? 'rgba(37,99,235,0.32)'
+            : 'rgba(209,213,219,0.12)',
+      },
+    }}
+  >
+    <AutoGraphIcon sx={{ fontSize: 20 }} />
+  </IconButton>
 
-            <IconButton
-              aria-label="goals"
-              title="Цели"
-              onClick={() => setViewTab('goals')}
-              sx={{
-                width: 34,
-                height: 34,
-                borderRadius: '50%',
-                color: '#fff',
-                transition: 'all 0.18s ease',
-                ...(viewTab !== 'goals' && {
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(209,213,219,0.45)',
-                }),
-                ...(viewTab === 'goals' && {
-                  backgroundColor: 'rgba(37,99,235,0.25)',
-                  border: '1px solid rgba(96,165,250,0.95)',
-                }),
-                '&:hover': {
-                  backgroundColor:
-                    viewTab === 'goals'
-                      ? 'rgba(37,99,235,0.32)'
-                      : 'rgba(209,213,219,0.12)',
-                },
-              }}
-            >
-              <FlagIcon sx={{ fontSize: 20 }} />
-            </IconButton>
-          </Box>
+  <IconButton
+    aria-label="goals"
+    title="Цели"
+    onClick={() => setViewTab('goals')}
+    sx={{
+      width: 40,
+      height: 40,
+      borderRadius: '50%',
+      color: '#fff',
+      transition: 'all 0.18s ease',
+      ...(viewTab !== 'goals' && {
+        backgroundColor: 'transparent',
+        border: '1px solid rgba(209,213,219,0.45)',
+      }),
+      ...(viewTab === 'goals' && {
+        backgroundColor: 'rgba(37,99,235,0.25)',
+        border: '1px solid rgba(96,165,250,0.95)',
+      }),
+      '&:hover': {
+        backgroundColor:
+          viewTab === 'goals'
+            ? 'rgba(37,99,235,0.32)'
+            : 'rgba(209,213,219,0.12)',
+      },
+    }}
+  >
+    <FlagIcon sx={{ fontSize: 20 }} />
+  </IconButton>
+</Box>
         </Box>
 
         {/* Скроллируемый контент под хедером */}
         <Box
-          sx={{
-            flexGrow: 1,
-            marginTop: contentMarginTop,
-            marginBottom: contentMarginBottom,
-            overflowY: 'auto',
-            display: 'flex',
-            justifyContent: 'center',
-            px: { xs: 1, sm: 3 },
-          }}
-        >
+  sx={{
+    flexGrow: 1,
+    // marginTop: contentMarginTop, // 👈 убрать
+    marginBottom: contentMarginBottom,
+    overflowY: 'auto',
+    display: 'flex',
+    justifyContent: 'center',
+    px: { xs: 1, sm: 3 },
+  }}
+>
           <Box
   sx={{
     width: '100%',
     maxWidth: 980,
     minWidth: 0,
     px: { xs: 0, sm: 0 },
-    py: { xs: 1, sm: 2 },
+    pb: { xs: 1, sm: 2 },
+    pt: contentPaddingTop, // 👈 основной отступ делаем здесь
   }}
 >
   {/* Контент без общего Paper */}
