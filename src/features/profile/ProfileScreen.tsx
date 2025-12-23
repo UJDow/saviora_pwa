@@ -253,56 +253,52 @@ export function ProfileScreen() {
         setCreateText('');
         setInputOpen(false);
         setCreateMode(null);
-        showSnackbar('Сон успешно сохранён! 🌙', 'success');
+        showSnackbar('Сновидение успешно сохранено! 🌙', 'success');
         setSelectedDreamDate(new Date(norm.date).toLocaleDateString('ru-RU'));
         return;
       }
 
       if (createMode === 'daily') {
-        const baseDate = selectedDate ?? new Date();
-        const dateObj = new Date(baseDate);
-        dateObj.setHours(0, 0, 0, 0);
-        const dateSeconds = Math.floor(dateObj.getTime() / 1000);
+  const baseDate = selectedDate ?? new Date();
+  const dateObj = new Date(baseDate);
+  dateObj.setHours(0, 0, 0, 0);
+  const dateSeconds = Math.floor(dateObj.getTime() / 1000);
 
-        const newDaily = await api.addDailyConvo(
-          createText.trim(),
-          null,
-          [],
-          null,
-          null,
-          dateSeconds,
-        );
+  const newDaily = await api.addDailyConvo(
+    createText.trim(),
+    null,
+    [],
+    null,
+    null,
+    dateSeconds,
+  );
 
-        const dateMs = toMs((newDaily as any).date ?? (newDaily as any).createdAt);
-        const createdAtMs = toMs((newDaily as any).createdAt ?? dateMs);
-        const updatedAtMs = toMs((newDaily as any).updatedAt ?? createdAtMs);
+  const dateMs = toMs((newDaily as any).date ?? (newDaily as any).createdAt);
+  const createdAtMs = toMs((newDaily as any).createdAt ?? dateMs);
+  const updatedAtMs = toMs((newDaily as any).updatedAt ?? createdAtMs);
 
-        const normalizedNewDaily: NormalizedDailyConvo = {
-          ...newDaily,
-          date: dateMs,
-          createdAt: createdAtMs,
-          updatedAt: updatedAtMs,
-        };
+  const normalizedNewDaily: NormalizedDailyConvo = {
+    ...newDaily,
+    date: dateMs,
+    createdAt: createdAtMs,
+    updatedAt: updatedAtMs,
+  };
 
-        setDailyConvos((prev) => [normalizedNewDaily, ...prev]);
+  // добавляем новую беседу в список
+  setDailyConvos((prev) => [normalizedNewDaily, ...prev]);
 
-        setCreateText('');
-        setInputOpen(false);
-        setCreateMode(null);
-        showSnackbar('Тема для беседы создана', 'success');
+  // закрываем инпут
+  setCreateText('');
+  setInputOpen(false);
+  setCreateMode(null);
+  showSnackbar('Тема для беседы создана 💬', 'success');
 
-        const cd = new Date(dateMs);
-        const yyyy = cd.getFullYear();
-        const mm = String(cd.getMonth() + 1).padStart(2, '0');
-        const dd = String(cd.getDate()).padStart(2, '0');
-        const dateYmd = `${yyyy}-${mm}-${dd}`;
+  // КЛЮЧЕВОЙ момент: показываем экран выбранной даты, как для сна
+  const dateStrRu = new Date(dateMs).toLocaleDateString('ru-RU');
+  setSelectedDreamDate(dateStrRu);
 
-        const highlightParam = normalizedNewDaily?.id
-          ? `&highlight=${encodeURIComponent(normalizedNewDaily.id)}`
-          : '';
-        navigate(`/daily?date=${encodeURIComponent(dateYmd)}${highlightParam}`);
-        return;
-      }
+  return;
+}
 
       showSnackbar('Не выбран режим создания', 'error');
     } catch (e: any) {
@@ -793,25 +789,29 @@ export function ProfileScreen() {
       <Footer />
 
       <Snackbar
-        open={snackbarOpen}
-        autoHideDuration={3000}
-        onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert
-          severity={snackbarSeverity}
-          sx={{
-            width: '100%',
-            '& .MuiAlert-message': { fontSize: '0.95rem' },
-            bgcolor: 'rgba(0,0,0,0.35)',
-            color: '#fff',
-            border: `1px solid ${glassBorder}`,
-            backdropFilter: 'blur(6px)',
-          }}
-        >
-          {snackbarMessage}
-        </Alert>
-      </Snackbar>
+  open={snackbarOpen}
+  autoHideDuration={3000}
+  onClose={() => setSnackbarOpen(false)}
+  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+  sx={{
+    // поднимаем снекбар вверх от самого низа экрана
+    bottom: '25vh', // ~25% высоты viewport’а
+  }}
+>
+  <Alert
+    severity={snackbarSeverity}
+    sx={{
+      width: '100%',
+      '& .MuiAlert-message': { fontSize: '0.95rem' },
+      bgcolor: 'rgba(0,0,0,0.35)',
+      color: '#fff',
+      border: `1px solid ${glassBorder}`,
+      backdropFilter: 'blur(6px)',
+    }}
+  >
+    {snackbarMessage}
+  </Alert>
+</Snackbar>
     </Box>
   );
 }
