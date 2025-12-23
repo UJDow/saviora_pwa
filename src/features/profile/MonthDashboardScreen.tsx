@@ -43,6 +43,7 @@ import { useDreams } from '../dreams/useDreams';
 
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 
+
 import {
   request,
   getGoals,
@@ -146,6 +147,8 @@ const accentGradient =
   'linear-gradient(135deg, rgba(88,120,255,0.95), rgba(139,92,246,0.95))';
 const subtleGlow = '0 8px 30px rgba(139,92,246,0.08)';
 const cardShadow = '0 8px 24px rgba(11,8,36,0.16)';
+const HEADER_BASE = 56;
+const FOOTER_HEIGHT = 64;
 
 const goalTrafficLightColors = {
   green: 'rgba(120, 220, 170, 0.85)',
@@ -265,6 +268,7 @@ const EngagementCard: React.FC<{
   );
 
   return (
+
     <Card sx={{ background: 'transparent', boxShadow: 'none', border: 'none' }}>
       <CardContent sx={{ px: 0 }}>
         {/* УБРАЛИ блок с процентом "Ваша активность" */}
@@ -728,7 +732,12 @@ const TimeRangeSelector: React.FC<{
 // MAIN COMPONENT
 export const MonthDashboardScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { dreamsHistory = [], fetchDreams} = useDreams();
+  const { dreamsHistory = [], fetchDreams } = useDreams();
+
+  // Состояние для адаптивного хедера (как в ProfileEditForm)
+  const [inputOpen, setInputOpen] = useState(false);
+  const [headerExtra, setHeaderExtra] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const [, setDreamDates] = useState<string[]>([]);
 
@@ -926,6 +935,34 @@ const handleCloseNewBadges = async () => {
     fetchDreams();
   }, [fetchDreams]);
 
+  // visualViewport handling (как в ProfileEditForm)
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    const update = () => {
+      if (vv && typeof vv.height === 'number') {
+        const kb = Math.max(0, window.innerHeight - vv.height);
+        setKeyboardHeight(kb);
+      } else {
+        setKeyboardHeight(0);
+      }
+    };
+
+    if (vv) {
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      update();
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    } else {
+      const onResize = () => setKeyboardHeight(0);
+      window.addEventListener('resize', onResize);
+      update();
+      return () => window.removeEventListener('resize', onResize);
+    }
+  }, []);
+
   useEffect(() => {
     if (!Array.isArray(dreamsHistory) || dreamsHistory.length === 0) {
       setDreamDates([]);
@@ -1018,6 +1055,20 @@ const progressPercent = React.useMemo(() => {
   const val = ((depthScoreTotal - level.min) / range) * 100;
   return Math.min(100, Math.max(0, val));
 }, [depthScoreTotal, level]);
+
+useEffect(() => {
+    if (inputOpen || keyboardHeight > 0) {
+      const computed = Math.min(48, Math.max(6, Math.round(keyboardHeight * 0.03) + 8));
+      setHeaderExtra(computed);
+    } else {
+      setHeaderExtra(0);
+    }
+  }, [inputOpen, keyboardHeight]);
+
+  const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
+  const headerHeightStr = `${HEADER_BASE}px`;
+  const contentMarginTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + ${headerExtra}px)`;
+  const contentMarginBottom = `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
 
 
 const goalToShow =
@@ -1339,435 +1390,486 @@ const toggleCategory = (category: string) => {
 
   dayjs.locale('ru');
 
-  return (
+ return (
     <LocalizationProvider
       dateAdapter={AdapterDayjs}
       adapterLocale="ru"
     >
       <Box
-  sx={{
-    p: { xs: 1, sm: 3 },
-    minHeight: '100vh',
-    width: '100vw',
-    background: bgGradient,
-    color: '#fff',
-    display: 'flex',
-    justifyContent: 'center',
-    overflowX: 'hidden',
-  }}
->
-        <Box sx={{ width: '100%', maxWidth: 980, minWidth: 0, px: { xs: 1, sm: 0 } }}>
-
-          {/* ОСНОВНОЙ ДАШБОРД БЕЗ КАЛЕНДАРЯ */}
-          <Paper
+        sx={{
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          background: bgGradient,
+          color: '#fff',
+          overflow: 'hidden',
+          position: 'relative',
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        {/* Фиксированный header в стиле ProfileEditForm */}
+        <Box
+          sx={{
+            position: 'fixed',
+            top: headerTopStr,
+            left: 0,
+            right: 0,
+            height: headerHeightStr,
+            background: 'rgba(255,255,255,0.10)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1400,
+            borderBottomLeftRadius: 24,
+            borderBottomRightRadius: 24,
+            border: '1px solid rgba(255,255,255,0.14)',
+            boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+            userSelect: 'none',
+            px: 2,
+            transition: 'top 0.28s ease, height 0.18s ease',
+          }}
+        >
+          {/* Назад слева */}
+          <IconButton
+            aria-label="Назад"
+            onClick={() => navigate(-1)}
             sx={{
-              p: { xs: 1, sm: 2 },
-              mt: { xs: 1, sm: 3 },
-              borderRadius: { xs: 2, sm: 3 },
-              background: glassBg,
-              backdropFilter: 'blur(12px)',
-              border: `1px solid ${glassBorder}`,
-              boxShadow: cardShadow,
+              position: 'absolute',
+              left: 12,
+              color: '#fff',
+              bgcolor: 'transparent',
+              borderRadius: '50%',
+              p: 1,
+              zIndex: 1500,
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
+            }}
+            size="large"
+          >
+            <ArrowBackIosNewIcon fontSize="small" />
+          </IconButton>
+
+          {/* Центр хедера */}
+          <Typography
+            sx={{
+              fontWeight: 600,
+              fontSize: '1.05rem',
+              color: 'rgba(255,255,255,0.95)',
+              letterSpacing: 0.4,
+              userSelect: 'none',
             }}
           >
-            {/* Верхние контролы */}
-            <Box
+            Дашборд
+          </Typography>
+
+          {/* Переключатели вкладок справа */}
+          <Box
+            sx={{
+              position: 'absolute',
+              right: 12,
+              display: 'flex',
+              gap: 1,
+              alignItems: 'center',
+            }}
+          >
+            <IconButton
+              aria-label="dashboard"
+              title="Дашборд"
+              onClick={() => setViewTab('dashboard')}
               sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                minHeight: 56,
-                mb: 2,
-                px: { xs: 0, sm: 1 },
+                width: 34,
+                height: 34,
+                borderRadius: '50%',
+                color: '#fff',
+                transition: 'all 0.18s ease',
+                ...(viewTab !== 'dashboard' && {
+                  backgroundColor: 'transparent',
+                  border: '1px solid rgba(209,213,219,0.45)',
+                }),
+                ...(viewTab === 'dashboard' && {
+                  backgroundColor: 'rgba(37,99,235,0.25)',
+                  border: '1px solid rgba(96,165,250,0.95)',
+                }),
+                '&:hover': {
+                  backgroundColor:
+                    viewTab === 'dashboard'
+                      ? 'rgba(37,99,235,0.32)'
+                      : 'rgba(209,213,219,0.12)',
+                },
               }}
             >
-              {/* Назад слева */}
-              <IconButton
-                onClick={() => navigate(-1)}
-                aria-label="Назад"
-                sx={{
-                  color: '#fff',
-                  bgcolor: 'transparent',
-                  borderRadius: '50%',
-                  p: 1,
-                  transition: 'background-color 0.18s, box-shadow 0.18s, transform 0.12s',
-                  '&:hover': {
-                    bgcolor: 'rgba(255,255,255,0.08)',
-                    boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-                    transform: 'translateY(-1px)',
-                  },
-                  '&:focus-visible': {
-                    outline: '2px solid rgba(255,255,255,0.12)',
-                    outlineOffset: 3,
-                  },
-                }}
-                size="large"
-              >
-                <ArrowBackIosNewIcon fontSize="small" />
-              </IconButton>
+              <AutoGraphIcon sx={{ fontSize: 20 }} />
+            </IconButton>
 
-              {/* Пустой блок для симметрии */}
-              <Box sx={{ flex: 1 }} />
+            <IconButton
+              aria-label="goals"
+              title="Цели"
+              onClick={() => setViewTab('goals')}
+              sx={{
+                width: 34,
+                height: 34,
+                borderRadius: '50%',
+                color: '#fff',
+                transition: 'all 0.18s ease',
+                ...(viewTab !== 'goals' && {
+                  backgroundColor: 'transparent',
+                  border: '1px solid rgba(209,213,219,0.45)',
+                }),
+                ...(viewTab === 'goals' && {
+                  backgroundColor: 'rgba(37,99,235,0.25)',
+                  border: '1px solid rgba(96,165,250,0.95)',
+                }),
+                '&:hover': {
+                  backgroundColor:
+                    viewTab === 'goals'
+                      ? 'rgba(37,99,235,0.32)'
+                      : 'rgba(209,213,219,0.12)',
+                },
+              }}
+            >
+              <FlagIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          </Box>
+        </Box>
 
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                {/* График вовлеченности */}
-                <IconButton
-                  aria-label="dashboard"
-                  title="Дашборд"
-                  onClick={() => setViewTab('dashboard')}
-                  sx={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: '50%',
-                    color: '#fff',
-                    transition: 'all 0.18s ease',
-                    ...(viewTab !== 'dashboard' && {
-                      backgroundColor: 'transparent',
-                      border: '1px solid rgba(209,213,219,0.45)',
-                    }),
-                    ...(viewTab === 'dashboard' && {
-                      backgroundColor: 'rgba(37,99,235,0.25)',
-                      border: '1px solid rgba(96,165,250,0.95)',
-                    }),
-                    '&:hover': {
-                      backgroundColor:
-                        viewTab === 'dashboard'
-                          ? 'rgba(37,99,235,0.32)'
-                          : 'rgba(209,213,219,0.12)',
-                    },
-                  }}
-                >
-                  <AutoGraphIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-
-                {/* Персональные цели */}
-                <IconButton
-                  aria-label="goals"
-                  title="Цели"
-                  onClick={() => setViewTab('goals')}
-                  sx={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: '50%',
-                    color: '#fff',
-                    transition: 'all 0.18s ease',
-                    ...(viewTab !== 'goals' && {
-                      backgroundColor: 'transparent',
-                      border: '1px solid rgba(209,213,219,0.45)',
-                    }),
-                    ...(viewTab === 'goals' && {
-                      backgroundColor: 'rgba(37,99,235,0.25)',
-                      border: '1px solid rgba(96,165,250,0.95)',
-                    }),
-                    '&:hover': {
-                      backgroundColor:
-                        viewTab === 'goals'
-                          ? 'rgba(37,99,235,0.32)'
-                          : 'rgba(209,213,219,0.12)',
-                    },
-                  }}
-                >
-                  <FlagIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-              </Box>
-            </Box>
-
-            {/* Контент */}
-            {dashboardLoading ? (
+        {/* Скроллируемый контент под хедером */}
+        <Box
+          sx={{
+            flexGrow: 1,
+            marginTop: contentMarginTop,
+            marginBottom: contentMarginBottom,
+            overflowY: 'auto',
+            display: 'flex',
+            justifyContent: 'center',
+            px: { xs: 1, sm: 3 },
+          }}
+        >
+          <Box
+  sx={{
+    width: '100%',
+    maxWidth: 980,
+    minWidth: 0,
+    px: { xs: 0, sm: 0 },
+    py: { xs: 1, sm: 2 },
+  }}
+>
+  {/* Контент без общего Paper */}
+  {dashboardLoading ? (
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
+      <Skeleton
+        variant="rounded"
+        height={140}
+        sx={{
+          bgcolor: 'rgba(255,255,255,0.04)',
+          borderRadius: 2,
+        }}
+      />
+      <Skeleton
+        variant="rounded"
+        height={110}
+        sx={{
+          bgcolor: 'rgba(255,255,255,0.04)',
+          borderRadius: 2,
+        }}
+      />
+      <Skeleton
+        variant="rounded"
+        height={120}
+        sx={{
+          bgcolor: 'rgba(255,255,255,0.04)',
+          borderRadius: 2,
+        }}
+      />
+    </Box>
+  ) : dashboardError ? (
+    <Box sx={{ textAlign: 'center', py: 3 }}>
+      <Typography color="error" gutterBottom>
+        Ошибка загрузки данных
+      </Typography>
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'rgba(255,255,255,0.7)',
+        }}
+      >
+        {dashboardError}
+      </Typography>
+      <Button
+        variant="contained"
+        onClick={() => {
+          fetchDashboard(engagementTimeRange);
+        }}
+        startIcon={<RefreshIcon />}
+        sx={{ mt: 2 }}
+      >
+        Повторить
+      </Button>
+    </Box>
+  ) : viewTab === 'dashboard' ? (
+    usedDashboard ? (
+      <>
+        {/* 1. 🎯 УРОВЕНЬ — легкая секция без тяжелого Card */}
+        {usedDashboard.gamification && (
+          <>
+            <Box
+              sx={{
+                mb: 2,
+                px: { xs: 0.5, sm: 0 },
+              }}
+            >
               <Box
                 sx={{
                   display: 'flex',
-                  flexDirection: 'column',
+                  alignItems: 'center',
                   gap: 2,
+                  mb: 1.5,
                 }}
               >
-                <Skeleton
-                  variant="rounded"
-                  height={140}
+                <Box
                   sx={{
-                    bgcolor: 'rgba(255,255,255,0.04)',
-                    borderRadius: 10,
+                    width: 64,
+                    height: 64,
+                    borderRadius: 3,
+                    background: usedDashboard.gamification.level.color,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 32,
+                    boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
                   }}
-                />
-                <Skeleton
-                  variant="rounded"
-                  height={110}
-                  sx={{
-                    bgcolor: 'rgba(255,255,255,0.04)',
-                    borderRadius: 10,
-                  }}
-                />
-                <Skeleton
-                  variant="rounded"
-                  height={120}
-                  sx={{
-                    bgcolor: 'rgba(255,255,255,0.04)',
-                    borderRadius: 10,
-                  }}
-                />
+                >
+                  {usedDashboard.gamification.level.emoji}
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    variant="h5"
+                    sx={{ fontWeight: 700, color: '#fff', mb: 0.3 }}
+                  >
+                    {usedDashboard.gamification.level.name}
+                  </Typography>
+                 <Typography
+  variant="body2"
+  sx={{ color: 'rgba(255,255,255,0.8)' }}
+>
+  Глубина практики:{' '}
+  {Math.round(usedDashboard.gamification.depthScoreTotal)} /{' '}
+  {usedDashboard.gamification.level.max}
+</Typography>
+                </Box>
               </Box>
-            ) : dashboardError ? (
-              <Box sx={{ textAlign: 'center', py: 3 }}>
-                <Typography color="error" gutterBottom>
-                  Ошибка загрузки данных
+
+              <LinearProgress
+                variant="determinate"
+                value={progressPercent}
+                sx={{
+                  height: 10,
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.10)',
+                  '& .MuiLinearProgress-bar': {
+                    background: usedDashboard.gamification.level.color,
+                    boxShadow: `0 0 10px ${usedDashboard.gamification.level.color}`,
+                  },
+                }}
+              />
+
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'rgba(255,255,255,0.7)',
+                  display: 'block',
+                  mt: 0.75,
+                }}
+              >
+                До следующего уровня:{' '}
+                {usedDashboard.gamification.level.max -
+                  Math.round(depthScoreTotal)}{' '}
+                очков
+              </Typography>
+            </Box>
+
+            <Divider
+              sx={{
+                my: { xs: 1.5, sm: 2 },
+                borderColor: 'rgba(255,255,255,0.06)',
+              }}
+            />
+          </>
+        )}
+
+        {/* 2. 📌 ТЕКУЩАЯ ЦЕЛЬ — тоже без тяжелого Card */}
+        {goalToShow && (
+          <>
+            <Box
+              sx={{
+                mb: 2,
+                px: { xs: 0.5, sm: 0 },
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+                <Box
+                  sx={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.10)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 24,
+                  }}
+                >
+                  {goalToShow.emoji}
+                </Box>
+
+                <Box sx={{ flex: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography
+                      variant="subtitle1"
+                      sx={{ fontWeight: 600, color: '#fff' }}
+                    >
+                      {goalToShow.name}
+                    </Typography>
+
+                    <Chip
+                      size="small"
+                      label={isPinnedGoal ? 'Текущая цель' : 'Рекомендуемая'}
+                      sx={{
+                        height: 20,
+                        fontSize: 11,
+                        background: isPinnedGoal
+                          ? 'rgba(59,130,246,0.20)'
+                          : 'rgba(255,255,255,0.08)',
+                        border: '1px solid rgba(255,255,255,0.18)',
+                        color: '#fff',
+                      }}
+                    />
+                  </Box>
+
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'rgba(255,255,255,0.75)',
+                      mt: 0.5,
+                    }}
+                  >
+                    {goalToShow.description}
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Box sx={{ mb: 1.25 }}>
+                <LinearProgress
+                  variant="determinate"
+                  value={Math.min(
+                    100,
+                    (goalToShow.progress.current /
+                      Math.max(1, goalToShow.progress.target)) *
+                      100,
+                  )}
+                  sx={{
+                    height: 8,
+                    borderRadius: 999,
+                    background: 'rgba(255,255,255,0.10)',
+                    '& .MuiLinearProgress-bar': {
+                      background: '#22c55e',
+                    },
+                  }}
+                />
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: 'rgba(255,255,255,0.6)',
+                    display: 'block',
+                    mt: 0.5,
+                  }}
+                >
+                  {goalToShow.progress.current} / {goalToShow.progress.target}
                 </Typography>
+              </Box>
+
+              {goalToShow.advice && (
                 <Typography
                   variant="body2"
                   sx={{
-                    color: 'rgba(255,255,255,0.7)',
+                    color: 'rgba(255,255,255,0.9)',
+                    fontStyle: 'italic',
+                    fontSize: 13,
+                    background: 'rgba(255,255,255,0.03)',
+                    borderRadius: 2,
+                    p: 1.25,
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    mb: 1.25,
                   }}
                 >
-                  {dashboardError}
+                  💡 {goalToShow.advice}
                 </Typography>
-                <Button
-                  variant="contained"
-                  onClick={() => {
-                    fetchDashboard(engagementTimeRange);
-                  }}
-                  startIcon={<RefreshIcon />}
-                  sx={{ mt: 2 }}
-                >
-                  Повторить
-                </Button>
+              )}
+
+              {/* Кнопки пина/снятия цели */}
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {!isPinnedGoal && (
+                  <Button
+                    size="small"
+                    variant="contained"
+                    disabled={goalSaving}
+                    onClick={() => handlePinGoal(goalToShow.badgeId)}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: 999,
+                      background: accentGradient,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Сделать целью
+                  </Button>
+                )}
+
+                {isPinnedGoal && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={goalSaving}
+                    onClick={handleUnpinGoal}
+                    startIcon={
+                      goalSaving ? (
+                        <CircularProgress size={16} sx={{ color: 'white' }} />
+                      ) : null
+                    }
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: 999,
+                      color: '#fff',
+                      borderColor: 'rgba(255,255,255,0.24)',
+                      '&.Mui-disabled': {
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        color: 'rgba(255,255,255,0.3)',
+                      },
+                    }}
+                  >
+                    {goalSaving ? 'Снятие...' : 'Снять цель'}
+                  </Button>
+                )}
               </Box>
-            ) : viewTab === 'dashboard' ? (
-              usedDashboard ? (
-                <>
-                  {/* 1. 🎯 УРОВЕНЬ (Hero Section) */}
-                  {usedDashboard.gamification && (
-                    <>
-                      <Card
-                        sx={{
-                          background: 'linear-gradient(135deg, rgba(88,120,255,0.25), rgba(139,92,246,0.20))',
-                          border: '2px solid rgba(139,92,246,0.5)',
-                          borderRadius: 3,
-                          p: 2.5,
-                          mb: 2,
-                          boxShadow: '0 12px 40px rgba(139,92,246,0.3)',
-                          animation: 'fadeInUp 0.6s ease-out',
-                          '@keyframes fadeInUp': {
-                            from: { opacity: 0, transform: 'translateY(20px)' },
-                            to: { opacity: 1, transform: 'translateY(0)' },
-                          },
-                        }}
-                      >
-                        {/* Заголовок секции */}
-                        
+            </Box>
 
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1.5 }}>
-                          <Box
-                            sx={{
-                              width: 64,
-                              height: 64,
-                              borderRadius: '50%',
-                              background: usedDashboard.gamification.level.color,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 32,
-                              boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
-                            }}
-                          >
-                            {usedDashboard.gamification.level.emoji}
-                          </Box>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="h5" sx={{ fontWeight: 700, color: '#fff' }}>
-                              {usedDashboard.gamification.level.name}
-                            </Typography>
-                            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.8)' }}>
-                              Depth Score: {Math.round(usedDashboard.gamification.depthScoreTotal)} / {usedDashboard.gamification.level.max}
-                            </Typography>
-                          </Box>
-                        </Box>
+            <Divider
+              sx={{
+                my: { xs: 1.5, sm: 2 },
+                borderColor: 'rgba(255,255,255,0.06)',
+              }}
+            />
+          </>
+        )}
 
-                        <LinearProgress
-                          variant="determinate"
-                          value={progressPercent}
-                          sx={{
-                            height: 12,
-                            borderRadius: 999,
-                            background: 'rgba(255,255,255,0.12)',
-                            '& .MuiLinearProgress-bar': {
-                              background: usedDashboard.gamification.level.color,
-                              boxShadow: `0 0 12px ${usedDashboard.gamification.level.color}`,
-                            },
-                          }}
-                        />
-
-                        <Typography
-                          variant="caption"
-                          sx={{ color: 'rgba(255,255,255,0.7)', display: 'block', mt: 1 }}
-                        >
-                          До следующего уровня: {usedDashboard.gamification.level.max - Math.round(depthScoreTotal)} очков
-                        </Typography>
-                      </Card>
-
-                      <Divider
-                        sx={{
-                          my: { xs: 1.5, sm: 2 },
-                          borderColor: 'rgba(255,255,255,0.06)',
-                        }}
-                      />
-                    </>
-                  )}
-
-                  {/* 2. 📌 ТЕКУЩАЯ ЦЕЛЬ */}
-                  {goalToShow && (
-                    <>
-
-                      <Card
-                        sx={{
-                          background: 'rgba(255,255,255,0.06)',
-                          border: '1px solid rgba(255,255,255,0.12)',
-                          borderRadius: 3,
-                          p: 2,
-                          mb: 2,
-                        }}
-                      >
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
-                          <Box
-                            sx={{
-                              width: 48,
-                              height: 48,
-                              borderRadius: '50%',
-                              background: 'rgba(255,255,255,0.1)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 24,
-                            }}
-                          >
-                            {goalToShow.emoji}
-                          </Box>
-
-                          <Box sx={{ flex: 1 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Typography
-                                variant="subtitle1"
-                                sx={{ fontWeight: 600, color: '#fff' }}
-                              >
-                                {goalToShow.name}
-                              </Typography>
-
-                              <Chip
-                                size="small"
-                                label={isPinnedGoal ? 'Текущая цель' : 'Рекомендуемая'}
-                                sx={{
-                                  height: 20,
-                                  fontSize: 11,
-                                  background: isPinnedGoal
-                                    ? 'rgba(59,130,246,0.20)'
-                                    : 'rgba(255,255,255,0.08)',
-                                  border: '1px solid rgba(255,255,255,0.14)',
-                                  color: '#fff',
-                                }}
-                              />
-                            </Box>
-
-                            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.75)', mt: 0.5 }}>
-                              {goalToShow.description}
-                            </Typography>
-                          </Box>
-                        </Box>
-
-                        <Box sx={{ mb: 1.5 }}>
-                          <LinearProgress
-                            variant="determinate"
-                            value={Math.min(
-                              100,
-                              (goalToShow.progress.current / Math.max(1, goalToShow.progress.target)) * 100
-                            )}
-                            sx={{
-                              height: 8,
-                              borderRadius: 999,
-                              background: 'rgba(255,255,255,0.08)',
-                              '& .MuiLinearProgress-bar': {
-                                background: '#22c55e',
-                              },
-                            }}
-                          />
-                          <Typography
-                            variant="caption"
-                            sx={{ color: 'rgba(255,255,255,0.6)', display: 'block', mt: 0.5 }}
-                          >
-                            {goalToShow.progress.current} / {goalToShow.progress.target}
-                          </Typography>
-                        </Box>
-
-                        {goalToShow.advice && (
-                          <Box
-                            sx={{
-                              background: 'rgba(255,255,255,0.04)',
-                              borderRadius: 2,
-                              p: 1.5,
-                              mb: 1.5,
-                              border: '1px solid rgba(255,255,255,0.08)',
-                            }}
-                          >
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                color: 'rgba(255,255,255,0.9)',
-                                fontStyle: 'italic',
-                                fontSize: 13,
-                              }}
-                            >
-                              💡 {goalToShow.advice}
-                            </Typography>
-                          </Box>
-                        )}
-
-                        {/* Кнопки пина/снятия цели */}
-                        <Box sx={{ display: 'flex', gap: 1 }}>
-                          {!isPinnedGoal && (
-                            <Button
-                              size="small"
-                              variant="contained"
-                              disabled={goalSaving}
-                              onClick={() => handlePinGoal(goalToShow.badgeId)}
-                              sx={{
-                                textTransform: 'none',
-                                borderRadius: 999,
-                                background: accentGradient,
-                                fontWeight: 600,
-                              }}
-                            >
-                              Сделать целью
-                            </Button>
-                          )}
-
-                          {isPinnedGoal && (
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              disabled={goalSaving}
-                              onClick={handleUnpinGoal}
-                              startIcon={goalSaving ? <CircularProgress size={16} sx={{ color: 'white' }} /> : null}
-                              sx={{
-                                textTransform: 'none',
-                                borderRadius: 999,
-                                color: '#fff',
-                                borderColor: 'rgba(255,255,255,0.24)',
-                                '&.Mui-disabled': {
-                                  borderColor: 'rgba(255,255,255,0.1)',
-                                  color: 'rgba(255,255,255,0.3)',
-                                },
-                              }}
-                            >
-                              {goalSaving ? 'Снятие...' : 'Снять цель'}
-                            </Button>
-                          )}
-                        </Box>
-                      </Card>
-
-                      <Divider
-                        sx={{
-                          my: { xs: 1.5, sm: 2 },
-                          borderColor: 'rgba(255,255,255,0.06)',
-                        }}
-                      />
-                    </>
-                  )}
+                    {/* дальше остаётся твой существующий контент */}
 
                   {/* 3. 📈 АКТИВНОСТЬ (метрики) */}
                 
@@ -2008,60 +2110,72 @@ const toggleCategory = (category: string) => {
                         />
 
                         <RechartsTooltip
-                          contentStyle={{
-                            background: 'rgba(11,8,36,0.95)',
-                            border: '1px solid rgba(255,255,255,0.2)',
-                            borderRadius: 8,
-                            color: '#fff',
-                          }}
-                          labelStyle={{
-                            color: '#fff',
-                          }}
-                          formatter={(value, name) => {
-                            if (name === 'Вовлечённость') {
-                              return [`${value}%`, 'Вовлечённость'];
-                            }
-                            if (name === 'Идеальный темп') {
-                              return [`${value}%`, 'Идеальный темп'];
-                            }
-                            return [value, name];
-                          }}
-                        />
+  contentStyle={{
+    background: 'rgba(15,23,42,0.96)',
+    border: '1px solid rgba(148,163,184,0.65)',
+    borderRadius: 10,
+    color: '#fff',
+    padding: '6px 10px',
+    fontSize: 12,
+  }}
+  labelStyle={{
+    color: 'rgba(226,232,240,0.9)',
+    fontWeight: 500,
+    marginBottom: 2,
+  }}
+  formatter={(value: any, name: string) => {
+    if (name === 'Актуальный темп') {
+      return [`${value}%`, 'Актуальный темп'];
+    }
+    if (name === 'Идеальный темп') {
+      return [`${value}%`, 'Идеальный темп'];
+    }
+    // Все прочие серии (если вдруг есть) не показываем
+    return null;
+  }}
+/>
 
-                        <Legend
-                          wrapperStyle={{
-                            color: '#fff',
-                          }}
-                        />
+<Legend
+  wrapperStyle={{
+    color: '#fff',
+    fontSize: 12,
+  }}
+/>
 
-                        <Line
-                          type="monotone"
-                          data={buildIdealHistory(usedHistory)}
-                          dataKey={(v) => v.ideal}
-                          stroke="rgba(255,255,255,0.5)"
-                          strokeWidth={2}
-                          strokeDasharray="6 4"
-                          name="Идеальный темп"
-                          dot={false}
-                          isAnimationActive={false}
-                          legendType="plainline"
-                        />
+<Line
+  type="monotone"
+  data={buildIdealHistory(usedHistory)}
+  dataKey={(v: any) => v.ideal}
+  stroke="rgba(248,250,252,0.7)"
+  strokeWidth={2}
+  strokeDasharray="6 4"
+  name="Идеальный темп"
+  dot={false}
+  isAnimationActive={false}
+  legendType="plainline"
+/>
 
-                        <Line
-                          type="monotone"
-                          dataKey="score"
-                          stroke="#22c55e"
-                          strokeWidth={4}
-                          name="Вовлечённость"
-                          dot={{
-                            r: 6,
-                            fill: '#22c55e',
-                            stroke: '#000',
-                            strokeWidth: 1,
-                          }}
-                          activeDot={{ r: 8 }}
-                          isAnimationActive={false}
-                        />
+<Line
+  type="monotone"
+  dataKey="score"
+  stroke="#22c55e"
+  strokeWidth={4}
+  name="Актуальный темп"
+  dot={{
+    r: 7,
+    fill: '#22c55e',
+    stroke: '#020617',
+    strokeWidth: 1,
+  }}
+  activeDot={{
+    r: 9,
+    stroke: '#e5e7eb',
+    strokeWidth: 2,
+  }}
+  isAnimationActive={false}
+/>
+
+                  
                       </LineChart>
                     </ResponsiveContainer>
                   </Box>
@@ -2267,61 +2381,70 @@ const toggleCategory = (category: string) => {
                               domain={[0, 100]}
                             />
 
-                            <RechartsTooltip
-                              contentStyle={{
-                                background: 'rgba(11,8,36,0.95)',
-                                border: '1px solid rgba(255,255,255,0.2)',
-                                borderRadius: 8,
-                                color: '#fff',
-                              }}
-                              labelStyle={{
-                                color: '#fff',
-                              }}
-                              formatter={(value: any, name: string) => {
-                                if (name === 'Выполнено') {
-                                  return [`${value}%`, 'Выполнено'];
-                                }
-                                if (name === 'Идеальный темп') {
-                                  return [`${value}%`, 'Идеальный темп'];
-                                }
-                                return [value, name];
-                              }}
-                            />
+                           <RechartsTooltip
+  contentStyle={{
+    background: 'rgba(15,23,42,0.96)',
+    border: '1px solid rgba(148,163,184,0.65)',
+    borderRadius: 10,
+    color: '#fff',
+    padding: '6px 10px',
+    fontSize: 12,
+  }}
+  labelStyle={{
+    color: 'rgba(226,232,240,0.9)',
+    fontWeight: 500,
+    marginBottom: 2,
+  }}
+  formatter={(value: any, name: string) => {
+    if (name === 'Прогресс по цели') {
+      return [`${value}%`, 'Прогресс по цели'];
+    }
+    if (name === 'Идеальный темп') {
+      return [`${value}%`, 'Идеальный темп'];
+    }
+    return [value, name];
+  }}
+/>
 
-                            <Legend
-                              wrapperStyle={{
-                                color: '#fff',
-                              }}
-                            />
+<Legend
+  wrapperStyle={{
+    color: '#fff',
+    fontSize: 12,
+  }}
+/>
 
-                            <Line
-                              type="monotone"
-                              data={buildIdealHistory(goalsTimeline)}
-                              dataKey={(v: any) => v.ideal}
-                              stroke="rgba(255,255,255,0.5)"
-                              strokeWidth={2}
-                              strokeDasharray="6 4"
-                              name="Идеальный темп"
-                              dot={false}
-                              isAnimationActive={false}
-                              legendType="plainline"
-                            />
+<Line
+  type="monotone"
+  data={buildIdealHistory(goalsTimeline)}
+  dataKey={(v: any) => v.ideal}
+  stroke="rgba(248,250,252,0.7)"
+  strokeWidth={2}
+  strokeDasharray="6 4"
+  name="Идеальный темп"
+  dot={false}
+  isAnimationActive={false}
+  legendType="plainline"
+/>
 
-                            <Line
-                              type="monotone"
-                              dataKey="score"
-                              stroke="#22c55e"
-                              strokeWidth={4}
-                              name="Выполнено"
-                              dot={{
-                                r: 6,
-                                fill: '#22c55e',
-                                stroke: '#000',
-                                strokeWidth: 1,
-                              }}
-                              activeDot={{ r: 8 }}
-                              isAnimationActive={false}
-                            />
+<Line
+  type="monotone"
+  dataKey="score"
+  stroke="#22c55e"
+  strokeWidth={4}
+  name="Прогресс по цели"
+  dot={{
+    r: 7,
+    fill: '#22c55e',
+    stroke: '#020617',
+    strokeWidth: 1,
+  }}
+  activeDot={{
+    r: 9,
+    stroke: '#e5e7eb',
+    strokeWidth: 2,
+  }}
+  isAnimationActive={false}
+/>
                           </LineChart>
                         </ResponsiveContainer>
                       </Box>
@@ -2398,7 +2521,7 @@ const toggleCategory = (category: string) => {
                 )}
               </>
             )}
-          </Paper>
+        </Box>
         </Box>
 
         {/* Все диалоги остаются без изменений */}
