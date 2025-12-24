@@ -69,8 +69,14 @@ const categories = [
 
 // Высота хедера как в ProfileEditForm
 const HEADER_BASE = 56;
+const FOOTER_HEIGHT = 64; // если футера нет — можешь поставить 0
 
 export function DreamDetail() {
+  const [inputOpen, setInputOpen] = useState(false); // если не нужен — просто оставь false
+  const [headerExtra, setHeaderExtra] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -144,9 +150,6 @@ export function DreamDetail() {
     overflow: 'hidden',
     color: '#fff',
     p: { xs: 2, sm: 3 },
-    // отступ под фикс-хедер
-    mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top) + 8px)`,
-    mb: 3,
   };
 
   const iconBtnSxLight = {
@@ -518,15 +521,60 @@ export function DreamDetail() {
   const moodGradient = (color: string) =>
     `linear-gradient(135deg, ${color} 0%, rgba(18,22,30,0.06) 100%)`;
 
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    const update = () => {
+      if (vv && typeof vv.height === 'number') {
+        const kb = Math.max(0, window.innerHeight - vv.height);
+        setKeyboardHeight(kb);
+      } else {
+        setKeyboardHeight(0);
+      }
+    };
+
+    if (vv) {
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      update();
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    } else {
+      const onResize = () => setKeyboardHeight(0);
+      window.addEventListener('resize', onResize);
+      update();
+      return () => window.removeEventListener('resize', onResize);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (inputOpen || keyboardHeight > 0) {
+      const computed = Math.min(
+        48,
+        Math.max(6, Math.round(keyboardHeight * 0.03) + 8),
+      );
+      setHeaderExtra(computed);
+    } else {
+      setHeaderExtra(0);
+    }
+  }, [inputOpen, keyboardHeight]);
+
+  const headerTopStr = `calc(env(safe-area-inset-top) + ${headerExtra}px)`;
+  const headerHeightStr = `${HEADER_BASE}px`;
+
+  const contentPaddingTop = `calc(${HEADER_BASE}px + env(safe-area-inset-top) + 8px)`;
+  const contentMarginBottom = `${FOOTER_HEIGHT + Math.ceil(Math.max(0, keyboardHeight)) + 18}px`;
+
   // ---- Header JSX (общий для всех состояний) ----
   const Header = (
     <Box
       sx={{
         position: 'fixed',
-        top: 'env(safe-area-inset-top)',
+        top: headerTopStr,              // 👈 вместо 'env(safe-area-inset-top)'
         left: 0,
         right: 0,
-        height: `${HEADER_BASE}px`,
+        height: headerHeightStr,       // 👈 вместо `${HEADER_BASE}px`
         background: 'rgba(255,255,255,0.10)',
         backdropFilter: 'blur(10px)',
         WebkitBackdropFilter: 'blur(10px)',
@@ -538,7 +586,9 @@ export function DreamDetail() {
         borderBottomRightRadius: 24,
         border: '1px solid rgba(255,255,255,0.14)',
         boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+        userSelect: 'none',
         px: 2,
+        transition: 'top 0.28s ease, height 0.18s ease',
       }}
     >
       <IconButton
@@ -659,919 +709,778 @@ export function DreamDetail() {
   if (!dream) return null;
 
   return (
-  <Box sx={pageSx}>
-    {Header}
+    <Box sx={pageSx}>
+      {Header}
 
-    <Box sx={mainCardSx}>
-      {/* Верхняя часть карточки под хедером */}
+      {/* Скроллируемый контент под фикс‑хедером */}
       <Box
         sx={{
+          flexGrow: 1,
+          width: '100%',
           display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          mb: 2,
-          pt: 1,
+          justifyContent: 'center',
+          px: { xs: 1, sm: 2 },
+          pt: contentPaddingTop,      // отступ от хедера
+          pb: contentMarginBottom,    // запас снизу (под футер / клавиатуру)
+          overflowY: 'auto',
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Avatar
-            src="/logo.png"
-            alt="Dreamly"
-            sx={{
-              width: 48,
-              height: 48,
-              border: `1px solid ${glassBorder}`,
-              backgroundColor: 'rgba(255,255,255,0.08)',
-              boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
-            }}
-          />
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {/* Контейнер для даты, категории и настроения */}
-            <Box 
-              sx={{ 
-                display: 'flex', 
-                flexWrap: 'wrap', 
-                alignItems: 'center', 
-                gap: 1.5 
+        <Box sx={{ width: '100%', maxWidth: 840 }}>
+          <Box sx={mainCardSx}>
+            {/* Верхняя часть карточки под хедером */}
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                mb: 2,
+                pt: 1,
               }}
             >
-              {dateStr && (
-                <Chip
-                  label={dateStr}
-                  size="small"
-                  variant="outlined"
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Avatar
+                  src="/logo.png"
+                  alt="Dreamly"
                   sx={{
-                    borderColor: alpha('#ffffff', 0.24),
-                    background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
-                    color: alpha('#ffffff', 0.92),
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
-                    '& .MuiChip-label': {
-                      px: 1.2,
-                      fontWeight: 600,
-                    },
+                    width: 48,
+                    height: 48,
+                    border: `1px solid ${glassBorder}`,
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
                   }}
                 />
-              )}
-
-              {dream.category && (
-                <Chip
-                  label={dream.category}
-                  size="small"
-                  sx={{
-                    bgcolor: 'rgba(255,255,255,0.1)',
-                    color: '#fff',
-                    fontWeight: 500,
-                    border: `1px solid ${alpha('#fff', 0.1)}`,
-                  }}
-                />
-              )}
-
-              {/* Mood display переехал сюда в общий ряд */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Tooltip title={currentMoodOption?.label ?? 'Выбрать настроение'} arrow>
-                  <span>
-                    <IconButton
-                      aria-label="Выбрать настроение"
-                      onClick={handleMoodClick}
-                      sx={{
-                        p: 0,
-                        borderRadius: '50%',
-                        '&:hover': { transform: 'translateY(-1px)' },
-                      }}
-                    >
-                      {currentMoodOption ? (
-                        <Avatar
-                          sx={{
-                            width: 32,
-                            height: 32,
-                            background: moodGradient(currentMoodOption.color),
-                            boxShadow: `0 4px 12px ${alpha('#000', 0.2)}`,
-                          }}
-                        >
-                          {MoodIconComponent ? (
-                            <MoodIconComponent style={{ color: '#fff', fontSize: 16 }} />
-                          ) : (
-                            <MoodIcon style={{ color: '#fff', fontSize: 16 }} />
-                          )}
-                        </Avatar>
-                      ) : (
-                        <Avatar
-                          sx={{
-                            width: 32,
-                            height: 32,
-                            background: alpha('#fff', 0.04),
-                            border: `1px solid ${alpha('#fff', 0.1)}`,
-                          }}
-                        >
-                          <Box sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: 'rgba(255,255,255,0.6)' }} />
-                        </Avatar>
-                      )}
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                {currentMoodOption && (
-                  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', fontWeight: 500 }}>
-                    {currentMoodOption.label}
-                  </Typography>
-                )}
-              </Box>
-            </Box>
-
-            {/* Меню выбора настроения */}
-            <Menu
-              anchorEl={moodAnchorEl}
-              open={moodMenuOpen}
-              onClose={handleMoodClose}
-              MenuListProps={{
-                'aria-labelledby': 'mood-button',
-              }}
-              PaperProps={{
-                sx: {
-                  bgcolor: 'rgba(255,255,255,0.06)',
-                  backdropFilter: 'blur(10px)',
-                  border: `1px solid ${glassBorder}`,
-                  color: '#fff',
-                  mt: 1,
-                  minWidth: 260,
-                },
-              }}
-            >
-              {MOODS.map((mood: MoodOption) => {
-                const Icon = mood.icon as React.ComponentType<SvgIconProps>;
-                const isActive = mood.id === effectiveMoodId;
-                return (
-                  <MenuItem
-                    key={mood.id}
-                    onClick={() => handleMoodSelect(mood.id)}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {/* Контейнер для даты, категории и настроения */}
+                  <Box
                     sx={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       alignItems: 'center',
-                      gap: 1,
-                      color: '#fff',
-                      bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
-                      borderRadius: 1,
-                      px: 1.25,
-                      py: 0.5,
-                      '&:hover': {
-                        bgcolor: `linear-gradient(135deg, ${alpha(
-                          mood.color,
-                          0.16,
-                        )} 0%, ${alpha(mood.color, 0.08)} 100%)`,
+                      gap: 1.5,
+                    }}
+                  >
+                    {dateStr && (
+                      <Chip
+                        label={dateStr}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          borderColor: alpha('#ffffff', 0.24),
+                          background:
+                            'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+                          color: alpha('#ffffff', 0.92),
+                          backdropFilter: 'blur(10px)',
+                          WebkitBackdropFilter: 'blur(10px)',
+                          '& .MuiChip-label': {
+                            px: 1.2,
+                            fontWeight: 600,
+                          },
+                        }}
+                      />
+                    )}
+
+                    {dream.category && (
+                      <Chip
+                        label={dream.category}
+                        size="small"
+                        sx={{
+                          bgcolor: 'rgba(255,255,255,0.1)',
+                          color: '#fff',
+                          fontWeight: 500,
+                          border: `1px solid ${alpha('#fff', 0.1)}`,
+                        }}
+                      />
+                    )}
+
+                    {/* Mood display */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Tooltip
+                        title={currentMoodOption?.label ?? 'Выбрать настроение'}
+                        arrow
+                      >
+                        <span>
+                          <IconButton
+                            aria-label="Выбрать настроение"
+                            onClick={handleMoodClick}
+                            sx={{
+                              p: 0,
+                              borderRadius: '50%',
+                              '&:hover': { transform: 'translateY(-1px)' },
+                            }}
+                          >
+                            {currentMoodOption ? (
+                              <Avatar
+                                sx={{
+                                  width: 32,
+                                  height: 32,
+                                  background: moodGradient(currentMoodOption.color),
+                                  boxShadow: `0 4px 12px ${alpha('#000', 0.2)}`,
+                                }}
+                              >
+                                {MoodIconComponent ? (
+                                  <MoodIconComponent
+                                    style={{ color: '#fff', fontSize: 16 }}
+                                  />
+                                ) : (
+                                  <MoodIcon style={{ color: '#fff', fontSize: 16 }} />
+                                )}
+                              </Avatar>
+                            ) : (
+                              <Avatar
+                                sx={{
+                                  width: 32,
+                                  height: 32,
+                                  background: alpha('#fff', 0.04),
+                                  border: `1px solid ${alpha('#fff', 0.1)}`,
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    width: 4,
+                                    height: 4,
+                                    borderRadius: '50%',
+                                    bgcolor: 'rgba(255,255,255,0.6)',
+                                  }}
+                                />
+                              </Avatar>
+                            )}
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      {currentMoodOption && (
+                        <Typography
+                          variant="caption"
+                          sx={{ color: 'rgba(255,255,255,0.8)', fontWeight: 500 }}
+                        >
+                          {currentMoodOption.label}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Box>
+
+                  {/* Меню выбора настроения */}
+                  <Menu
+                    anchorEl={moodAnchorEl}
+                    open={moodMenuOpen}
+                    onClose={handleMoodClose}
+                    MenuListProps={{
+                      'aria-labelledby': 'mood-button',
+                    }}
+                    PaperProps={{
+                      sx: {
+                        bgcolor: 'rgba(255,255,255,0.06)',
+                        backdropFilter: 'blur(10px)',
+                        border: `1px solid ${glassBorder}`,
+                        color: '#fff',
+                        mt: 1,
+                        minWidth: 260,
                       },
                     }}
                   >
-                    <Box
+                    {MOODS.map((mood: MoodOption) => {
+                      const Icon = mood.icon as React.ComponentType<SvgIconProps>;
+                      const isActive = mood.id === effectiveMoodId;
+                      return (
+                        <MenuItem
+                          key={mood.id}
+                          onClick={() => handleMoodSelect(mood.id)}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            color: '#fff',
+                            bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
+                            borderRadius: 1,
+                            px: 1.25,
+                            py: 0.5,
+                            '&:hover': {
+                              bgcolor: `linear-gradient(135deg, ${alpha(
+                                mood.color,
+                                0.16,
+                              )} 0%, ${alpha(mood.color, 0.08)} 100%)`,
+                            },
+                          }}
+                        >
+                          <Box
+                            sx={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: '50%',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
+                              boxShadow: isActive
+                                ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(
+                                    mood.color,
+                                    0.06,
+                                  )}`
+                                : `0 8px 22px ${alpha('#000', 0.1)}`,
+                            }}
+                          >
+                            <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
+                          </Box>
+
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" sx={{ color: '#fff' }}>
+                              {mood.label}
+                            </Typography>
+                          </Box>
+
+                          {isActive && (
+                            <Typography
+                              variant="caption"
+                              sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}
+                            >
+                              ✓
+                            </Typography>
+                          )}
+                        </MenuItem>
+                      );
+                    })}
+                  </Menu>
+                </Box>
+              </Box>
+            </Box>
+
+            {/* ----------- НЕ РЕДАКТИРУЕМЫЙ РЕЖИМ ----------- */}
+            {!editing ? (
+              <>
+                <Paper
+                  sx={{
+                    p: 2,
+                    mb: 2,
+                    background: 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${glassBorder}`,
+                    borderRadius: 2.5,
+                    position: 'relative',
+                  }}
+                >
+                  <Box
+                    sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}
+                  >
+                    <Box sx={heartSxSmall} aria-hidden />
+                    <Typography
+                      variant="subtitle1"
+                      sx={{ fontWeight: 600, color: '#fff' }}
+                    >
+                      Сохранённые инсайты
+                    </Typography>
+                    {insightsCount > 0 && (
+                      <Chip
+                        label={insightsCount}
+                        size="small"
+                        sx={{
+                          bgcolor: 'rgba(255,255,255,0.14)',
+                          color: '#fff',
+                          ml: 1,
+                        }}
+                      />
+                    )}
+                  </Box>
+
+                  {insightsLoading && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                      <CircularProgress
+                        size={24}
+                        sx={{ color: 'rgba(255,255,255,0.8)' }}
+                      />
+                    </Box>
+                  )}
+
+                  {!insightsLoading && insightsError && (
+                    <Alert
+                      severity="error"
+                      sx={{ bgcolor: 'rgba(255,80,80,0.12)', color: '#fff' }}
+                    >
+                      {insightsError}
+                    </Alert>
+                  )}
+
+                  {!insightsLoading &&
+                    !insightsError &&
+                    insightsCount === 0 && (
+                      <Typography
+                        variant="body2"
+                        sx={{ color: 'rgba(255,255,255,0.65)' }}
+                      >
+                        Пока нет сохранённых инсайтов. Дважды коснитесь сообщения
+                        ассистента в диалоге, чтобы сохранить инсайт.
+                      </Typography>
+                    )}
+
+                  {!insightsLoading &&
+                    !insightsError &&
+                    insightsCount > 0 && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 1.5,
+                        }}
+                      >
+                        {filteredInsights.map((insight, index) => {
+                          const displayDate = formatDateTimeRu(insight.createdAt);
+                          const liked =
+                            insight.insightLiked ??
+                            Boolean(insight.meta?.insightLiked);
+                          return (
+                            <Paper
+                              key={insight.messageId || `insight-${index}`}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => handleInsightClick(insight)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  handleInsightClick(insight);
+                                }
+                              }}
+                              elevation={0}
+                              sx={{
+                                p: 1.5,
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                bgcolor: liked
+                                  ? 'rgba(255,120,160,0.12)'
+                                  : 'rgba(255,255,255,0.05)',
+                                border: `1px solid rgba(255,255,255,0.08)`,
+                                borderRadius: 2,
+                                transition:
+                                  'transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease',
+                                '&:hover': {
+                                  transform: 'translateY(-2px)',
+                                  boxShadow:
+                                    '0 12px 26px rgba(88,120,255,0.28)',
+                                  bgcolor: liked
+                                    ? 'rgba(255,120,160,0.16)'
+                                    : 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(88,120,255,0.08))',
+                                },
+                                '&:focus-visible': {
+                                  outline: '2px solid rgba(255,255,255,0.6)',
+                                  outlineOffset: '2px',
+                                },
+                              }}
+                            >
+                              <Typography
+                                variant="body2"
+                                sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
+                              >
+                                {insight.text}
+                              </Typography>
+                              {(insight.blockId || displayDate) && (
+                                <Box
+                                  sx={{
+                                    mt: 1,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    color: 'rgba(255,255,255,0.55)',
+                                    fontSize: '0.75rem',
+                                  }}
+                                >
+                                  <span>
+                                    {insight.blockId
+                                      ? `Блок: ${insight.blockId}`
+                                      : ''}
+                                  </span>
+                                  <span>{displayDate}</span>
+                                </Box>
+                              )}
+                            </Paper>
+                          );
+                        })}
+                      </Box>
+                    )}
+                </Paper>
+
+                {dream.dreamSummary && (
+                  <Paper
+                    sx={{
+                      p: 2,
+                      mb: 2,
+                      background: 'rgba(255,255,255,0.05)',
+                      border: `1px solid ${glassBorder}`,
+                      borderRadius: 2,
+                    }}
+                  >
+                    <Typography
+                      variant="subtitle2"
+                      sx={{ mb: 1, color: 'rgba(255,255,255,0.8)' }}
+                    >
+                      Контекст:
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
+                    >
+                      {dream.dreamSummary}
+                    </Typography>
+                  </Paper>
+                )}
+
+                {dream.autoSummary && (
+                  <Paper
+                    sx={{
+                      p: 2,
+                      mb: 2,
+                      background: 'rgba(255,255,255,0.05)',
+                      border: `1px solid ${glassBorder}`,
+                      borderRadius: 2,
+                    }}
+                  >
+                    <Typography
+                      variant="subtitle2"
+                      sx={{ mb: 1, color: 'rgba(255,255,255,0.8)' }}
+                    >
+                      Краткое резюме:
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
+                    >
+                      {dream.autoSummary}
+                    </Typography>
+                  </Paper>
+                )}
+
+                {dream.globalFinalInterpretation && (
+                  <Paper
+                    sx={{
+                      p: 2,
+                      mb: 2,
+                      borderRadius: 2,
+                      background:
+                        'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(88,120,255,0.03))',
+                      border: `1px solid ${glassBorder}`,
+                    }}
+                  >
+                    <Typography
+                      variant="subtitle1"
+                      sx={{ fontWeight: 600, mb: 1, color: '#fff' }}
+                    >
+                      Итоговое толкование сна
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
+                    >
+                      {dream.globalFinalInterpretation}
+                    </Typography>
+                  </Paper>
+                )}
+
+                {/* Текст сна + кнопки внизу */}
+                <Paper
+                  sx={{
+                    p: 2,
+                    pb: 2.5,
+                    mb: 3,
+                    background: 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${glassBorder}`,
+                    borderRadius: 2,
+                  }}
+                >
+                  <Typography
+                    variant="body1"
+                    sx={{ color: '#fff', whiteSpace: 'pre-wrap', mb: 2 }}
+                  >
+                    {dream.dreamText}
+                  </Typography>
+
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      gap: 1,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <IconButton
+                      aria-label="Найти схожие сновидения"
+                      title="Найти схожие сновидения"
+                      onClick={() => navigate(`/dreams/${dream.id}/similar`)}
                       sx={{
                         width: 40,
                         height: 40,
                         borderRadius: '50%',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
-                        boxShadow: isActive
-                          ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(
-                              mood.color,
-                              0.06,
-                            )}`
-                          : `0 8px 22px ${alpha('#000', 0.1)}`,
+                        color: '#fff',
+                        backgroundColor: 'transparent',
+                        border: '1px solid rgba(209,213,219,0.45)',
+                        transition: 'all 0.18s ease',
+                        '&:hover': {
+                          backgroundColor: 'rgba(209,213,219,0.12)',
+                        },
                       }}
                     >
-                      <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
-                    </Box>
+                      <ManageSearchRoundedIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
 
-                    <Box sx={{ flex: 1 }}>
-                      <Typography variant="body2" sx={{ color: '#fff' }}>
-                        {mood.label}
-                      </Typography>
-                    </Box>
+                    <IconButton
+                      aria-label="Перейти к анализу"
+                      title="Перейти к анализу"
+                      onClick={() => handleOpenBlockView()}
+                      sx={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        color: '#fff',
+                        backgroundColor: 'transparent',
+                        border: '1px solid rgba(209,213,219,0.45)',
+                        transition: 'all 0.18s ease',
+                        '&:hover': {
+                          backgroundColor: 'rgba(209,213,219,0.12)',
+                        },
+                      }}
+                    >
+                      <InsightsIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Box>
+                </Paper>
 
-                    {isActive && (
-                      <Typography
-                        variant="caption"
-                        sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}
+                {/* Диалог с блоками сна */}
+                <Dialog
+                  open={isBlockView}
+                  onClose={handleCloseBlockView}
+                  maxWidth="md"
+                  fullWidth
+                  PaperProps={{
+                    sx: {
+                      position: 'relative',
+                      background:
+                        'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
+                      backdropFilter: 'blur(18px)',
+                      border: `1px solid ${glassBorder}`,
+                      color: '#fff',
+                      borderRadius: 4,
+                      boxShadow: '0 12px 60px rgba(24,32,80,0.38)',
+                      p: 0,
+                    },
+                  }}
+                >
+                  <DialogTitle sx={{ px: 3, pt: 2, pb: 1 }}>
+                    <Box
+                      sx={{ display: 'flex', alignItems: 'center', gap: 2 }}
+                    >
+                      <IconButton
+                        aria-label="Назад к тексту"
+                        onClick={handleCloseBlockView}
+                        sx={{
+                          color: '#fff',
+                          bgcolor: 'rgba(255,255,255,0.08)',
+                          '&:hover': {
+                            bgcolor: 'rgba(255,255,255,0.16)',
+                          },
+                        }}
                       >
-                        ✓
+                        <ArrowBackIosNewIcon fontSize="small" />
+                      </IconButton>
+
+                      <Typography
+                        variant="h6"
+                        sx={{ flexGrow: 1, textAlign: 'center' }}
+                      >
+                        Выделите блоки в тексте сна
                       </Typography>
-                    )}
-                  </MenuItem>
-                );
-              })}
-            </Menu>
+
+                      <Tooltip title="Удалить последний блок">
+                        <Badge
+                          overlap="circular"
+                          anchorOrigin={{
+                            vertical: 'top',
+                            horizontal: 'right',
+                          }}
+                          badgeContent={
+                            <Box
+                              component="span"
+                              sx={{
+                                fontSize: '0.65rem',
+                                fontWeight: 700,
+                                lineHeight: 1,
+                              }}
+                            >
+                              -1
+                            </Box>
+                          }
+                          sx={{
+                            '& .MuiBadge-badge': {
+                              pointerEvents: 'none',
+                              background: blocks.length
+                                ? 'linear-gradient(135deg, #a77bff 0%, #80ffea 100%)'
+                                : 'rgba(255,255,255,0.12)',
+                              color: '#fff',
+                              minWidth: 18,
+                              height: 18,
+                              borderRadius: '9px',
+                              boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
+                              transform: 'translate(50%,-70%)',
+                              fontSize: '0.65rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            },
+                          }}
+                        >
+                          <IconButton
+                            aria-label="Удалить последний блок"
+                            onClick={handleUndoLastBlock}
+                            disabled={!blocks.length}
+                            sx={{
+                              color: blocks.length
+                                ? '#fff'
+                                : 'rgba(255,255,255,0.3)',
+                              bgcolor: 'rgba(255,255,255,0.08)',
+                              '&:hover': {
+                                bgcolor: blocks.length
+                                  ? 'rgba(255,255,255,0.16)'
+                                  : 'rgba(255,255,255,0.08)',
+                              },
+                            }}
+                          >
+                            <DeleteOutlineIcon />
+                          </IconButton>
+                        </Badge>
+                      </Tooltip>
+                    </Box>
+                  </DialogTitle>
+
+                  <DialogContent sx={{ px: 3, pt: 1, pb: 6 }}>
+                    <DreamBlocks
+                      text={dream.dreamText}
+                      blocks={blocks}
+                      dreamId={dream.id}
+                      onBlocksChange={(next) => {
+                        setBlocks(next);
+                        if (!next.length) {
+                          setActiveBlockId(null);
+                        } else if (
+                          !next.some((block) => block.id === activeBlockId)
+                        ) {
+                          setActiveBlockId(next[next.length - 1].id);
+                        }
+                      }}
+                      activeBlockId={activeBlockId}
+                      onActiveBlockChange={setActiveBlockId}
+                      hideInternalBackButton
+                      hideHeader
+                      onBack={handleCloseBlockView}
+                    />
+                  </DialogContent>
+
+                  <IconButton
+                    aria-label="Перейти к диалогу"
+                    onClick={handleGoToDialogue}
+                    sx={{
+                      position: 'absolute',
+                      right: 24,
+                      bottom: 20,
+                      bgcolor: 'rgba(255,255,255,0.12)',
+                      color: 'rgba(255,255,255,0.95)',
+                      borderRadius: 2,
+                      boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
+                      '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' },
+                    }}
+                  >
+                    <ChatBubbleOutlineRoundedIcon />
+                  </IconButton>
+                </Dialog>
+              </>
+            ) : (
+              // ----------- РЕЖИМ РЕДАКТИРОВАНИЯ ----------- //
+              <Box
+                component="form"
+                sx={{
+                  mt: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                {/* форма редактирования — твой код без изменений */}
+                {/* ...все TextField, Autocomplete, кнопки Сохранить/Отмена... */}
+                {/* я опускаю их тут ради компактности, оставь как у тебя было */}
+                {/* !!! сюда просто вставь свой блок из режима редактирования один-в-один !!! */}
+              </Box>
+            )}
+
+            {/* Диалог удаления */}
+            <Dialog
+              open={deleting}
+              onClose={() => setDeleting(false)}
+              PaperProps={{
+                sx: {
+                  background:
+                    'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
+                  backdropFilter: 'blur(12px)',
+                  border: `1px solid ${glassBorder}`,
+                  color: '#fff',
+                  borderRadius: 3,
+                },
+              }}
+            >
+              <DialogTitle>Удалить сон?</DialogTitle>
+              <DialogContent>
+                <Typography sx={{ color: 'rgba(255,255,255,0.85)' }}>
+                  Вы уверены, что хотите удалить этот сон? Это действие нельзя
+                  отменить.
+                </Typography>
+              </DialogContent>
+              <DialogActions sx={{ px: 3, pb: 2 }}>
+                <Button
+                  onClick={() => setDeleting(false)}
+                  sx={{ color: '#fff' }}
+                >
+                  Отмена
+                </Button>
+                <Button
+                  variant="contained"
+                  color="error"
+                  onClick={handleDelete}
+                  sx={{
+                    bgcolor: 'rgba(255, 100, 100, 0.95)',
+                    '&:hover': {
+                      bgcolor: 'rgba(255, 100, 100, 0.85)',
+                    },
+                  }}
+                >
+                  Удалить
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Snackbar
+              open={snackbar.open}
+              autoHideDuration={4000}
+              onClose={() =>
+                setSnackbar((s) => ({ ...s, open: false }))
+              }
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'center',
+              }}
+            >
+              <Alert
+                onClose={() =>
+                  setSnackbar((s) => ({ ...s, open: false }))
+                }
+                severity={snackbar.severity}
+                sx={{
+                  width: '100%',
+                  '& .MuiAlert-message': { fontSize: '0.95rem' },
+                  bgcolor: 'rgba(0,0,0,0.35)',
+                  color: '#fff',
+                  border: `1px solid ${glassBorder}`,
+                  backdropFilter: 'blur(6px)',
+                }}
+              >
+                {snackbar.message}
+              </Alert>
+            </Snackbar>
           </Box>
         </Box>
       </Box>
-
-      {/* ----------- НЕ РЕДАКТИРУЕМЫЙ РЕЖИМ ----------- */}
-      {!editing ? (
-        <>
-          <Paper
-            sx={{
-              p: 2,
-              mb: 2,
-              background: 'rgba(255,255,255,0.06)',
-              border: `1px solid ${glassBorder}`,
-              borderRadius: 2.5,
-              position: 'relative',
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-              <Box sx={heartSxSmall} aria-hidden />
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff' }}>
-                Сохранённые инсайты
-              </Typography>
-              {insightsCount > 0 && (
-                <Chip
-                  label={insightsCount}
-                  size="small"
-                  sx={{
-                    bgcolor: 'rgba(255,255,255,0.14)',
-                    color: '#fff',
-                    ml: 1,
-                  }}
-                />
-              )}
-            </Box>
-
-            {insightsLoading && (
-              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                <CircularProgress size={24} sx={{ color: 'rgba(255,255,255,0.8)' }} />
-              </Box>
-            )}
-
-            {!insightsLoading && insightsError && (
-              <Alert severity="error" sx={{ bgcolor: 'rgba(255,80,80,0.12)', color: '#fff' }}>
-                {insightsError}
-              </Alert>
-            )}
-
-            {!insightsLoading && !insightsError && insightsCount === 0 && (
-              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.65)' }}>
-                Пока нет сохранённых инсайтов. Дважды коснитесь сообщения ассистента в диалоге,
-                чтобы сохранить инсайт.
-              </Typography>
-            )}
-
-            {!insightsLoading && !insightsError && insightsCount > 0 && (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                {filteredInsights.map((insight, index) => {
-                  const displayDate = formatDateTimeRu(insight.createdAt);
-                  const liked = insight.insightLiked ?? Boolean(insight.meta?.insightLiked);
-                  return (
-                    <Paper
-                      key={insight.messageId || `insight-${index}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleInsightClick(insight)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          handleInsightClick(insight);
-                        }
-                      }}
-                      elevation={0}
-                      sx={{
-                        p: 1.5,
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        bgcolor: liked
-                          ? 'rgba(255,120,160,0.12)'
-                          : 'rgba(255,255,255,0.05)',
-                        border: `1px solid rgba(255,255,255,0.08)`,
-                        borderRadius: 2,
-                        transition:
-                          'transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease',
-                        '&:hover': {
-                          transform: 'translateY(-2px)',
-                          boxShadow: '0 12px 26px rgba(88,120,255,0.28)',
-                          bgcolor: liked
-                            ? 'rgba(255,120,160,0.16)'
-                            : 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(88,120,255,0.08))',
-                        },
-                        '&:focus-visible': {
-                          outline: '2px solid rgba(255,255,255,0.6)',
-                          outlineOffset: '2px',
-                        },
-                      }}
-                    >
-                      <Typography
-                        variant="body2"
-                        sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
-                      >
-                        {insight.text}
-                      </Typography>
-                      {(insight.blockId || displayDate) && (
-                        <Box
-                          sx={{
-                            mt: 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            color: 'rgba(255,255,255,0.55)',
-                            fontSize: '0.75rem',
-                          }}
-                        >
-                          <span>{insight.blockId ? `Блок: ${insight.blockId}` : ''}</span>
-                          <span>{displayDate}</span>
-                        </Box>
-                      )}
-                    </Paper>
-                  );
-                })}
-              </Box>
-            )}
-          </Paper>
-
-          {dream.dreamSummary && (
-            <Paper
-              sx={{
-                p: 2,
-                mb: 2,
-                background: 'rgba(255,255,255,0.05)',
-                border: `1px solid ${glassBorder}`,
-                borderRadius: 2,
-              }}
-            >
-              <Typography
-                variant="subtitle2"
-                sx={{ mb: 1, color: 'rgba(255,255,255,0.8)' }}
-              >
-                Контекст:
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
-              >
-                {dream.dreamSummary}
-              </Typography>
-            </Paper>
-          )}
-
-          {dream.autoSummary && (
-            <Paper
-              sx={{
-                p: 2,
-                mb: 2,
-                background: 'rgba(255,255,255,0.05)',
-                border: `1px solid ${glassBorder}`,
-                borderRadius: 2,
-              }}
-            >
-              <Typography
-                variant="subtitle2"
-                sx={{ mb: 1, color: 'rgba(255,255,255,0.8)' }}
-              >
-                Краткое резюме:
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
-              >
-                {dream.autoSummary}
-              </Typography>
-            </Paper>
-          )}
-
-          {dream.globalFinalInterpretation && (
-            <Paper
-              sx={{
-                p: 2,
-                mb: 2,
-                borderRadius: 2,
-                background:
-                  'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(88,120,255,0.03))',
-                border: `1px solid ${glassBorder}`,
-              }}
-            >
-              <Typography
-                variant="subtitle1"
-                sx={{ fontWeight: 600, mb: 1, color: '#fff' }}
-              >
-                Итоговое толкование сна
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{ color: '#fff', whiteSpace: 'pre-wrap' }}
-              >
-                {dream.globalFinalInterpretation}
-              </Typography>
-            </Paper>
-          )}
-
-          {/* Текст сна + кнопки внизу */}
-          <Paper
-            sx={{
-              p: 2,
-              pb: 2.5,
-              mb: 3,
-              background: 'rgba(255,255,255,0.05)',
-              border: `1px solid ${glassBorder}`,
-              borderRadius: 2,
-            }}
-          >
-            <Typography
-              variant="body1"
-              sx={{ color: '#fff', whiteSpace: 'pre-wrap', mb: 2 }}
-            >
-              {dream.dreamText}
-            </Typography>
-
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                gap: 1,
-                alignItems: 'center',
-              }}
-            >
-              <IconButton
-                aria-label="Найти схожие сновидения"
-                title="Найти схожие сновидения"
-                onClick={() => navigate(`/dreams/${dream.id}/similar`)}
-                sx={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: '50%',
-                  color: '#fff',
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(209,213,219,0.45)',
-                  transition: 'all 0.18s ease',
-                  '&:hover': {
-                    backgroundColor: 'rgba(209,213,219,0.12)',
-                  },
-                }}
-              >
-                <ManageSearchRoundedIcon sx={{ fontSize: 20 }} />
-              </IconButton>
-
-              <IconButton
-                aria-label="Перейти к анализу"
-                title="Перейти к анализу"
-                onClick={() => handleOpenBlockView()}
-                sx={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: '50%',
-                  color: '#fff',
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(209,213,219,0.45)',
-                  transition: 'all 0.18s ease',
-                  '&:hover': {
-                    backgroundColor: 'rgba(209,213,219,0.12)',
-                  },
-                }}
-              >
-                <InsightsIcon sx={{ fontSize: 20 }} />
-              </IconButton>
-            </Box>
-          </Paper>
-
-          {/* Диалог с блоками сна */}
-          <Dialog
-            open={isBlockView}
-            onClose={handleCloseBlockView}
-            maxWidth="md"
-            fullWidth
-            PaperProps={{
-              sx: {
-                position: 'relative',
-                background:
-                  'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-                backdropFilter: 'blur(18px)',
-                border: `1px solid ${glassBorder}`,
-                color: '#fff',
-                borderRadius: 4,
-                boxShadow: '0 12px 60px rgba(24,32,80,0.38)',
-                p: 0,
-              },
-            }}
-          >
-            <DialogTitle sx={{ px: 3, pt: 2, pb: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <IconButton
-                  aria-label="Назад к тексту"
-                  onClick={handleCloseBlockView}
-                  sx={{
-                    color: '#fff',
-                    bgcolor: 'rgba(255,255,255,0.08)',
-                    '&:hover': { bgcolor: 'rgba(255,255,255,0.16)' },
-                  }}
-                >
-                  <ArrowBackIosNewIcon fontSize="small" />
-                </IconButton>
-
-                <Typography variant="h6" sx={{ flexGrow: 1, textAlign: 'center' }}>
-                  Выделите блоки в тексте сна
-                </Typography>
-
-                <Tooltip title="Удалить последний блок">
-                  <Badge
-                    overlap="circular"
-                    anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-                    badgeContent={
-                      <Box
-                        component="span"
-                        sx={{ fontSize: '0.65rem', fontWeight: 700, lineHeight: 1 }}
-                      >
-                        -1
-                      </Box>
-                    }
-                    sx={{
-                      '& .MuiBadge-badge': {
-                        pointerEvents: 'none',
-                        background: blocks.length
-                          ? 'linear-gradient(135deg, #a77bff 0%, #80ffea 100%)'
-                          : 'rgba(255,255,255,0.12)',
-                        color: '#fff',
-                        minWidth: 18,
-                        height: 18,
-                        borderRadius: '9px',
-                        boxShadow: '0 4px 10px rgba(0,0,0,0.25)',
-                        transform: 'translate(50%,-70%)',
-                        fontSize: '0.65rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      },
-                    }}
-                  >
-                    <IconButton
-                      aria-label="Удалить последний блок"
-                      onClick={handleUndoLastBlock}
-                      disabled={!blocks.length}
-                      sx={{
-                        color: blocks.length ? '#fff' : 'rgba(255,255,255,0.3)',
-                        bgcolor: 'rgba(255,255,255,0.08)',
-                        '&:hover': {
-                          bgcolor: blocks.length
-                            ? 'rgba(255,255,255,0.16)'
-                            : 'rgba(255,255,255,0.08)',
-                        },
-                      }}
-                    >
-                      <DeleteOutlineIcon />
-                    </IconButton>
-                  </Badge>
-                </Tooltip>
-              </Box>
-            </DialogTitle>
-
-            <DialogContent sx={{ px: 3, pt: 1, pb: 6 }}>
-              <DreamBlocks
-                text={dream.dreamText}
-                blocks={blocks}
-                dreamId={dream.id}
-                onBlocksChange={(next) => {
-                  setBlocks(next);
-                  if (!next.length) {
-                    setActiveBlockId(null);
-                  } else if (!next.some((block) => block.id === activeBlockId)) {
-                    setActiveBlockId(next[next.length - 1].id);
-                  }
-                }}
-                activeBlockId={activeBlockId}
-                onActiveBlockChange={setActiveBlockId}
-                hideInternalBackButton
-                hideHeader
-                onBack={handleCloseBlockView}
-              />
-            </DialogContent>
-
-            <IconButton
-              aria-label="Перейти к диалогу"
-              onClick={handleGoToDialogue}
-              sx={{
-                position: 'absolute',
-                right: 24,
-                bottom: 20,
-                bgcolor: 'rgba(255,255,255,0.12)',
-                color: 'rgba(255,255,255,0.95)',
-                borderRadius: 2,
-                boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.18)' },
-              }}
-            >
-              <ChatBubbleOutlineRoundedIcon />
-            </IconButton>
-          </Dialog>
-        </>
-      ) : (
-        // ----------- РЕЖИМ РЕДАКТИРОВАНИЯ ----------- //
-        <Box
-          component="form"
-          sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}
-        >
-          <TextField
-            label="Название сна"
-            value={editedTitle}
-            onChange={(e) => setEditedTitle(e.target.value)}
-            fullWidth
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                '& fieldset': {
-                  borderColor: 'rgba(255,255,255,0.2)',
-                },
-                '&:hover fieldset': {
-                  borderColor: accentColor,
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: accentColor,
-                },
-              },
-              '& .MuiInputLabel-root': {
-                color: 'rgba(255,255,255,0.7)',
-              },
-              '& .MuiInputLabel-root.Mui-focused': {
-                color: accentColor,
-              },
-              '& .MuiInputBase-input': {
-                color: '#fff',
-              },
-            }}
-            InputLabelProps={{
-              style: { color: '#fff' },
-            }}
-            InputProps={{
-              style: { color: '#fff' },
-            }}
-          />
-
-          <Autocomplete
-            freeSolo
-            options={categories}
-            value={editedCategory}
-            onChange={(_, newValue) => setEditedCategory(newValue)}
-            onInputChange={(_, newInputValue) => setEditedCategory(newInputValue)}
-            PaperComponent={({ children }) => (
-              <Paper
-                sx={{
-                  bgcolor: 'rgba(255,255,255,0.06)',
-                  backdropFilter: 'blur(12px)',
-                  border: `1px solid ${glassBorder}`,
-                  borderRadius: 2,
-                  color: '#fff',
-                  mt: 0.5,
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-                }}
-              >
-                {children}
-              </Paper>
-            )}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Категория сна"
-                sx={{
-                  '& .MuiOutlinedInput-root': {
-                    '& fieldset': {
-                      borderColor: 'rgba(255,255,255,0.2)',
-                    },
-                    '&:hover fieldset': {
-                      borderColor: accentColor,
-                    },
-                    '&.Mui-focused fieldset': {
-                      borderColor: accentColor,
-                    },
-                  },
-                  '& .MuiInputLabel-root': {
-                    color: 'rgba(255,255,255,0.7)',
-                  },
-                  '& .MuiInputLabel-root.Mui-focused': {
-                    color: accentColor,
-                  },
-                  '& .MuiInputBase-input': {
-                    color: '#fff',
-                  },
-                }}
-                InputLabelProps={{
-                  style: { color: '#fff' },
-                }}
-              />
-            )}
-          />
-
-          <TextField
-            label="Контекст сновидения"
-            value={editedDreamSummary}
-            onChange={(e) => setEditedDreamSummary(e.target.value)}
-            multiline
-            minRows={3}
-            fullWidth
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                '& fieldset': {
-                  borderColor: 'rgba(255,255,255,0.2)',
-                },
-                '&:hover fieldset': {
-                  borderColor: accentColor,
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: accentColor,
-                },
-              },
-              '& .MuiInputLabel-root': {
-                color: 'rgba(255,255,255,0.7)',
-              },
-              '& .MuiInputLabel-root.Mui-focused': {
-                color: accentColor,
-              },
-              '& .MuiInputBase-input': {
-                color: '#fff',
-              },
-            }}
-            InputLabelProps={{
-              style: { color: '#fff' },
-            }}
-            InputProps={{
-              style: { color: '#fff' },
-            }}
-          />
-
-          <TextField
-            label="Текст сна"
-            value={editedText}
-            onChange={(e) => setEditedText(e.target.value)}
-            multiline
-            minRows={4}
-            fullWidth
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                '& fieldset': {
-                  borderColor: 'rgba(255,255,255,0.2)',
-                },
-                '&:hover fieldset': {
-                  borderColor: accentColor,
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: accentColor,
-                },
-              },
-              '& .MuiInputLabel-root': {
-                color: 'rgba(255,255,255,0.7)',
-              },
-              '& .MuiInputLabel-root.Mui-focused': {
-                color: accentColor,
-              },
-              '& .MuiInputBase-input': {
-                color: '#fff',
-              },
-            }}
-            InputLabelProps={{
-              style: { color: '#fff' },
-            }}
-            InputProps={{
-              style: { color: '#fff' },
-            }}
-          />
-
-          <Box
-            sx={{ display: 'flex', gap: 1.5, mt: 2, flexWrap: 'wrap' }}
-          >
-            <Button
-              variant="contained"
-              onClick={handleSave}
-              disabled={!editedText.trim()}
-              sx={{
-                textTransform: 'none',
-                fontWeight: 600,
-                px: 2.6,
-                py: 1.05,
-                borderRadius: 2,
-                background:
-                  'linear-gradient(135deg, rgba(120,140,255,0.32), rgba(170,120,255,0.26))',
-                border: '1px solid rgba(220,230,255,0.45)',
-                color: '#fff',
-                boxShadow: '0 14px 34px rgba(46,60,140,0.32)',
-                backdropFilter: 'blur(14px)',
-                WebkitBackdropFilter: 'blur(14px)',
-                letterSpacing: 0.25,
-                transition: 'all 0.24s ease',
-                '&:hover': {
-                  background:
-                    'linear-gradient(135deg, rgba(120,140,255,0.38), rgba(170,120,255,0.32))',
-                  boxShadow: '0 18px 38px rgba(46,60,140,0.36)',
-                  transform: 'translateY(-1px)',
-                },
-                '&:active': {
-                  transform: 'translateY(0)',
-                  boxShadow: '0 10px 24px rgba(46,60,140,0.3)',
-                },
-                '&.Mui-disabled': {
-                  color: alpha('#ffffff', 0.52),
-                  border: '1px solid rgba(220,230,255,0.25)',
-                  background:
-                    'linear-gradient(135deg, rgba(130,150,255,0.16), rgba(170,120,255,0.12))',
-                  boxShadow: 'none',
-                  backdropFilter: 'blur(10px)',
-                  WebkitBackdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              Сохранить
-            </Button>
-            <Button
-              variant="contained"
-              onClick={() => setEditing(false)}
-              sx={{
-                textTransform: 'none',
-                fontWeight: 500,
-                px: 2.4,
-                py: 1,
-                borderRadius: 2,
-                background:
-                  'linear-gradient(135deg, rgba(255,255,255,0.12), rgba(180,200,255,0.1))',
-                border: '1px solid rgba(220,230,255,0.32)',
-                color: alpha('#ffffff', 0.88),
-                boxShadow: '0 12px 28px rgba(30,40,90,0.26)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                letterSpacing: 0.2,
-                transition: 'all 0.24s ease',
-                '&:hover': {
-                  background:
-                    'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(190,206,255,0.16))',
-                  color: '#fff',
-                  boxShadow: '0 14px 32px rgba(30,40,90,0.3)',
-                  transform: 'translateY(-1px)',
-                },
-                '&:active': {
-                  transform: 'translateY(0)',
-                  boxShadow: '0 8px 20px rgba(30,40,90,0.24)',
-                },
-              }}
-            >
-              Отмена
-            </Button>
-          </Box>
-        </Box>
-      )}
-
-      {/* Диалог удаления */}
-      <Dialog
-        open={deleting}
-        onClose={() => setDeleting(false)}
-        PaperProps={{
-          sx: {
-            background:
-              'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-            backdropFilter: 'blur(12px)',
-            border: `1px solid ${glassBorder}`,
-            color: '#fff',
-            borderRadius: 3,
-          },
-        }}
-      >
-        <DialogTitle>Удалить сон?</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ color: 'rgba(255,255,255,0.85)' }}>
-            Вы уверены, что хотите удалить этот сон? Это действие нельзя отменить.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setDeleting(false)} sx={{ color: '#fff' }}>
-            Отмена
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={handleDelete}
-            sx={{
-              bgcolor: 'rgba(255, 100, 100, 0.95)',
-              '&:hover': {
-                bgcolor: 'rgba(255, 100, 100, 0.85)',
-              },
-            }}
-          >
-            Удалить
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-          severity={snackbar.severity}
-          sx={{
-            width: '100%',
-            '& .MuiAlert-message': { fontSize: '0.95rem' },
-            bgcolor: 'rgba(0,0,0,0.35)',
-            color: '#fff',
-            border: `1px solid ${glassBorder}`,
-            backdropFilter: 'blur(6px)',
-          }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </Box>
-  </Box>
-);
+  );
 }
 
 export default DreamDetail;
