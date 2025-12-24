@@ -48,6 +48,9 @@ import type { WordBlock } from './DreamTextSelector';
 import { normalizeInsightsResponse, formatDateTimeRu } from '../../features/insights/helpers';
 import { MOODS, type MoodOption } from 'src/features/profile/mood/MoodIcons';
 
+import SplitscreenIcon from '@mui/icons-material/Splitscreen';
+import PaletteIcon from '@mui/icons-material/Palette';
+
 type EnrichedDreamInsight = {
   messageId: string;
   text: string;
@@ -1064,44 +1067,43 @@ export function DreamDetail() {
               }}
             >
               <IconButton
-                aria-label="Найти схожие сновидения"
-                title="Найти схожие сновидения"
-                onClick={() => navigate(`/dreams/${dream.id}/similar`)}
-                sx={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: '50%',
-                  color: '#fff',
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(209,213,219,0.45)',
-                  transition: 'all 0.18s ease',
-                  '&:hover': {
-                    backgroundColor: 'rgba(209,213,219,0.12)',
-                  },
-                }}
-              >
-                <ManageSearchRoundedIcon sx={{ fontSize: 20 }} />
-              </IconButton>
-
+  aria-label="Схожие произведения искусства"
+  title="Схожие произведения искусства"
+  onClick={() => navigate(`/dreams/${dream.id}/similar`)}
+  sx={{
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    color: '#fff',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(209,213,219,0.45)',
+    transition: 'all 0.18s ease',
+    '&:hover': {
+      backgroundColor: 'rgba(209,213,219,0.12)',
+    },
+  }}
+>
+  <PaletteIcon sx={{ fontSize: 20 }} />
+</IconButton>
               <IconButton
-                aria-label="Перейти к анализу"
-                title="Перейти к анализу"
-                onClick={() => handleOpenBlockView()}
-                sx={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: '50%',
-                  color: '#fff',
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(209,213,219,0.45)',
-                  transition: 'all 0.18s ease',
-                  '&:hover': {
-                    backgroundColor: 'rgba(209,213,219,0.12)',
-                  },
-                }}
-              >
-                <InsightsIcon sx={{ fontSize: 20 }} />
-              </IconButton>
+  aria-label="Блоки сна"
+  title="Блоки сна"
+  onClick={() => handleOpenBlockView()}
+  sx={{
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    color: '#fff',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(209,213,219,0.45)',
+    transition: 'all 0.18s ease',
+    '&:hover': {
+      backgroundColor: 'rgba(209,213,219,0.12)',
+    },
+  }}
+>
+  <SplitscreenIcon sx={{ fontSize: 20 }} />
+</IconButton>
             </Box>
           </Paper>
 

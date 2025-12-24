@@ -1313,16 +1313,30 @@ const mainCardSx = {
 <Box
   sx={{
     display: 'flex',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     alignItems: 'center',
     mb: 2,
   }}
 >
-  <Typography variant="h5" sx={{ color: '#fff' }}>
-    Схожие произведения искусства
-  </Typography>
-
-  {/* NOTE: Дубликат кнопок обновления/удаления удалён — кнопки остаются в шапке */}
+  <Chip
+    label="Схожие произведения искусства"
+    size="small"
+    sx={{
+      borderColor: alpha('#ffffff', 0.24),
+      background:
+        'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+      color: alpha('#ffffff', 0.92),
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      borderRadius: 999,
+      '& .MuiChip-label': {
+        px: 1.6,
+        py: 0.4,
+        fontWeight: 600,
+        fontSize: '0.85rem',
+      },
+    }}
+  />
 </Box>
 
 {loading && (
@@ -1549,152 +1563,153 @@ const mainCardSx = {
     })}
 
     {artworks.length < MAX_ARTWORKS &&
-      (() => {
-        const isAdding = regeneratingArtwork === ADDING_INDEX;
+  (() => {
+    const isAdding = regeneratingArtwork === ADDING_INDEX;
 
-        return (
-          <ListItem
-            key="add-placeholder"
-            alignItems="center"
-            onClick={(e) => {
-              if (isAdding) return;
-              handleAddArtwork();
-            }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (isAdding) return;
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                handleAddArtwork();
-              }
-            }}
+    return (
+      <ListItem
+        key="add-placeholder"
+        alignItems="center"
+        onClick={(e) => {
+          if (isAdding) return;
+          handleAddArtwork();
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (isAdding) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleAddArtwork();
+          }
+        }}
+        sx={{
+          mb: 1.5,
+          py: { xs: 1.4, sm: 1.6 },
+          px: { xs: 1.6, sm: 2 },
+          borderRadius: 2,
+          background: 'rgba(255,255,255,0.04)',               // как у обычной карточки
+          border: `1px solid ${glassBorder}`,
+          minHeight: 84,
+          transition: 'all 0.18s ease',
+          '&:hover': {
+            background: 'rgba(255,255,255,0.07)',
+            transform: 'translateY(-2px)',
+          },
+          position: 'relative',
+          overflow: 'visible',
+          cursor: isAdding ? 'default' : 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          opacity: isAdding ? 0.98 : 1,
+        }}
+      >
+        {isAdding && (
+          <Box
             sx={{
-              mb: 1.5,
-              py: { xs: 1.4, sm: 1.6 },
-              px: { xs: 1.6, sm: 2 },
-              borderRadius: 2,
-              background: 'rgba(255,255,255,0.02)',
-              border: `1px dashed rgba(255,255,255,0.04)`,
-              minHeight: 84,
-              transition: 'all 0.18s ease',
-              '&:hover': {
-                background: 'rgba(255,255,255,0.035)',
-                transform: 'translateY(-1px)',
-              },
-              position: 'relative',
-              overflow: 'visible',
-              cursor: isAdding ? 'default' : 'pointer',
+              position: 'absolute',
+              top: 10,
+              right: 10,
               display: 'flex',
+              gap: 0.75,
               alignItems: 'center',
-              opacity: isAdding ? 0.98 : 1,
+              zIndex: 5,
             }}
           >
-            {isAdding && (
-              <Box
-                sx={{
-                  position: 'absolute',
-                  top: 10,
-                  right: 10,
-                  display: 'flex',
-                  gap: 0.75,
-                  alignItems: 'center',
-                  zIndex: 5,
-                }}
-              >
-                <Tooltip title="Генерация..." placement="top">
-                  <span>
-                    <IconButton
-                      aria-label="генерация"
-                      disabled
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: '999px',
-                        color: '#fff',
-                        backgroundColor: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.16)',
-                        boxShadow: '0 8px 18px rgba(15,23,42,0.35)',
-                        backdropFilter: 'blur(10px)',
-                        WebkitBackdropFilter: 'blur(10px)',
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          ...spin3dKeyframes,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <Box sx={{ ...heartSxBase }} aria-hidden />
-                      </Box>
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Box>
-            )}
+            <Tooltip title="Генерация..." placement="top">
+              <span>
+                <IconButton
+                  aria-label="генерация"
+                  disabled
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: '999px',
+                    color: '#fff',
+                    backgroundColor: 'rgba(255,255,255,0.10)',
+                    border: '1px solid rgba(255,255,255,0.25)',
+                    boxShadow: 'none',
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                  }}
+                >
+                  <Box
+                    sx={{
+                      ...spin3dKeyframes,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Box sx={{ ...heartSxBase }} aria-hidden />
+                  </Box>
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Box>
+        )}
 
-            <Box
+        <Box
+          sx={{
+            width: 64,
+            height: 64,
+            mr: 2,
+            position: 'relative',
+            flexShrink: 0,
+          }}
+        >
+          <Avatar
+            src="/logo.png"
+            alt="Saviora"
+            variant="rounded"
+            sx={{
+              width: 64,
+              height: 64,
+              borderRadius: 2,
+              boxShadow: 1,
+              border: `1px solid rgba(255,255,255,0.04)`,
+              bgcolor: 'rgba(255,255,255,0.03)',
+              opacity: 0.95,
+              objectFit: 'contain',
+            }}
+          />
+        </Box>
+
+        <ListItemText
+          sx={{
+            minWidth: 0,                         // НЕТ pr -> текст на всю карточку
+          }}
+          primary={
+            <Typography
+              variant="subtitle1"
               sx={{
-                width: 64,
-                height: 64,
-                mr: 2,
-                position: 'relative',
-                flexShrink: 0,
+                fontWeight: 700,
+                fontSize: '0.98rem',
+                color: '#fff',
+                lineHeight: 1.25,
               }}
             >
-              <Avatar
-                src="/logo.png"
-                alt="Saviora"
-                variant="rounded"
-                sx={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 2,
-                  boxShadow: 1,
-                  border: `1px solid rgba(255,255,255,0.04)`,
-                  bgcolor: 'rgba(255,255,255,0.03)',
-                  opacity: 0.95,
-                  objectFit: 'contain',
-                }}
-              />
-            </Box>
-
-            <ListItemText
+              Добавление произведения
+            </Typography>
+          }
+          secondary={
+            <Typography
+              variant="body2"
               sx={{
-                pr: { xs: '112px', sm: '130px' },
-                minWidth: 0,
+                fontSize: '0.83rem',
+                color: 'rgba(255,255,255,0.8)',
+                lineHeight: 1.4,
+                mt: 0.4,
               }}
-              primary={
-                <Typography
-                  variant="subtitle1"
-                  sx={{
-                    fontWeight: 600,
-                    fontSize: '0.95rem',
-                    color: 'rgba(255,255,255,0.86)',
-                  }}
-                >
-                  Добавление произведения
-                </Typography>
-              }
-              secondary={
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontSize: '0.82rem',
-                    color: 'rgba(255,255,255,0.6)',
-                    lineHeight: 1.35,
-                  }}
-                >
-                  Нажмите карточку, чтобы сгенерировать новое похожее
-                  произведение.
-                </Typography>
-              }
-            />
-          </ListItem>
-        );
-      })()}
+            >
+              Нажмите на карточку, чтобы сгенерировать новое похожее
+              произведение.
+            </Typography>
+          }
+        />
+      </ListItem>
+    );
+  })()}
   </List>
 )}
 
