@@ -57,10 +57,10 @@ export function CalendarLine({
   const slideTimeoutRef = useRef<number | null>(null);
 
   // размеры
-  const daySize = isMobile ? 36 : isTablet ? 40 : 44;
-  const fontSize = isMobile ? 12 : isTablet ? 13 : 14;
-  const dotSize = isMobile ? 4 : 6;
-  const containerMaxWidth = isMobile ? 320 : isTablet ? 420 : 520;
+  const daySize = isMobile ? 44 : isTablet ? 42 : 44;
+const fontSize = isMobile ? 14 : isTablet ? 13 : 14;
+const dotSize = isMobile ? 5 : 6;
+const containerMaxWidth = isMobile ? 360 : isTablet ? 420 : 520;
 
   const slides = useMemo(() => {
     return [-2, -1, 0, 1, 2].map(offset => {
@@ -170,7 +170,7 @@ export function CalendarLine({
               textAlign: 'center',
               color: alpha('#ffffff', 0.9),
               opacity: 0.9,
-              fontSize: isMobile ? 11 : 12,
+              fontSize: isMobile ? 12 : 12,
             }}
           >
             {day}
