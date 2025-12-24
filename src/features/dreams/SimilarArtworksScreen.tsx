@@ -111,6 +111,8 @@ const ART_TYPE_ICONS: Record<
   default: { icon: <PaletteIcon fontSize="small" />, color: ART_TYPE_COLORS.default },
 };
 
+const HEADER_BASE = 56;
+
 function detectType(art: SimilarArtwork): ArtworkType {
   if (art.type && typeof art.type === 'string') {
     const validTypes: ArtworkType[] = [
@@ -185,34 +187,38 @@ export function SimilarArtworksScreen(): React.ReactElement {
   const ADDING_INDEX = -1;
 
   const pageSx = {
-    minHeight: '100vh',
-    background: screenGradient,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    position: 'relative' as const,
-    overflow: 'hidden',
-    p: { xs: 2, sm: 4 },
-  };
+  minHeight: '100vh',
+  background: screenGradient,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  position: 'relative' as const,
+  overflow: 'hidden',
+  paddingTop: 'env(safe-area-inset-top)',
+  paddingBottom: 'env(safe-area-inset-bottom)',
+};
 
-  const mainCardSx = {
-    width: '100%',
-    maxWidth: 840,
-    borderRadius: 3,
-    background: 'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-    border: `1px solid ${glassBorder}`,
-    boxShadow: '0 12px 60px rgba(24,32,80,0.28)',
-    position: 'relative' as const,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    minHeight: '78vh',
-    overflow: 'hidden',
-    color: '#fff',
-    p: { xs: 2, sm: 3 },
-  };
+const mainCardSx = {
+  width: '100%',
+  maxWidth: 840,
+  borderRadius: 0,
+  background: 'transparent',
+  backdropFilter: 'none',
+  WebkitBackdropFilter: 'none',
+  border: 'none',
+  boxShadow: 'none',
+  position: 'relative' as const,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  minHeight: 'calc(100vh - env(safe-area-inset-top))',
+  overflow: 'hidden',
+  color: '#fff',
+  p: { xs: 2, sm: 3 },
+  pt: 2,
+  pb: 3,
+  mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`, // ключевое смещение под хедер
+};
 
   const iconBtnSxLight = {
     bgcolor: 'rgba(255,255,255,0.18)',
@@ -799,6 +805,126 @@ export function SimilarArtworksScreen(): React.ReactElement {
     );
   };
 
+  const dreamDate = dream?.date ?? null;
+  const dateStr = useMemo(() => {
+    if (!dreamDate) return '';
+    return new Date(dreamDate).toLocaleDateString('ru-RU', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }, [dreamDate]);
+
+  const Header = (
+    <Box
+      sx={{
+        position: 'fixed',
+        top: 'env(safe-area-inset-top)',
+        left: 0,
+        right: 0,
+        height: `${HEADER_BASE}px`,
+        background: 'rgba(255,255,255,0.10)',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1400,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        border: '1px solid rgba(255,255,255,0.14)',
+        boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+        px: 2,
+      }}
+    >
+      {/* Назад */}
+      <IconButton
+        aria-label="Назад"
+        onClick={() => navigate(-1)}
+        sx={{
+          position: 'absolute',
+          left: 12,
+          color: '#fff',
+          bgcolor: 'transparent',
+          borderRadius: '50%',
+          p: 1,
+          '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
+        }}
+        size="large"
+      >
+        <ArrowBackIosNewIcon fontSize="small" />
+      </IconButton>
+
+      {/* Центр: заголовок — название сна или Saviora */}
+<Typography
+  sx={{
+    maxWidth: 220, // можно подогнать: 220–260 в зависимости от того, сколько места занимают кнопки
+    textAlign: 'center',
+    fontWeight: 600,
+    fontSize: '0.98rem',
+    color: 'rgba(255,255,255,0.95)',
+    letterSpacing: 0.3,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  }}
+>
+  {dream?.title || 'Saviora'}
+</Typography>
+
+      {/* Справа: перегенерировать список + удалить список */}
+      <Box sx={{ position: 'absolute', right: 12, display: 'flex', gap: 1, alignItems: 'center' }}>
+        <Tooltip title="Перегенерировать весь список (форс-запрос)">
+          <span>
+            <IconButton
+              aria-label="перегенерировать весь список"
+              onClick={() => fetchArtworks(true)}
+              disabled={loading}
+              sx={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                color: '#fff',
+                backgroundColor: 'transparent',
+                border: '1px solid rgba(209,213,219,0.45)',
+                transition: 'all 0.18s ease',
+                '&:hover': {
+                  backgroundColor: 'rgba(209,213,219,0.12)',
+                },
+              }}
+            >
+              <RefreshIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          </span>
+        </Tooltip>
+
+        <Tooltip title="Удалить весь список">
+          <span>
+            <IconButton
+              aria-label="удалить список"
+              onClick={() => promptDeleteList()}
+              disabled={loading || artworks.length === 0}
+              sx={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                color: '#fff',
+                backgroundColor: 'transparent',
+                border: '1px solid rgba(209,213,219,0.45)',
+                transition: 'all 0.18s ease',
+                '&:hover': {
+                  backgroundColor: 'rgba(209,213,219,0.12)',
+                },
+              }}
+            >
+              <DeleteIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Box>
+    </Box>
+  );
+
   const formatDate = (dateValue?: string | number): string => {
     if (!dateValue) return '';
     const date = typeof dateValue === 'number' ? new Date(dateValue) : new Date(String(dateValue));
@@ -847,75 +973,61 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
   return (
     <Box sx={pageSx}>
-      <Box sx={mainCardSx}>
-        <IconButton
-          aria-label="Назад"
-          onClick={() => navigate(-1)}
+    {Header}
+
+    <Box sx={mainCardSx}>
+      {dream && (
+        <Box
           sx={{
-            position: 'absolute',
-            top: 16,
-            left: 16,
-            color: '#fff',
-            bgcolor: 'transparent',
-            borderRadius: '50%',
-            p: 1,
-            transition: 'background-color 0.18s, box-shadow 0.18s, transform 0.12s',
-            '&:hover': {
-              bgcolor: 'rgba(255,255,255,0.08)',
-              boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-              transform: 'translateY(-1px)',
-            },
-            '&:focus-visible': {
-              outline: '2px solid rgba(255,255,255,0.12)',
-              outlineOffset: 3,
-            },
-            zIndex: 10,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            mb: 2,
           }}
         >
-          <ArrowBackIosNewIcon fontSize="small" />
-        </IconButton>
-
-        {/* Header (DreamDetail-like) */}
-        {dream && (
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2, pt: 6 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Avatar
-                src="/logo.png"
-                alt="Dreamly"
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Avatar
+              src="/logo.png"
+              alt="Dreamly"
+              sx={{
+                width: 48,
+                height: 48,
+                border: `1px solid ${glassBorder}`,
+                backgroundColor: 'rgba(255,255,255,0.08)',
+                boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
+                flex: '0 0 auto',
+              }}
+            />
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+              <Box
                 sx={{
-                  width: 48,
-                  height: 48,
-                  border: `1px solid ${glassBorder}`,
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
-                  flex: '0 0 auto',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 1.5,
+                  minWidth: 0,
                 }}
-              />
-              <Box sx={{ minWidth: 0 }}>
-  <Chip
-    label={formatDate(dream.date)}
-    size="small"
-    variant="outlined"
-    sx={{
-      mb: dream.title ? 1 : 1.2,
-      borderColor: alpha('#ffffff', 0.24),
-      background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
-      color: alpha('#ffffff', 0.92),
-      backdropFilter: 'blur(10px)',
-      WebkitBackdropFilter: 'blur(10px)',
-      '& .MuiChip-label': {
-        px: 1.6,
-        py: 0.38,
-        fontWeight: 600,
-        letterSpacing: 0.2,
-      },
-    }}
-  />
-  {dream.title && (
-    <Typography variant="h6" sx={{ mb: 1, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-      {dream.title}
-    </Typography>
-  )}
+              >
+                {dateStr && (
+                  <Chip
+                    label={dateStr}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      borderColor: alpha('#ffffff', 0.24),
+                      background:
+                        'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+                      color: alpha('#ffffff', 0.92),
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      '& .MuiChip-label': {
+                        px: 1.2,
+                        fontWeight: 600,
+                      },
+                    }}
+                  />
+                )}
+
                 {dream.category && (
                   <Chip
                     label={dream.category}
@@ -923,13 +1035,14 @@ export function SimilarArtworksScreen(): React.ReactElement {
                     sx={{
                       bgcolor: 'rgba(255,255,255,0.1)',
                       color: '#fff',
-                      mb: 1,
+                      fontWeight: 500,
+                      border: `1px solid ${alpha('#fff', 0.1)}`,
                     }}
                   />
                 )}
 
-                {/* Mood display (large icon + label) */}
-                <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, gap: 1, minWidth: 0 }}>
+                {/* Mood */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                   <Tooltip title={currentMoodOption?.label ?? 'Выбрать настроение'} arrow>
                     <span>
                       <IconButton
@@ -937,182 +1050,160 @@ export function SimilarArtworksScreen(): React.ReactElement {
                         onClick={handleMoodClick}
                         sx={{
                           p: 0,
-                          mr: 0.5,
                           borderRadius: '50%',
-                          bgcolor: 'transparent',
-                          '&:hover': {
-                            transform: 'translateY(-1px)',
-                          },
-                          cursor: 'pointer',
+                          '&:hover': { transform: 'translateY(-1px)' },
                         }}
                       >
                         {currentMoodOption ? (
                           <Avatar
                             sx={{
-                              width: 36,
-                              height: 36,
+                              width: 32,
+                              height: 32,
                               background: moodGradient(currentMoodOption.color),
-                              color: '#fff',
-                              boxShadow: `0 10px 28px ${alpha('#000', 0.18)}, ${currentMoodOption ? `0 0 0 6px ${alpha(currentMoodOption.color, 0.06)}` : 'none'}`,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
+                              boxShadow: `0 4px 12px ${alpha('#000', 0.2)}`,
                             }}
                           >
                             {MoodIconComponent ? (
-                              <MoodIconComponent style={{ color: '#fff', fontSize: 18 }} />
+                              <MoodIconComponent style={{ color: '#fff', fontSize: 16 }} />
                             ) : (
-                              <MoodIcon style={{ color: '#fff', fontSize: 18 }} />
+                              <MoodIcon style={{ color: '#fff', fontSize: 16 }} />
                             )}
                           </Avatar>
                         ) : (
                           <Avatar
                             sx={{
-                              width: 36,
-                              height: 36,
+                              width: 32,
+                              height: 32,
                               background: alpha('#fff', 0.04),
-                              color: 'rgba(255,255,255,0.7)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
+                              border: `1px solid ${alpha('#fff', 0.1)}`,
                             }}
                           >
-                            <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: 'rgba(255,255,255,0.6)' }} />
+                            <Box
+                              sx={{
+                                width: 4,
+                                height: 4,
+                                borderRadius: '50%',
+                                bgcolor: 'rgba(255,255,255,0.6)',
+                              }}
+                            />
                           </Avatar>
                         )}
                       </IconButton>
                     </span>
                   </Tooltip>
-
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: '#fff',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      minWidth: 0,
-                    }}
-                  >
-                    {currentMoodOption ? currentMoodOption.label : 'Выбрать настроение'}
-                  </Typography>
-
-                  {/* Mood menu */}
-                  <Menu
-                    anchorEl={moodAnchorEl}
-                    open={moodMenuOpen}
-                    onClose={handleMoodClose}
-                    MenuListProps={{
-                      'aria-labelledby': 'mood-button',
-                    }}
-                    PaperProps={{
-                      sx: {
-                        bgcolor: 'rgba(255,255,255,0.06)',
-                        backdropFilter: 'blur(10px)',
-                        border: `1px solid ${glassBorder}`,
-                        color: '#fff',
-                        mt: 1,
-                        minWidth: 260,
-                      },
-                    }}
-                  >
-                    {MOODS.map((mood: MoodOption) => {
-                      const Icon = mood.icon as React.ComponentType<SvgIconProps>;
-                      const isActive = mood.id === effectiveMoodId;
-                      return (
-                        <MenuItem
-                          key={mood.id}
-                          onClick={() => handleMoodSelect(mood.id)}
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 1,
-                            color: '#fff',
-                            bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
-                            borderRadius: 1,
-                            px: 1.25,
-                            py: 0.5,
-                            '&:hover': {
-                              bgcolor: `linear-gradient(135deg, ${alpha(mood.color, 0.16)} 0%, ${alpha(mood.color, 0.08)} 100%)`,
-                            },
-                          }}
-                        >
-                          <Box
-                            sx={{
-                              width: 40,
-                              height: 40,
-                              borderRadius: '50%',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
-                              boxShadow: isActive ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(mood.color, 0.06)}` : `0 8px 22px ${alpha('#000', 0.10)}`,
-                            }}
-                          >
-                            <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
-                          </Box>
-
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="body2" sx={{ color: '#fff' }}>
-                              {mood.label}
-                            </Typography>
-                          </Box>
-
-                          {isActive && (
-                            <Typography variant="caption" sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}>
-                              ✓
-                            </Typography>
-                          )}
-                        </MenuItem>
-                      );
-                    })}
-                  </Menu>
+                  {currentMoodOption && (
+                    <Typography
+                      variant="caption"
+                      sx={{ color: 'rgba(255,255,255,0.8)', fontWeight: 500 }}
+                    >
+                      {currentMoodOption.label}
+                    </Typography>
+                  )}
                 </Box>
               </Box>
-            </Box>
 
-            {/* Right: regenerate all + delete all (instead of edit/delete) */}
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Tooltip title="Перегенерировать весь список (форс-запрос)">
-                <span>
-                  <IconButton
-                    aria-label="перегенерировать весь список"
-                    onClick={() => fetchArtworks(true)}
-                    disabled={loading}
-                    sx={iconBtnSxLight}
-                  >
-                    <RefreshIcon />
-                  </IconButton>
-                </span>
-              </Tooltip>
+              {/* Меню настроения (переносим сюда, без дублирования) */}
+              <Menu
+                anchorEl={moodAnchorEl}
+                open={moodMenuOpen}
+                onClose={handleMoodClose}
+                MenuListProps={{
+                  'aria-labelledby': 'mood-button',
+                }}
+                PaperProps={{
+                  sx: {
+                    bgcolor: 'rgba(255,255,255,0.06)',
+                    backdropFilter: 'blur(10px)',
+                    border: `1px solid ${glassBorder}`,
+                    color: '#fff',
+                    mt: 1,
+                    minWidth: 260,
+                  },
+                }}
+              >
+                {MOODS.map((mood: MoodOption) => {
+                  const Icon = mood.icon as React.ComponentType<SvgIconProps>;
+                  const isActive = mood.id === effectiveMoodId;
+                  return (
+                    <MenuItem
+                      key={mood.id}
+                      onClick={() => handleMoodSelect(mood.id)}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        color: '#fff',
+                        bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
+                        borderRadius: 1,
+                        px: 1.25,
+                        py: 0.5,
+                        '&:hover': {
+                          bgcolor: `linear-gradient(135deg, ${alpha(
+                            mood.color,
+                            0.16,
+                          )} 0%, ${alpha(mood.color, 0.08)} 100%)`,
+                        },
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: '50%',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
+                          boxShadow: isActive
+                            ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(
+                                mood.color,
+                                0.06,
+                              )}`
+                            : `0 8px 22px ${alpha('#000', 0.1)}`,
+                        }}
+                      >
+                        <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
+                      </Box>
 
-              <Tooltip title="Удалить весь список">
-                <span>
-                  <IconButton
-                    aria-label="удалить список"
-                    onClick={() => promptDeleteList()}
-                    disabled={loading || artworks.length === 0}
-                    sx={iconBtnSxLight}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                </span>
-              </Tooltip>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" sx={{ color: '#fff' }}>
+                          {mood.label}
+                        </Typography>
+                      </Box>
+
+                      {isActive && (
+                        <Typography
+                          variant="caption"
+                          sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}
+                        >
+                          ✓
+                        </Typography>
+                      )}
+                    </MenuItem>
+                  );
+                })}
+              </Menu>
             </Box>
           </Box>
-        )}
+
+          {/* справа сверху уже ничего не нужно — кнопки в Header */}
+          <Box sx={{ width: 0, height: 0 }} />
+        </Box>
+      )}
 
         {/* Insights card */}
         <Paper
-          sx={{
-            p: 2,
-            mb: 2,
-            background: 'rgba(255,255,255,0.03)',
-            border: `1px solid ${glassBorder}`,
-            borderRadius: 2,
-            color: '#fff',
-          }}
-        >
+  elevation={0}
+  sx={{
+    p: 2,
+    mb: 2,
+    background: 'rgba(255,255,255,0.03)',
+    border: `1px solid ${glassBorder}`,
+    borderRadius: 2,
+    color: '#fff',
+    boxShadow: 'none',
+  }}
+>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, minWidth: 0 }}>
             <Box sx={heartSxSmall} aria-hidden />
             <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1160,21 +1251,22 @@ export function SimilarArtworksScreen(): React.ReactElement {
                     tabIndex={0}
                     onClick={() => handleInsightClick(insight)}
                     elevation={0}
-                    sx={{
-                      p: 1.25,
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      bgcolor: 'rgba(255,255,255,0.03)',
-                      border: `1px solid rgba(255,255,255,0.06)`,
-                      borderRadius: 2,
-                      transition: 'transform 0.18s ease, box-shadow 0.18s ease',
-                      '&:hover': {
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 12px 26px rgba(88,120,255,0.18)',
-                      },
-                      whiteSpace: 'pre-wrap',
-                    }}
-                  >
+  sx={{
+    p: 1.25,
+    textAlign: 'left',
+    cursor: 'pointer',
+    bgcolor: 'rgba(255,255,255,0.03)',
+    border: `1px solid rgba(255,255,255,0.06)`,
+    borderRadius: 2,
+    transition: 'transform 0.18s ease, background 0.18s ease',
+    '&:hover': {
+      transform: 'translateY(-1px)',
+      background:
+        'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(88,120,255,0.10))',
+    },
+    whiteSpace: 'pre-wrap',
+  }}
+>
                     <Typography variant="body2" sx={{ color: '#fff', fontSize: 14 }}>
                       {insight.text}
                     </Typography>
@@ -1218,257 +1310,393 @@ export function SimilarArtworksScreen(): React.ReactElement {
         </Paper>
 
         {/* Artworks list */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h5" sx={{ color: '#fff' }}>
-            Схожие произведения искусства
-          </Typography>
+<Box
+  sx={{
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    mb: 2,
+  }}
+>
+  <Typography variant="h5" sx={{ color: '#fff' }}>
+    Схожие произведения искусства
+  </Typography>
 
-          {/* NOTE: Дубликат кнопок обновления/удаления удалён — кнопки остаются в шапке */}
-        </Box>
+  {/* NOTE: Дубликат кнопок обновления/удаления удалён — кнопки остаются в шапке */}
+</Box>
 
-        {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-            <CircularProgress sx={{ color: accentColor }} />
-          </Box>
-        )}
+{loading && (
+  <Box
+    sx={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      height: '100%',
+    }}
+  >
+    <CircularProgress sx={{ color: accentColor }} />
+  </Box>
+)}
 
-        {error && (
-          <Alert
-            severity="error"
+{error && (
+  <Alert
+    severity="error"
+    sx={{
+      bgcolor: 'rgba(255,80,80,0.12)',
+      color: '#fff',
+      border: `1px solid rgba(255,80,80,0.2)`,
+    }}
+  >
+    {error}
+  </Alert>
+)}
+
+{!loading && !error && (
+  <List sx={{ width: '100%' }}>
+    {artworks.length === 0 && (
+      <Typography
+        color="rgba(255,255,255,0.65)"
+        sx={{ mt: 2, textAlign: 'center' }}
+      >
+        Ничего не найдено.
+      </Typography>
+    )}
+
+    {artworks.map((art, idx) => {
+      const isRegenerating = regeneratingArtwork === idx;
+      return (
+        <ListItem
+          key={idx}
+          alignItems="flex-start"
+          onClick={() => handleArtworkChat(art, idx)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleArtworkChat(art, idx);
+            }
+          }}
+          sx={{
+            mb: 1.5,
+            py: { xs: 1.4, sm: 1.6 },
+            px: { xs: 1.6, sm: 2 },
+            borderRadius: 2,
+            background: 'rgba(255,255,255,0.04)',
+            border: `1px solid ${glassBorder}`,
+            minHeight: 84,
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              background: 'rgba(255,255,255,0.07)',
+              transform: 'translateY(-2px)',
+            },
+            position: 'relative',
+            overflow: 'visible',
+            cursor: 'pointer',
+          }}
+        >
+          {renderArtworkAvatar(art, idx)}
+
+          <ListItemText
+  sx={{ minWidth: 0 }}
+  primary={
+    <Typography
+      variant="subtitle1"
+      sx={{
+        fontWeight: 700,
+        fontSize: '0.98rem',
+        color: '#fff',
+        lineHeight: 1.25,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        display: '-webkit-box',
+        WebkitLineClamp: 2,          // можно 2–3, чтобы длинные названия точно влезали
+        WebkitBoxOrient: 'vertical',
+      }}
+    >
+      {art.title}
+    </Typography>
+  }
+  secondary={
+    <Box sx={{ mt: 0.5 }}>
+      <Typography
+        component="span"
+        variant="body2"
+        sx={{
+          display: 'block',
+          fontSize: '0.86rem',
+          fontWeight: 500,
+          color: 'rgba(255,255,255,0.9)',
+          mb: 0.25,
+        }}
+      >
+        {art.author}
+      </Typography>
+
+      <Typography
+        variant="body2"
+        sx={{
+          fontSize: '0.83rem',
+          lineHeight: 1.35,
+          color: 'rgba(255,255,255,0.8)',
+          overflow: 'hidden',
+          display: '-webkit-box',
+          WebkitLineClamp: 4,        // тут уже нет «дыры» под кнопки, текст идёт на всю ширину
+          WebkitBoxOrient: 'vertical',
+        }}
+      >
+        {art.desc}
+      </Typography>
+    </Box>
+  }
+/>
+
+          {/* Кнопки управления — горизонтально, без теней */}
+<Box
+  sx={{
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 1,
+    alignItems: 'center',
+    zIndex: 5,
+  }}
+>
+  <Tooltip title="Перегенерировать">
+    <span>
+      <IconButton
+        aria-label="перегенерировать"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleRegenerateArtwork(idx);
+        }}
+        disabled={isRegenerating}
+        sx={{
+          width: 32,
+          height: 32,
+          borderRadius: '999px',
+          color: '#fff',
+          backgroundColor: 'rgba(255,255,255,0.10)',
+          border: '1px solid rgba(255,255,255,0.25)',
+          boxShadow: 'none',                // УБРАЛИ тени
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          transition: 'background-color 0.18s ease, transform 0.18s ease',
+          '&:hover': {
+            backgroundColor: 'rgba(255,255,255,0.18)',
+            transform: 'translateY(-1px)',
+          },
+          '& .MuiSvgIcon-root': {
+            fontSize: 18,
+          },
+        }}
+      >
+        {isRegenerating ? (
+          <Box
             sx={{
-              bgcolor: 'rgba(255,80,80,0.12)',
-              color: '#fff',
-              border: `1px solid rgba(255,80,80,0.2)`,
+              ...spin3dKeyframes,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            {error}
-          </Alert>
+            <Box sx={{ ...heartSxBase }} aria-hidden />
+          </Box>
+        ) : (
+          <AutorenewIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
         )}
+      </IconButton>
+    </span>
+  </Tooltip>
 
-        {!loading && !error && (
-          <List sx={{ width: '100%' }}>
-            {artworks.length === 0 && (
-              <Typography color="rgba(255,255,255,0.65)" sx={{ mt: 2, textAlign: 'center' }}>
-                Ничего не найдено.
-              </Typography>
-            )}
+  <Tooltip title="Удалить">
+    <span>
+      <IconButton
+        aria-label="удалить"
+        onClick={(e) => {
+          e.stopPropagation();
+          promptDeleteArtwork(idx);
+        }}
+        sx={{
+          width: 32,
+          height: 32,
+          borderRadius: '999px',
+          color: '#fff',
+          backgroundColor: 'rgba(255,255,255,0.10)',
+          border: '1px solid rgba(255,255,255,0.25)',
+          boxShadow: 'none',                // УБРАЛИ тени
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          transition: 'background-color 0.18s ease, transform 0.18s ease',
+          '&:hover': {
+            backgroundColor: 'rgba(255,255,255,0.18)',
+            transform: 'translateY(-1px)',
+          },
+          '& .MuiSvgIcon-root': {
+            fontSize: 18,
+          },
+        }}
+      >
+        <DeleteIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
+      </IconButton>
+    </span>
+  </Tooltip>
+</Box>
+        </ListItem>
+      );
+    })}
 
-            {artworks.map((art, idx) => {
-              const isRegenerating = regeneratingArtwork === idx;
-              return (
-                <ListItem
-                  key={idx}
-                  alignItems="flex-start"
-                  onClick={() => handleArtworkChat(art, idx)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleArtworkChat(art, idx);
-                    }
-                  }}
-                  sx={{
-                    mb: 1.5,
-                    py: 1.5,
-                    px: 2,
-                    borderRadius: 2,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${glassBorder}`,
-                    minHeight: 84,
-                    transition: 'all 0.2s ease',
-                    '&:hover': {
-                      background: 'rgba(255,255,255,0.07)',
-                      transform: 'translateY(-2px)',
-                      boxShadow: '0 6px 18px rgba(0,0,0,0.14)',
-                    },
-                    position: 'relative',
-                    overflow: 'visible',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {renderArtworkAvatar(art, idx)}
+    {artworks.length < MAX_ARTWORKS &&
+      (() => {
+        const isAdding = regeneratingArtwork === ADDING_INDEX;
 
-                  <ListItemText
-                    sx={{
-                      pr: { xs: '130px', sm: '150px' },
-                      minWidth: 0,
-                    }}
-                    primary={
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: 16, color: '#fff' }}>
-                        {art.title}
-                      </Typography>
-                    }
-                    secondary={
-                      <>
-                        <Typography component="span" variant="body2" sx={{ fontSize: 14, color: 'rgba(255,255,255,0.92)' }}>
-                          {art.author}
-                        </Typography>
-                        <br />
-                        <Typography variant="body2" sx={{ fontSize: 13, color: 'rgba(255,255,255,0.74)' }}>
-                          {art.desc}
-                        </Typography>
-                      </>
-                    }
-                  />
-
-                  <Box
-                    sx={{
-                      position: 'absolute',
-                      top: 10,
-                      right: 10,
-                      display: 'flex',
-                      gap: 0.75,
-                      alignItems: 'center',
-                      zIndex: 5,
-                    }}
-                  >
-                    <Tooltip title="Перегенерировать">
-                      <span>
-                        <IconButton
-                          aria-label="перегенерировать"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRegenerateArtwork(idx);
-                          }}
-                          disabled={isRegenerating}
-                          sx={cardIconSx}
-                        >
-                          {isRegenerating ? (
-                            <Box sx={{ ...spin3dKeyframes, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <Box sx={{ ...heartSxBase }} aria-hidden />
-                            </Box>
-                          ) : (
-                            <AutorenewIcon sx={{ color: 'rgba(255,255,255,0.95)', fontSize: 18 }} />
-                          )}
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-
-                    <Tooltip title="Удалить">
-                      <span>
-                        <IconButton
-                          aria-label="удалить"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            promptDeleteArtwork(idx);
-                          }}
-                          sx={cardIconSx}
-                        >
-                          <DeleteIcon sx={{ color: 'rgba(255,255,255,0.95)', fontSize: 18 }} />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Box>
-                </ListItem>
-              );
-            })}
-
-            {artworks.length < MAX_ARTWORKS && (() => {
-              const isAdding = regeneratingArtwork === ADDING_INDEX;
-
-              return (
-                <ListItem
-                  key="add-placeholder"
-                  alignItems="center"
-                  onClick={(e) => {
-                    if (isAdding) return;
-                    handleAddArtwork();
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (isAdding) return;
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleAddArtwork();
-                    }
-                  }}
-                  sx={{
-                    mb: 1.5,
-                    py: 1.5,
-                    px: 2,
-                    borderRadius: 2,
-                    background: 'rgba(255,255,255,0.02)',
-                    border: `1px dashed rgba(255,255,255,0.04)`,
-                    minHeight: 84,
-                    transition: 'all 0.18s ease',
-                    '&:hover': {
-                      background: 'rgba(255,255,255,0.035)',
-                      transform: 'translateY(-1px)',
-                      boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
-                    },
-                    position: 'relative',
-                    overflow: 'visible',
-                    cursor: isAdding ? 'default' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    opacity: isAdding ? 0.98 : 1,
-                  }}
-                >
-                  {isAdding && (
-                    <Box
+        return (
+          <ListItem
+            key="add-placeholder"
+            alignItems="center"
+            onClick={(e) => {
+              if (isAdding) return;
+              handleAddArtwork();
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (isAdding) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleAddArtwork();
+              }
+            }}
+            sx={{
+              mb: 1.5,
+              py: { xs: 1.4, sm: 1.6 },
+              px: { xs: 1.6, sm: 2 },
+              borderRadius: 2,
+              background: 'rgba(255,255,255,0.02)',
+              border: `1px dashed rgba(255,255,255,0.04)`,
+              minHeight: 84,
+              transition: 'all 0.18s ease',
+              '&:hover': {
+                background: 'rgba(255,255,255,0.035)',
+                transform: 'translateY(-1px)',
+              },
+              position: 'relative',
+              overflow: 'visible',
+              cursor: isAdding ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              opacity: isAdding ? 0.98 : 1,
+            }}
+          >
+            {isAdding && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 10,
+                  right: 10,
+                  display: 'flex',
+                  gap: 0.75,
+                  alignItems: 'center',
+                  zIndex: 5,
+                }}
+              >
+                <Tooltip title="Генерация..." placement="top">
+                  <span>
+                    <IconButton
+                      aria-label="генерация"
+                      disabled
                       sx={{
-                        position: 'absolute',
-                        top: 10,
-                        right: 10,
-                        display: 'flex',
-                        gap: 0.75,
-                        alignItems: 'center',
-                        zIndex: 5,
+                        width: 36,
+                        height: 36,
+                        borderRadius: '999px',
+                        color: '#fff',
+                        backgroundColor: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.16)',
+                        boxShadow: '0 8px 18px rgba(15,23,42,0.35)',
+                        backdropFilter: 'blur(10px)',
+                        WebkitBackdropFilter: 'blur(10px)',
                       }}
                     >
-                      <Tooltip title="Генерация..." placement="top">
-                        <span>
-                          <IconButton aria-label="генерация" disabled sx={cardIconSx}>
-                            <Box sx={{ ...spin3dKeyframes, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <Box sx={{ ...heartSxBase }} aria-hidden />
-                            </Box>
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                  )}
+                      <Box
+                        sx={{
+                          ...spin3dKeyframes,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Box sx={{ ...heartSxBase }} aria-hidden />
+                      </Box>
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Box>
+            )}
 
-                  <Box sx={{ width: 64, height: 64, mr: 2, position: 'relative', flexShrink: 0 }}>
-                    <Avatar
-                      src="/logo.png"
-                      alt="Saviora"
-                      variant="rounded"
-                      sx={{
-                        width: 64,
-                        height: 64,
-                        borderRadius: 2,
-                        boxShadow: 1,
-                        border: `1px solid rgba(255,255,255,0.04)`,
-                        bgcolor: 'rgba(255,255,255,0.03)',
-                        opacity: 0.95,
-                        objectFit: 'contain',
-                      }}
-                    />
-                  </Box>
+            <Box
+              sx={{
+                width: 64,
+                height: 64,
+                mr: 2,
+                position: 'relative',
+                flexShrink: 0,
+              }}
+            >
+              <Avatar
+                src="/logo.png"
+                alt="Saviora"
+                variant="rounded"
+                sx={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: 2,
+                  boxShadow: 1,
+                  border: `1px solid rgba(255,255,255,0.04)`,
+                  bgcolor: 'rgba(255,255,255,0.03)',
+                  opacity: 0.95,
+                  objectFit: 'contain',
+                }}
+              />
+            </Box>
 
-                  <ListItemText
-                    sx={{
-                      pr: { xs: '130px', sm: '150px' },
-                      minWidth: 0,
-                    }}
-                    primary={
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: 15, color: 'rgba(255,255,255,0.86)' }}>
-                        Добавление произведения
-                      </Typography>
-                    }
-                    secondary={
-                      <Typography variant="body2" sx={{ fontSize: 13, color: 'rgba(255,255,255,0.58)' }}>
-                        Нажмите карточку, чтобы сгенерировать новое похожее произведение.
-                      </Typography>
-                    }
-                  />
-                </ListItem>
-              );
-            })()}
-          </List>
-        )}
+            <ListItemText
+              sx={{
+                pr: { xs: '112px', sm: '130px' },
+                minWidth: 0,
+              }}
+              primary={
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    fontWeight: 600,
+                    fontSize: '0.95rem',
+                    color: 'rgba(255,255,255,0.86)',
+                  }}
+                >
+                  Добавление произведения
+                </Typography>
+              }
+              secondary={
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontSize: '0.82rem',
+                    color: 'rgba(255,255,255,0.6)',
+                    lineHeight: 1.35,
+                  }}
+                >
+                  Нажмите карточку, чтобы сгенерировать новое похожее
+                  произведение.
+                </Typography>
+              }
+            />
+          </ListItem>
+        );
+      })()}
+  </List>
+)}
 
         {/* Delete dialogs, snackbar */}
         <Dialog
@@ -1564,11 +1792,16 @@ export function SimilarArtworksScreen(): React.ReactElement {
         </Dialog>
 
         <Snackbar
-          open={snackbar.open}
-          autoHideDuration={4000}
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        >
+  open={snackbar.open}
+  autoHideDuration={4000}
+  onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+  sx={{
+    '&.MuiSnackbar-root': {
+      bottom: '25vh',
+    },
+  }}
+>
           <Alert
             onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
             severity={snackbar.severity}
