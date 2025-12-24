@@ -416,12 +416,13 @@ export function DreamDetail() {
   };
 
   const handleGoToDialogue = () => {
-    if (!dream) return;
-    const targetBlock = activeBlockId ?? blocks[0]?.id ?? null;
-    const basePath = `/dreams/${dream.id}/chat`;
-    const url = targetBlock ? `${basePath}?blockId=${encodeURIComponent(targetBlock)}` : basePath;
-    navigate(url);
-  };
+  if (!dream) return;
+  const targetBlock = activeBlockId ?? blocks[0]?.id ?? null;
+  const basePath = `/dreams/${dream.id}/chat`;
+  const url = targetBlock ? `${basePath}?blockId=${encodeURIComponent(targetBlock)}` : basePath;
+
+  navigate(url, { replace: true }); // КЛЮЧЕВОЕ: не добавляем лишний шаг в историю
+};
 
   const handleInsightClick = (insight: EnrichedDreamInsight) => {
     if (!dream) return;

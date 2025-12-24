@@ -1377,192 +1377,223 @@ const mainCardSx = {
     )}
 
     {artworks.map((art, idx) => {
-      const isRegenerating = regeneratingArtwork === idx;
-      return (
-        <ListItem
-          key={idx}
-          alignItems="flex-start"
-          onClick={() => handleArtworkChat(art, idx)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              handleArtworkChat(art, idx);
-            }
-          }}
-          sx={{
-            mb: 1.5,
-            py: { xs: 1.4, sm: 1.6 },
-            px: { xs: 1.6, sm: 2 },
-            borderRadius: 2,
-            background: 'rgba(255,255,255,0.04)',
-            border: `1px solid ${glassBorder}`,
-            minHeight: 84,
-            transition: 'all 0.2s ease',
-            '&:hover': {
-              background: 'rgba(255,255,255,0.07)',
-              transform: 'translateY(-2px)',
-            },
-            position: 'relative',
-            overflow: 'visible',
-            cursor: 'pointer',
-          }}
-        >
-          {renderArtworkAvatar(art, idx)}
+  const isRegenerating = regeneratingArtwork === idx;
 
-          <ListItemText
-  sx={{ minWidth: 0 }}
-  primary={
-    <Typography
-      variant="subtitle1"
+  return (
+    <ListItem
+      key={idx}
+      alignItems="flex-start"
+      onClick={() => handleArtworkChat(art, idx)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleArtworkChat(art, idx);
+        }
+      }}
       sx={{
-        fontWeight: 700,
-        fontSize: '0.98rem',
-        color: '#fff',
-        lineHeight: 1.25,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        display: '-webkit-box',
-        WebkitLineClamp: 2,          // можно 2–3, чтобы длинные названия точно влезали
-        WebkitBoxOrient: 'vertical',
+        mb: 1.5,
+        py: { xs: 1.4, sm: 1.6 },
+        px: { xs: 1.6, sm: 2 },
+        borderRadius: 2,
+        background: 'rgba(255,255,255,0.04)',
+        border: `1px solid ${glassBorder}`,
+        minHeight: 84,
+        transition: 'all 0.2s ease',
+        '&:hover': {
+          background: 'rgba(255,255,255,0.07)',
+          transform: 'translateY(-2px)',
+        },
+        position: 'relative',
+        overflow: 'visible',
+        cursor: 'pointer',
       }}
     >
-      {art.title}
-    </Typography>
-  }
-  secondary={
-    <Box sx={{ mt: 0.5 }}>
-      <Typography
-        component="span"
-        variant="body2"
+      {/* ОБЩИЙ FLEX-КОНТЕЙНЕР */}
+      <Box
         sx={{
-          display: 'block',
-          fontSize: '0.86rem',
-          fontWeight: 500,
-          color: 'rgba(255,255,255,0.9)',
-          mb: 0.25,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 1.5,
+          width: '100%',
         }}
       >
-        {art.author}
-      </Typography>
+        {/* СЛЕВА: АВАТАР / ПРЕВЬЮ */}
+        {renderArtworkAvatar(art, idx)}
 
-      <Typography
-        variant="body2"
-        sx={{
-          fontSize: '0.83rem',
-          lineHeight: 1.35,
-          color: 'rgba(255,255,255,0.8)',
-          overflow: 'hidden',
-          display: '-webkit-box',
-          WebkitLineClamp: 4,        // тут уже нет «дыры» под кнопки, текст идёт на всю ширину
-          WebkitBoxOrient: 'vertical',
-        }}
-      >
-        {art.desc}
-      </Typography>
-    </Box>
-  }
-/>
-
-          {/* Кнопки управления — горизонтально, без теней */}
-<Box
-  sx={{
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    display: 'flex',
-    flexDirection: 'row',
-    gap: 1,
-    alignItems: 'center',
-    zIndex: 5,
-  }}
->
-  <Tooltip title="Перегенерировать">
-    <span>
-      <IconButton
-        aria-label="перегенерировать"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleRegenerateArtwork(idx);
-        }}
-        disabled={isRegenerating}
-        sx={{
-          width: 32,
-          height: 32,
-          borderRadius: '999px',
-          color: '#fff',
-          backgroundColor: 'rgba(255,255,255,0.10)',
-          border: '1px solid rgba(255,255,255,0.25)',
-          boxShadow: 'none',                // УБРАЛИ тени
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
-          transition: 'background-color 0.18s ease, transform 0.18s ease',
-          '&:hover': {
-            backgroundColor: 'rgba(255,255,255,0.18)',
-            transform: 'translateY(-1px)',
-          },
-          '& .MuiSvgIcon-root': {
-            fontSize: 18,
-          },
-        }}
-      >
-        {isRegenerating ? (
+        {/* СПРАВА: ТЕКСТ + КНОПКИ */}
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0.75,
+          }}
+        >
+          {/* ВЕРХНЯЯ СТРОКА: ЗАГОЛОВОК + КНОПКИ */}
           <Box
             sx={{
-              ...spin3dKeyframes,
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              alignItems: 'flex-start',
+              gap: 1,
+              minWidth: 0,
             }}
           >
-            <Box sx={{ ...heartSxBase }} aria-hidden />
+            {/* ЗАГОЛОВОК — РАСТЯГИВАЕТСЯ, НО НЕ НАЕЗЖАЕТ НА КНОПКИ */}
+            <Typography
+              variant="subtitle1"
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                fontWeight: 700,
+                fontSize: '0.98rem',
+                color: '#fff',
+                lineHeight: 1.25,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: '-webkit-box',
+                WebkitLineClamp: 2, // можно 3, если хочешь ещё больше строк
+                WebkitBoxOrient: 'vertical',
+              }}
+            >
+              {art.title}
+            </Typography>
+
+            {/* КНОПКИ — ГОРИЗОНТАЛЬНО, БЕЗ ТЕНЕЙ */}
+            <Box
+              sx={{
+                display: 'flex',
+                flexShrink: 0,
+                gap: 1,
+                alignItems: 'center',
+              }}
+            >
+              <Tooltip title="Перегенерировать">
+                <span>
+                  <IconButton
+                    aria-label="перегенерировать"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRegenerateArtwork(idx);
+                    }}
+                    disabled={isRegenerating}
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: '999px',
+                      color: '#fff',
+                      backgroundColor: 'rgba(255,255,255,0.10)',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                      boxShadow: 'none',
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      transition:
+                        'background-color 0.18s ease, transform 0.18s ease',
+                      '&:hover': {
+                        backgroundColor: 'rgba(255,255,255,0.18)',
+                        transform: 'translateY(-1px)',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        fontSize: 18,
+                      },
+                    }}
+                  >
+                    {isRegenerating ? (
+                      <Box
+                        sx={{
+                          ...spin3dKeyframes,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Box sx={{ ...heartSxBase }} aria-hidden />
+                      </Box>
+                    ) : (
+                      <AutorenewIcon
+                        sx={{ color: 'rgba(255,255,255,0.95)' }}
+                      />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Tooltip title="Удалить">
+                <span>
+                  <IconButton
+                    aria-label="удалить"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      promptDeleteArtwork(idx);
+                    }}
+                    sx={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: '999px',
+                      color: '#fff',
+                      backgroundColor: 'rgba(255,255,255,0.10)',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                      boxShadow: 'none',
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      transition:
+                        'background-color 0.18s ease, transform 0.18s ease',
+                      '&:hover': {
+                        backgroundColor: 'rgba(255,255,255,0.18)',
+                        transform: 'translateY(-1px)',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        fontSize: 18,
+                      },
+                    }}
+                  >
+                    <DeleteIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
           </Box>
-        ) : (
-          <AutorenewIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
-        )}
-      </IconButton>
-    </span>
-  </Tooltip>
 
-  <Tooltip title="Удалить">
-    <span>
-      <IconButton
-        aria-label="удалить"
-        onClick={(e) => {
-          e.stopPropagation();
-          promptDeleteArtwork(idx);
-        }}
-        sx={{
-          width: 32,
-          height: 32,
-          borderRadius: '999px',
-          color: '#fff',
-          backgroundColor: 'rgba(255,255,255,0.10)',
-          border: '1px solid rgba(255,255,255,0.25)',
-          boxShadow: 'none',                // УБРАЛИ тени
-          backdropFilter: 'blur(8px)',
-          WebkitBackdropFilter: 'blur(8px)',
-          transition: 'background-color 0.18s ease, transform 0.18s ease',
-          '&:hover': {
-            backgroundColor: 'rgba(255,255,255,0.18)',
-            transform: 'translateY(-1px)',
-          },
-          '& .MuiSvgIcon-root': {
-            fontSize: 18,
-          },
-        }}
-      >
-        <DeleteIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
-      </IconButton>
-    </span>
-  </Tooltip>
-</Box>
-        </ListItem>
-      );
-    })}
+          {/* НИЖНИЙ БЛОК: АВТОР + ОПИСАНИЕ НА ВСЮ ШИРИНУ */}
+          <Box sx={{ mt: 0.25 }}>
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                display: 'block',
+                fontSize: '0.86rem',
+                fontWeight: 500,
+                color: 'rgba(255,255,255,0.9)',
+                mb: 0.25,
+              }}
+            >
+              {art.author}
+            </Typography>
 
-    {artworks.length < MAX_ARTWORKS &&
+            <Typography
+              variant="body2"
+              sx={{
+                fontSize: '0.83rem',
+                lineHeight: 1.35,
+                color: 'rgba(255,255,255,0.8)',
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 4,
+                WebkitBoxOrient: 'vertical',
+              }}
+            >
+              {art.desc}
+            </Typography>
+          </Box>
+        </Box>
+      </Box>
+    </ListItem>
+  );
+})}
+
+{artworks.length < MAX_ARTWORKS &&
   (() => {
     const isAdding = regeneratingArtwork === ADDING_INDEX;
 
@@ -1588,7 +1619,7 @@ const mainCardSx = {
           py: { xs: 1.4, sm: 1.6 },
           px: { xs: 1.6, sm: 2 },
           borderRadius: 2,
-          background: 'rgba(255,255,255,0.04)',               // как у обычной карточки
+          background: 'rgba(255,255,255,0.04)',
           border: `1px solid ${glassBorder}`,
           minHeight: 84,
           transition: 'all 0.18s ease',
@@ -1677,7 +1708,7 @@ const mainCardSx = {
 
         <ListItemText
           sx={{
-            minWidth: 0,                         // НЕТ pr -> текст на всю карточку
+            minWidth: 0,
           }}
           primary={
             <Typography

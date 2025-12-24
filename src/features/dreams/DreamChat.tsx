@@ -732,12 +732,12 @@ export const DreamChat: React.FC = () => {
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
               <IconButton
-                onClick={() => navigate(`/dreams/${id}/blocks`)}
-                sx={{ color: '#fff', mr: 1 }}
-                aria-label="Назад"
-              >
-                <ArrowBackIosNewIcon />
-              </IconButton>
+  onClick={() => navigate(-1)}
+  sx={{ color: '#fff', mr: 1 }}
+  aria-label="Назад"
+>
+  <ArrowBackIosNewIcon />
+</IconButton>
               <Typography
                 variant="h6"
                 sx={{
