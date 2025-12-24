@@ -622,6 +622,17 @@ export function DreamDetail() {
   if (loading) {
     return (
       <Box sx={pageSx}>
+        <Box
+    sx={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`,
+      background: screenGradient, // или любой сплошной цвет
+      zIndex: 1399,
+    }}
+  />
         {Header}
         <Box sx={mainCardSx}>
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
