@@ -4,9 +4,9 @@ import {
   Box,
   Typography,
   Snackbar,
-  Alert,
   Avatar,
   CircularProgress,
+  Paper,
 } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
 
@@ -788,30 +788,53 @@ export function ProfileScreen() {
 
       <Footer />
 
+      {/* Стеклянный снекбар в стиле DreamChat / DreamDetail */}
       <Snackbar
-  open={snackbarOpen}
-  autoHideDuration={3000}
-  onClose={() => setSnackbarOpen(false)}
-  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-  sx={{
-    // поднимаем снекбар вверх от самого низа экрана
-    bottom: '25vh', // ~25% высоты viewport’а
-  }}
->
-  <Alert
-    severity={snackbarSeverity}
-    sx={{
-      width: '100%',
-      '& .MuiAlert-message': { fontSize: '0.95rem' },
-      bgcolor: 'rgba(0,0,0,0.35)',
-      color: '#fff',
-      border: `1px solid ${glassBorder}`,
-      backdropFilter: 'blur(6px)',
-    }}
-  >
-    {snackbarMessage}
-  </Alert>
-</Snackbar>
+        open={snackbarOpen}
+        autoHideDuration={3000}
+        onClose={() => setSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          // позиция относительно футера/инпута; можешь подстроить
+          bottom: '20vh',
+        }}
+        ContentProps={{
+          sx: {
+            backgroundColor: 'transparent',
+            boxShadow: 'none',
+            padding: 0,
+          },
+        }}
+      >
+        <Paper
+          elevation={0}
+          sx={{
+            px: 2.4,
+            py: 1.4,
+            borderRadius: 2.5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            background: 'rgba(255,255,255,0.10)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            border: `1px solid ${glassBorder}`,
+            boxShadow: 'none',
+            color: '#fff',
+            maxWidth: 520,
+          }}
+        >
+          <Box
+            component="span"
+            sx={{
+              fontSize: '1.0rem',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {snackbarMessage}
+          </Box>
+        </Paper>
+      </Snackbar>
     </Box>
   );
 }

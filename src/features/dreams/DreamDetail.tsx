@@ -1527,29 +1527,51 @@ export function DreamDetail() {
       <Snackbar
   open={snackbar.open}
   autoHideDuration={4000}
-  onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+  onClose={(_, reason) => {
+    if (reason === 'clickaway') return;
+    setSnackbar((s) => ({ ...s, open: false }));
+  }}
   anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
   sx={{
     '&.MuiSnackbar-root': {
-      bottom: '25vh', // 25% высоты экрана от низа
+      bottom: '25vh', // как и было
     },
   }}
 >
-        <Alert
-          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-          severity={snackbar.severity}
-          sx={{
-            width: '100%',
-            '& .MuiAlert-message': { fontSize: '0.95rem' },
-            bgcolor: 'rgba(0,0,0,0.35)',
-            color: '#fff',
-            border: `1px solid ${glassBorder}`,
-            backdropFilter: 'blur(6px)',
-          }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+  <Alert
+    onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+    severity={snackbar.severity}
+    icon={false}
+    variant="outlined"
+    sx={{
+      width: '100%',
+      px: 2.4,
+      py: 1.4,
+      borderRadius: 2.5,
+      display: 'flex',
+      alignItems: 'center',
+      border: `1px solid ${glassBorder}`,
+      background: 'rgba(255,255,255,0.10)',
+      backdropFilter: 'blur(14px)',
+      WebkitBackdropFilter: 'blur(14px)',
+      boxShadow: 'none', // было: '0 18px 45px rgba(0,0,0,0.55)'
+      color: '#fff',
+      '& .MuiAlert-message': {
+        fontSize: '1.05rem',
+        padding: 0,
+      },
+      ...(snackbar.severity === 'error'
+        ? {
+            borderColor: 'rgba(255,120,120,0.7)',
+            // без доп. тени для error
+            boxShadow: 'none',
+          }
+        : {}),
+    }}
+  >
+    {snackbar.message}
+  </Alert>
+</Snackbar>
     </Box>
   </Box>
 );

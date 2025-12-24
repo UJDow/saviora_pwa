@@ -6,6 +6,8 @@ import { getDreams, updateDream } from '../../utils/api';
 import type { Dream } from '../../utils/api';
 import type { WordBlock } from './DreamTextSelector';
 
+const glassBorder = 'rgba(255,255,255,0.06)';
+
 interface DreamBlocksProps {
   text: string;
   blocks: WordBlock[];
@@ -201,7 +203,6 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
     onBlocksChange(updated);
     onActiveBlockChange?.(newBlock.id);
     setSelectionStart(null);
-    setSnackbar({ open: true, message: 'Блок создан', severity: 'success' });
   };
 
   // Визуал: компактный inline-рендеринг.
@@ -347,16 +348,62 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
       </Paper>
 
       {/* Уведомления */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={2600}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setSnackbar((s) => ({ ...s, open: false }))} severity={snackbar.severity} sx={{ width: '100%' }}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+     {/* Уведомления */}
+<Snackbar
+  open={snackbar.open}
+  autoHideDuration={4000}
+  onClose={(_, reason) => {
+    if (reason === 'clickaway') return;
+    setSnackbar((s) => ({ ...s, open: false }));
+  }}
+  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+  sx={{
+    // НЕТ vh, только предсказуемые пиксели над нижней границей окна
+    '&.MuiSnackbar-root': {
+      bottom: 32, // 32px над низом экрана/модалки
+    },
+  }}
+>
+  <Alert
+    onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+    severity={snackbar.severity}
+    icon={false}
+    variant="outlined"
+    sx={{
+      width: '100%',
+      px: 2.4,
+      py: 1.4,
+      borderRadius: 2.5,
+      display: 'flex',
+      alignItems: 'center',
+
+      border: `1px solid ${glassBorder}`,
+
+      // стекло, но без сумасшедшей прозрачности
+      background:
+        'linear-gradient(135deg, rgba(16,24,48,0.92), rgba(40,56,96,0.92))',
+      backdropFilter: 'blur(4px)',
+      WebkitBackdropFilter: 'blur(4px)',
+
+      boxShadow: 'none', // УБРАЛИ ТЕНЬ
+      color: '#fff',
+      '& .MuiAlert-message': {
+        fontSize: '1.05rem',
+        padding: 0,
+      },
+
+      ...(snackbar.severity === 'error'
+        ? {
+            borderColor: 'rgba(255,120,120,0.9)',
+            background:
+              'linear-gradient(135deg, rgba(40,8,16,0.96), rgba(88,24,40,0.94))',
+          }
+        : {}),
+    }}
+  >
+    {snackbar.message}
+  </Alert>
+</Snackbar>
     </Box>
   );
 };

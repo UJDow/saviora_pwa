@@ -33,6 +33,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import { useSnackbar } from 'notistack';
+import { Snackbar } from '@mui/material';
 
 import {
   getDream,
@@ -65,6 +66,7 @@ interface Message {
 }
 
 const MAX_TURNS = 8;
+const TARGET_PAIRS_FOR_INTERPRET = 7;
 
 const toTimestamp = (raw: unknown) => {
   if (typeof raw === 'number') return raw;
@@ -103,12 +105,28 @@ export const DreamChat: React.FC = () => {
   const resolvingMessageRef = useRef(false);
   const failedMessageSearchRef = useRef<string | null>(null);
 
+  // Локальный снекбар в стиле профиля
+  const [interpretSnackbarOpen, setInterpretSnackbarOpen] = useState(false);
+  const [interpretSnackbarMessage, setInterpretSnackbarMessage] = useState('');
+  const [interpretSnackbarSeverity, setInterpretSnackbarSeverity] =
+    useState<'success' | 'error'>('success');
+
+  const showInterpretSnackbar = (
+    message: string,
+    severity: 'success' | 'error' = 'success',
+  ) => {
+    setInterpretSnackbarMessage(message);
+    setInterpretSnackbarSeverity(severity);
+    setInterpretSnackbarOpen(true);
+  };
+
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [finalDialogOpen, setFinalDialogOpen] = useState(false);
   const [finalInterpretationText, setFinalInterpretationText] = useState<string>('');
   const [loadingFinalInterpretation, setLoadingFinalInterpretation] = useState(false);
   const [refreshingFinal, setRefreshingFinal] = useState(false);
   const [interpretedCount, setInterpretedCount] = useState<number>(0);
+  const [interpretHintShown, setInterpretHintShown] = useState(false);
 
   const { enqueueSnackbar } = useSnackbar();
 
@@ -128,6 +146,8 @@ export const DreamChat: React.FC = () => {
   const glassBorder = 'rgba(255, 255, 255, 0.2)';
 
   const assistantAvatarUrl = '/logo.png';
+
+  const HEADER_BASE = 56;
 
   const renderAssistantAvatar = useCallback(
     (variant: 'default' | 'interpretation' = 'default') => (
@@ -166,51 +186,70 @@ export const DreamChat: React.FC = () => {
   };
 
   const pairs = getPairsCount(messages);
-  const illumination = Math.max(0, Math.min(pairs / 7, 1));
+const illumination = Math.max(0, Math.min(pairs / 7, 1));
+
+// можно ли уже открывать толкование блока
+const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
+
+  useEffect(() => {
+  if (interpretHintShown) return;
+
+  const targetPairs = 7; // тот же, что в illumination = pairs / 7
+  if (pairs >= targetPairs) {
+    showInterpretSnackbar(
+      'Луна полностью наполнилась — можно открыть толкование этого сна 🌙',
+      'success',
+    );
+    setInterpretHintShown(true);
+  }
+}, [pairs, interpretHintShown]);
 
   const handleInterpret = async () => {
-    if (!dream || !currentBlock) return;
+  if (!dream || !currentBlock) return;
 
-    const totalBlocks = Array.isArray(dream.blocks) ? (dream.blocks as any[]).length : 0;
-    if (totalBlocks === 1) {
-      window.alert('Для сновидения из 1 блока толкование блока недоступно. Используйте итоговое толкование.');
-      return;
-    }
+  // не даём толкование, пока луна не заполнилась
+  if (pairs < TARGET_PAIRS_FOR_INTERPRET) {
+    showInterpretSnackbar(
+      'Луна ещё наполняется — продолжите диалог, чтобы открыть толкование этого фрагмента 🌙',
+      'success',
+    );
+    return;
+  }
 
-    if (sendingReply || generatingInterpretation) return;
+  if (sendingReply || generatingInterpretation) return;
 
-    setGeneratingInterpretation(true);
-    setSendingReply(true);
-    try {
-      await interpretBlock(
-        currentBlock.text,
-        dream.id,
-        currentBlock.id,
-        dream.dreamSummary ?? null,
-        dream.autoSummary ?? null,
-      );
+  setGeneratingInterpretation(true);
+  setSendingReply(true);
+  try {
+    await interpretBlock(
+      currentBlock.text,
+      dream.id,
+      currentBlock.id,
+      dream.dreamSummary ?? null,
+      dream.autoSummary ?? null,
+    );
 
-      const resp = await getChat(dream.id, currentBlock.id);
-      const msgs = (resp.messages || []).map((m: any) => ({
-        id: m.id,
-        text: m.content,
-        sender: mapDbToUi(m.role as Role),
-        role: m.role as Role,
-        timestamp: toTimestamp(m.createdAt ?? m.created_at),
-        meta: m.meta ?? null,
-        insightLiked: Boolean(m.meta?.insightLiked),
-      })) as Message[];
-      setMessages(msgs);
+    const resp = await getChat(dream.id, currentBlock.id);
+    const msgs = (resp.messages || []).map((m: any) => ({
+      id: m.id,
+      text: m.content,
+      sender: mapDbToUi(m.role as Role),
+      role: m.role as Role,
+      timestamp: toTimestamp(m.createdAt ?? m.created_at),
+      meta: m.meta ?? null,
+      insightLiked: Boolean(m.meta?.insightLiked),
+    })) as Message[];
+    setMessages(msgs);
 
-      await recomputeInterpretedCount();
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message || 'Не удалось получить толкование блока');
-    } finally {
-      setSendingReply(false);
-      setGeneratingInterpretation(false);
-    }
-  };
+    await recomputeInterpretedCount();
+  } catch (e: any) {
+    console.error(e);
+    showInterpretSnackbar(e?.message || 'Не удалось получить толкование блока', 'error');
+  } finally {
+    setSendingReply(false);
+    setGeneratingInterpretation(false);
+  }
+};
 
   const handleToggleInsight = useCallback(
     async (message: Message) => {
@@ -270,7 +309,10 @@ export const DreamChat: React.FC = () => {
 
     const canFinalInterpret = totalBlocks <= 1 || (totalBlocks >= 2 && interpretedCount >= 2);
     if (!canFinalInterpret) {
-      window.alert('Итоговое толкование станет доступно после интерпретации минимум двух блоков.');
+      showInterpretSnackbar(
+        'Итоговое толкование откроется после интерпретации как минимум двух блоков ✨',
+        'success',
+      );
       return;
     }
 
@@ -433,6 +475,11 @@ export const DreamChat: React.FC = () => {
     const next = idx >= 0 && idx < (dream.blocks as any[]).length - 1 ? (dream.blocks as any[])[idx + 1] : null;
     return { prevBlock: prev, nextBlock: next };
   }, [dream, currentBlock]);
+
+  useEffect(() => {
+  // новый сон или другой блок — даём подсказке шанс появиться снова
+  setInterpretHintShown(false);
+}, [dream?.id, currentBlock?.id]);
 
   useEffect(() => {
     (async () => {
@@ -652,9 +699,11 @@ export const DreamChat: React.FC = () => {
   };
 
   const navigateToBlock = (targetBlock?: WordBlock | null) => {
-    if (!targetBlock) return;
-    navigate(`/dreams/${id}/chat?blockId=${encodeURIComponent(targetBlock.id)}`);
-  };
+  if (!targetBlock) return;
+  navigate(`/dreams/${id}/chat?blockId=${encodeURIComponent(targetBlock.id)}`, {
+    replace: true,       // <-- добавляем
+  });
+};
 
   const totalBlocks = useMemo(
     () => (Array.isArray(dream?.blocks) ? (dream!.blocks as any[]).length : 0),
@@ -714,30 +763,38 @@ export const DreamChat: React.FC = () => {
         flexDirection: 'column',
         position: 'relative',
         overflow: 'hidden',
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      <Paper
-        elevation={0}
+      {/* ФИКСИРОВАННЫЙ ПРОЗРАЧНЫЙ ХЕДЕР */}
+      <Box
         sx={{
+          position: 'fixed',
+          top: 'env(safe-area-inset-top)',
+          left: 0,
+          right: 0,
+          height: `${HEADER_BASE}px`,
+          zIndex: 1400,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           background: glassBackground,
           backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
           borderBottom: `1px solid ${glassBorder}`,
-          p: 2,
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
         }}
       >
-        <Box sx={{ maxWidth: 800, mx: 'auto' }}>
+        <Box sx={{ maxWidth: 800, width: '100%', mx: 'auto', px: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
               <IconButton
-  onClick={() => navigate(-1)}
-  sx={{ color: '#fff', mr: 1 }}
-  aria-label="Назад"
->
-  <ArrowBackIosNewIcon />
-</IconButton>
+                onClick={() => navigate(-1)}
+                sx={{ color: '#fff', mr: 1 }}
+                aria-label="Назад"
+              >
+                <ArrowBackIosNewIcon />
+              </IconButton>
               <Typography
                 variant="h6"
                 sx={{
@@ -786,132 +843,10 @@ export const DreamChat: React.FC = () => {
               </IconButton>
             </Box>
           </Box>
-
-          <Collapse in={headerExpanded}>
-            <Paper
-              elevation={0}
-              sx={{
-                mt: 2,
-                p: 1.25,
-                background: 'rgba(255, 255, 255, 0.15)',
-                backdropFilter: 'blur(10px)',
-                border: `1px solid ${glassBorder}`,
-                borderRadius: 2,
-              }}
-            >
-              <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                Анализируемый блок:
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  color: '#fff',
-                  mt: 0.5,
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
-                {currentBlock.text}
-              </Typography>
-
-              {(prevBlock || nextBlock) && (
-                <Box
-                  sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: '1fr', sm: prevBlock && nextBlock ? '1fr 1fr' : '1fr' },
-                    gap: 1,
-                    mt: 1.25,
-                  }}
-                >
-                  {prevBlock && (
-                    <Card
-                      elevation={0}
-                      sx={{
-                        background: 'rgba(255, 255, 255, 0.1)',
-                        border: `1px solid ${glassBorder}`,
-                        borderRadius: 2,
-                        color: '#fff',
-                      }}
-                    >
-                      <CardActionArea onClick={() => navigateToBlock(prevBlock)}>
-                        <CardContent
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 0.75,
-                            py: 0.6,
-                            px: 1,
-                          }}
-                        >
-                          <Tooltip title="Предыдущий блок">
-                            <ArrowBackIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px' }} />
-                          </Tooltip>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              color: '#fff',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: 'vertical',
-                              overflow: 'hidden',
-                              lineHeight: 1.35,
-                              fontSize: 13,
-                            }}
-                          >
-                            {prevBlock.text}
-                          </Typography>
-                        </CardContent>
-                      </CardActionArea>
-                    </Card>
-                  )}
-
-                  {nextBlock && (
-                    <Card
-                      elevation={0}
-                      sx={{
-                        background: 'rgba(255, 255, 255, 0.1)',
-                        border: `1px solid ${glassBorder}`,
-                        borderRadius: 2,
-                        color: '#fff',
-                      }}
-                    >
-                      <CardActionArea onClick={() => navigateToBlock(nextBlock)}>
-                        <CardContent
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 0.75,
-                            py: 0.6,
-                            px: 1,
-                          }}
-                        >
-                          <Tooltip title="Следующий блок">
-                            <ArrowForwardIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px' }} />
-                          </Tooltip>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              color: '#fff',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: 'vertical',
-                              overflow: 'hidden',
-                              lineHeight: 1.35,
-                              fontSize: 13,
-                            }}
-                          >
-                            {nextBlock.text}
-                          </Typography>
-                        </CardContent>
-                      </CardActionArea>
-                    </Card>
-                  )}
-                </Box>
-              )}
-            </Paper>
-          </Collapse>
         </Box>
-      </Paper>
+      </Box>
 
+      {/* ОСНОВНОЙ КОНТЕНТ ПОД ХЕДЕРОМ */}
       <Box
         sx={{
           flex: 1,
@@ -921,8 +856,138 @@ export const DreamChat: React.FC = () => {
           maxWidth: 800,
           mx: 'auto',
           width: '100%',
+          mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`,
         }}
       >
+        {/* Анализируемый блок и соседние блоки */}
+        <Collapse in={headerExpanded}>
+          <Paper
+            elevation={0}
+            sx={{
+              mt: 1,
+              p: 1.25,
+              background: 'rgba(255, 255, 255, 0.15)',
+              backdropFilter: 'blur(10px)',
+              border: `1px solid ${glassBorder}`,
+              borderRadius: 2,
+              mb: 2,
+            }}
+          >
+            <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+              Анализируемый блок:
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{
+                color: '#fff',
+                mt: 0.5,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {currentBlock.text}
+            </Typography>
+
+            {(prevBlock || nextBlock) && (
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: {
+                    xs: '1fr',
+                    sm: prevBlock && nextBlock ? '1fr 1fr' : '1fr',
+                  },
+                  gap: 1,
+                  mt: 1.25,
+                }}
+              >
+                {prevBlock && (
+                  <Card
+                    elevation={0}
+                    sx={{
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      border: `1px solid ${glassBorder}`,
+                      borderRadius: 2,
+                      color: '#fff',
+                    }}
+                  >
+                    <CardActionArea onClick={() => navigateToBlock(prevBlock)}>
+                      <CardContent
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 0.75,
+                          py: 0.6,
+                          px: 1,
+                        }}
+                      >
+                        <Tooltip title="Предыдущий блок">
+                          <ArrowBackIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px' }} />
+                        </Tooltip>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: '#fff',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            lineHeight: 1.35,
+                            fontSize: 13,
+                          }}
+                        >
+                          {prevBlock.text}
+                        </Typography>
+                      </CardContent>
+                    </CardActionArea>
+                  </Card>
+                )}
+
+                {nextBlock && (
+                  <Card
+                    elevation={0}
+                    sx={{
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      border: `1px solid ${glassBorder}`,
+                      borderRadius: 2,
+                      color: '#fff',
+                    }}
+                  >
+                    <CardActionArea onClick={() => navigateToBlock(nextBlock)}>
+                      <CardContent
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 0.75,
+                          py: 0.6,
+                          px: 1,
+                        }}
+                      >
+                        <Tooltip title="Следующий блок">
+                          <ArrowForwardIcon sx={{ opacity: 0.9, fontSize: 18, mt: '2px' }} />
+                        </Tooltip>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: '#fff',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            lineHeight: 1.35,
+                            fontSize: 13,
+                          }}
+                        >
+                          {nextBlock.text}
+                        </Typography>
+                      </CardContent>
+                    </CardActionArea>
+                  </Card>
+                )}
+              </Box>
+            )}
+          </Paper>
+        </Collapse>
+
+        {/* СООБЩЕНИЯ */}
         {messages.length === 0 ? (
           <Box
             sx={{
@@ -932,17 +997,47 @@ export const DreamChat: React.FC = () => {
             }}
           >
             {isKickoffActive ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                <Avatar src={assistantAvatarUrl} alt="Assistant" sx={{ width: 56, height: 56, border: `1px solid ${glassBorder}` }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 1,
+                }}
+              >
+                <Avatar
+                  src={assistantAvatarUrl}
+                  alt="Assistant"
+                  sx={{ width: 56, height: 56, border: `1px solid ${glassBorder}` }}
+                >
                   {!assistantAvatarUrl && <SmartToyIcon />}
                 </Avatar>
 
-                <Paper elevation={0} sx={{ mt: 1.25, p: 1, borderRadius: 2, background: 'rgba(255,255,255,0.06)', border: `1px solid ${glassBorder}`, display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                <Paper
+                  elevation={0}
+                  sx={{
+                    mt: 1.25,
+                    p: 1,
+                    borderRadius: 2,
+                    background: 'rgba(255,255,255,0.06)',
+                    border: `1px solid ${glassBorder}`,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 1,
+                  }}
+                >
                   <CircularProgress size={18} sx={{ color: '#fff' }} />
-                  <Typography variant="body2" sx={{ color: '#fff' }}>Ассистент формулирует первый вопрос…</Typography>
+                  <Typography variant="body2" sx={{ color: '#fff' }}>
+                    Ассистент формулирует первый вопрос…
+                  </Typography>
                 </Paper>
 
-                <Typography variant="caption" sx={{ mt: 0.5, color: 'rgba(255,255,255,0.75)' }}>Подождите, пожалуйста</Typography>
+                <Typography
+                  variant="caption"
+                  sx={{ mt: 0.5, color: 'rgba(255,255,255,0.75)' }}
+                >
+                  Подождите, пожалуйста
+                </Typography>
               </Box>
             ) : (
               <>
@@ -956,7 +1051,8 @@ export const DreamChat: React.FC = () => {
           </Box>
         ) : (
           messages.map((msg) => {
-            const isInterpretation = msg.sender === 'bot' && msg.meta?.kind === 'block_interpretation';
+            const isInterpretation =
+              msg.sender === 'bot' && msg.meta?.kind === 'block_interpretation';
             const isAssistant = msg.role === 'assistant';
             const isHighlighted = highlightedMessageId === msg.id;
 
@@ -985,25 +1081,30 @@ export const DreamChat: React.FC = () => {
                   }}
                 >
                   {msg.sender === 'user' ? (
-  <Avatar
-    src={userAvatarSrc}
-    sx={{
-      width: 36,
-      height: 36,
-      bgcolor: userAvatarSrc ? undefined : userAvatarBgColor,
-      color: '#fff',
-      boxShadow: '0 4px 16px rgba(24,32,80,0.35)',
-      border: `1px solid ${glassBorder}`,
-    }}
-  >
-    {!userAvatarSrc && UserAvatarIcon && <UserAvatarIcon sx={{ fontSize: 20 }} />}
-  </Avatar>
-) : (
-  renderAssistantAvatar(isInterpretation ? 'interpretation' : 'default')
-)}
+                    <Avatar
+                      src={userAvatarSrc}
+                      sx={{
+                        width: 36,
+                        height: 36,
+                        bgcolor: userAvatarSrc ? undefined : userAvatarBgColor,
+                        color: '#fff',
+                        boxShadow: '0 4px 16px rgba(24,32,80,0.35)',
+                        border: `1px solid ${glassBorder}`,
+                      }}
+                    >
+                      {!userAvatarSrc && UserAvatarIcon && (
+                        <UserAvatarIcon sx={{ fontSize: 20 }} />
+                      )}
+                    </Avatar>
+                  ) : (
+                    renderAssistantAvatar(isInterpretation ? 'interpretation' : 'default')
+                  )}
 
                   <Box
-                    sx={{ position: 'relative', cursor: isAssistant ? 'pointer' : 'default' }}
+                    sx={{
+                      position: 'relative',
+                      cursor: isAssistant ? 'pointer' : 'default',
+                    }}
                     onDoubleClick={() => {
                       if (isAssistant) handleToggleInsight(msg);
                     }}
@@ -1083,7 +1184,11 @@ export const DreamChat: React.FC = () => {
                     </Paper>
 
                     {isAssistant && (
-                      <Tooltip title={msg.insightLiked ? 'Убрать из инсайтов' : 'Сохранить инсайт'}>
+                      <Tooltip
+                        title={
+                          msg.insightLiked ? 'Убрать из инсайтов' : 'Сохранить инсайт'
+                        }
+                      >
                         <IconButton
                           size="small"
                           onClick={(event) => {
@@ -1094,7 +1199,9 @@ export const DreamChat: React.FC = () => {
                             position: 'absolute',
                             top: 8,
                             right: -12,
-                            color: msg.insightLiked ? 'rgba(255,100,150,0.95)' : 'rgba(255,255,255,0.6)',
+                            color: msg.insightLiked
+                              ? 'rgba(255,100,150,0.95)'
+                              : 'rgba(255,255,255,0.6)',
                             '&:hover': {
                               color: 'rgba(255,100,150,1)',
                               backgroundColor: 'rgba(255,255,255,0.08)',
@@ -1124,7 +1231,8 @@ export const DreamChat: React.FC = () => {
                 sx={{
                   p: 1.25,
                   borderRadius: 2,
-                  background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.08) 100%)',
+                  background:
+                    'linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.08) 100%)',
                   backdropFilter: 'blur(10px)',
                   border: '1px solid rgba(139, 92, 246, 0.4)',
                   display: 'flex',
@@ -1162,6 +1270,7 @@ export const DreamChat: React.FC = () => {
         <div ref={messagesEndRef} />
       </Box>
 
+      {/* ИНПУТ ВНИЗУ */}
       <Box
         sx={{
           position: 'fixed',
@@ -1174,16 +1283,32 @@ export const DreamChat: React.FC = () => {
           zIndex: 10,
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', maxWidth: 800, mx: 'auto' }}>
-          <MoonButton
-            illumination={illumination}
-            onInterpret={handleInterpret}
-            onFinalInterpret={() => handleFinalInterpret(false)}
-            disabled={sendingReply || !canInterpretThisBlock}
-            direction="waxing"
-            size={32}
-          />
-          <Box sx={{ flex: 1 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            maxWidth: 800,
+            mx: 'auto',
+          }}
+        >
+          <Box sx={{ mr: 1.5, flexShrink: 0 }}>
+           <MoonButton
+  illumination={illumination}
+  onInterpret={handleInterpret}
+  onFinalInterpret={() => handleFinalInterpret(false)}
+  disabled={sendingReply || !canBlockInterpret} // ← пока луна не полная — кнопка неактивна
+  direction="waxing"
+  size={32}
+  totalBlocks={totalBlocks}
+/>
+          </Box>
+
+          <Box
+            sx={{
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
             <GlassInputBox
               value={input}
               onChange={setInput}
@@ -1193,12 +1318,14 @@ export const DreamChat: React.FC = () => {
               containerStyle={{
                 position: 'static',
                 margin: '0 auto',
+                maxWidth: '100%',
               }}
             />
           </Box>
         </Box>
       </Box>
 
+      {/* ДИАЛОГ ИТОГОВОГО ТОЛКОВАНИЯ */}
       <Dialog
         open={finalDialogOpen}
         onClose={() => setFinalDialogOpen(false)}
@@ -1206,7 +1333,8 @@ export const DreamChat: React.FC = () => {
         maxWidth="md"
         PaperProps={{
           sx: {
-            background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%)',
+            background:
+              'linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%)',
             backdropFilter: 'blur(20px)',
             border: '1px solid rgba(255, 255, 255, 0.2)',
             color: '#fff',
@@ -1228,7 +1356,9 @@ export const DreamChat: React.FC = () => {
             <span>
               <IconButton
                 onClick={handleRefreshFinal}
-                disabled={refreshingFinal || loadingFinalInterpretation || !canFinalInterpret}
+                disabled={
+                  refreshingFinal || loadingFinalInterpretation || !canFinalInterpret
+                }
                 sx={{
                   color: '#fff',
                   '&:hover': { background: 'rgba(255, 255, 255, 0.1)' },
@@ -1250,15 +1380,28 @@ export const DreamChat: React.FC = () => {
         </DialogTitle>
         <DialogContent dividers sx={{ borderColor: 'rgba(255, 255, 255, 0.2)' }}>
           {loadingFinalInterpretation ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 4 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                py: 4,
+              }}
+            >
               <CircularProgress sx={{ color: '#fff' }} />
             </Box>
           ) : finalInterpretationText ? (
-            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', color: '#fff', lineHeight: 1.6 }}>
+            <Typography
+              variant="body1"
+              sx={{ whiteSpace: 'pre-wrap', color: '#fff', lineHeight: 1.6 }}
+            >
               {finalInterpretationText}
             </Typography>
           ) : (
-            <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.7)' }}>
+            <Typography
+              variant="body2"
+              sx={{ color: 'rgba(255, 255, 255, 0.7)' }}
+            >
               Итоговое толкование ещё не сформировано.
             </Typography>
           )}
@@ -1269,6 +1412,52 @@ export const DreamChat: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      {/* Снекбар о толковании (в стиле профиля, над лунной кнопкой) */}
+      {/* Снекбар о толковании — реально стеклянный */}
+<Snackbar
+  open={interpretSnackbarOpen}
+  autoHideDuration={3000}
+  onClose={() => setInterpretSnackbarOpen(false)}
+  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+  sx={{
+    bottom: '16vh', // подстрой, если надо выше/ниже луны
+  }}
+  ContentProps={{
+    sx: {
+      // делаем фон снекбара прозрачным, а не плотным
+      backgroundColor: 'transparent',
+      boxShadow: 'none',
+      padding: 0,
+    },
+  }}
+>
+  <Paper
+    elevation={0}
+    sx={{
+      px: 2.4,
+      py: 1.4,
+      borderRadius: 2.5,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 1,
+      // стеклянный фон как в DreamDetail
+      background: 'rgba(255,255,255,0.10)',
+      backdropFilter: 'blur(14px)',
+      WebkitBackdropFilter: 'blur(14px)',
+      border: `1px solid ${glassBorder}`,
+      boxShadow: 'none',
+      color: '#fff',
+      maxWidth: 520,
+    }}
+  >
+    <Box
+      component="span"
+      sx={{ fontSize: '1.05rem', whiteSpace: 'pre-wrap' }}
+    >
+      {interpretSnackbarMessage}
+    </Box>
+  </Paper>
+</Snackbar>
     </Box>
   );
 };
