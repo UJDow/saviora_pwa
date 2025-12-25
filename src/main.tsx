@@ -5,6 +5,9 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { AuthProvider } from './features/auth/AuthProvider';
 
+import { PullToRefreshProvider } from './pullToRefresh/PullToRefreshProvider';
+import { globalRefresh } from './refresh/globalRefresh';
+
 const theme = createTheme({
   palette: {
     mode: 'light',
@@ -18,7 +21,17 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <App />
+        <PullToRefreshProvider
+          onRefresh={globalRefresh}
+          isEnabled={() => {
+            const path = window.location.pathname;
+            if (path.startsWith('/dreams/') && path.includes('/chat')) return false;
+            if (path.startsWith('/daily/') && path.includes('/chat')) return false;
+            return true;
+          }}
+        >
+          <App />
+        </PullToRefreshProvider>
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>
