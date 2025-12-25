@@ -3,40 +3,59 @@ import { AuthForm } from './AuthForm';
 import { RegisterForm } from './RegisterForm';
 import { Box, Paper } from '@mui/material';
 
+const bgGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+const glassBg = 'rgba(255,255,255,0.10)';
+const glassBorder = 'rgba(255,255,255,0.20)';
+
 export const AuthScreen: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
 
   return (
     <Box
-      display="flex"
-      justifyContent="center"
-      alignItems="center"
-      minHeight="100vh"
       sx={{
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: bgGradient,
+        color: '#fff',
         overflow: 'hidden',
+        position: 'relative',
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      <Paper
-        elevation={0}
+      {/* Центрированный контент без хедера */}
+      <Box
         sx={{
-          p: { xs: 2, sm: 4 },
-          width: '100%',
-          maxWidth: 400,
-          borderRadius: '24px',
-          background: 'rgba(255,255,255,0.10)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: '1px solid rgba(255,255,255,0.20)',
-          boxShadow: '0 4px 32px 0 rgba(31, 38, 135, 0.15)',
+          flex: 1,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          px: 2,
+          py: 4,
         }}
       >
-        {isLogin ? (
-          <AuthForm onSwitch={() => setIsLogin(false)} />
-        ) : (
-          <RegisterForm onSwitch={() => setIsLogin(true)} />
-        )}
-      </Paper>
+        <Paper
+          elevation={0}
+          sx={{
+            width: '100%',
+            maxWidth: 420,
+            borderRadius: 4,
+            background: glassBg,
+            backdropFilter: 'blur(22px)',
+            WebkitBackdropFilter: 'blur(22px)',
+            border: `1px solid ${glassBorder}`,
+            boxShadow: '0 12px 40px rgba(15,23,42,0.45)',
+            p: { xs: 2.4, sm: 3.2 },
+          }}
+        >
+          {isLogin ? (
+            <AuthForm onSwitch={() => setIsLogin(false)} />
+          ) : (
+            <RegisterForm onSwitch={() => setIsLogin(true)} />
+          )}
+        </Paper>
+      </Box>
     </Box>
   );
 };
