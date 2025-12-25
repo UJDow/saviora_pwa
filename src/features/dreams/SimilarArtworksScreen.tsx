@@ -163,15 +163,17 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [snackbar, setSnackbar] = useState<{
-    open: boolean;
-    message: string;
-    severity: 'success' | 'error';
-  }>({
-    open: false,
-    message: '',
-    severity: 'success',
-  });
+
+  // SNACKBAR: единый стеклянный стиль как в ProfileScreen
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+
+  const showSnackbar = (message: string, severity: 'success' | 'error') => {
+    setSnackbarMessage(message);
+    setSnackbarSeverity(severity);
+    setSnackbarOpen(true);
+  };
 
   const [regeneratingArtwork, setRegeneratingArtwork] = useState<number | null>(null);
 
@@ -187,38 +189,38 @@ export function SimilarArtworksScreen(): React.ReactElement {
   const ADDING_INDEX = -1;
 
   const pageSx = {
-  minHeight: '100vh',
-  background: screenGradient,
-  display: 'flex',
-  flexDirection: 'column' as const,
-  alignItems: 'center',
-  justifyContent: 'flex-start',
-  position: 'relative' as const,
-  overflow: 'hidden',
-  paddingTop: 'env(safe-area-inset-top)',
-  paddingBottom: 'env(safe-area-inset-bottom)',
-};
+    minHeight: '100vh',
+    background: screenGradient,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    position: 'relative' as const,
+    overflow: 'hidden',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  };
 
-const mainCardSx = {
-  width: '100%',
-  maxWidth: 840,
-  borderRadius: 0,
-  background: 'transparent',
-  backdropFilter: 'none',
-  WebkitBackdropFilter: 'none',
-  border: 'none',
-  boxShadow: 'none',
-  position: 'relative' as const,
-  display: 'flex',
-  flexDirection: 'column' as const,
-  minHeight: 'calc(100vh - env(safe-area-inset-top))',
-  overflow: 'hidden',
-  color: '#fff',
-  p: { xs: 2, sm: 3 },
-  pt: 2,
-  pb: 3,
-  mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`, // ключевое смещение под хедер
-};
+  const mainCardSx = {
+    width: '100%',
+    maxWidth: 840,
+    borderRadius: 0,
+    background: 'transparent',
+    backdropFilter: 'none',
+    WebkitBackdropFilter: 'none',
+    border: 'none',
+    boxShadow: 'none',
+    position: 'relative' as const,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    minHeight: 'calc(100vh - env(safe-area-inset-top))',
+    overflow: 'hidden',
+    color: '#fff',
+    p: { xs: 2, sm: 3 },
+    pt: 2,
+    pb: 3,
+    mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`, // ключевое смещение под хедер
+  };
 
   const iconBtnSxLight = {
     bgcolor: 'rgba(255,255,255,0.18)',
@@ -436,9 +438,9 @@ const mainCardSx = {
         dream.date
       );
       setSaved(true);
-      setSnackbar({ open: true, message: 'Список сохранён!', severity: 'success' });
+      showSnackbar('Список сохранён!', 'success');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e?.message || 'Ошибка сохранения', severity: 'error' });
+      showSnackbar(e?.message || 'Ошибка сохранения', 'error');
     }
   };
 
@@ -548,9 +550,9 @@ const mainCardSx = {
         dream.date
       );
 
-      setSnackbar({ open: true, message: 'Произведение успешно перегенерировано!', severity: 'success' });
+      showSnackbar('Произведение успешно перегенерировано!', 'success');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e?.message || 'Ошибка перегенерации произведения', severity: 'error' });
+      showSnackbar(e?.message || 'Ошибка перегенерации произведения', 'error');
     } finally {
       setRegeneratingArtwork(null);
     }
@@ -622,9 +624,9 @@ const mainCardSx = {
         dream.date
       );
 
-      setSnackbar({ open: true, message: 'Произведение добавлено', severity: 'success' });
+      showSnackbar('Произведение добавлено', 'success');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e?.message || 'Ошибка добавления произведения', severity: 'error' });
+      showSnackbar(e?.message || 'Ошибка добавления произведения', 'error');
     } finally {
       setRegeneratingArtwork(null);
     }
@@ -657,9 +659,9 @@ const mainCardSx = {
         dream.date
       );
 
-      setSnackbar({ open: true, message: 'Произведение удалено', severity: 'success' });
+      showSnackbar('Произведение удалено', 'success');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e?.message || 'Ошибка удаления', severity: 'error' });
+      showSnackbar(e?.message || 'Ошибка удаления', 'error');
     } finally {
       setDeletingProcessing(false);
       setDeletingArtworkIndex(null);
@@ -689,9 +691,9 @@ const mainCardSx = {
         dream.date
       );
       setArtworks([]);
-      setSnackbar({ open: true, message: 'Список удалён!', severity: 'success' });
+      showSnackbar('Список удалён!', 'success');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e?.message || 'Ошибка удаления списка', severity: 'error' });
+      showSnackbar(e?.message || 'Ошибка удаления списка', 'error');
     } finally {
       setDeletingProcessing(false);
       setDeletingListOpen(false);
@@ -856,21 +858,21 @@ const mainCardSx = {
       </IconButton>
 
       {/* Центр: заголовок — название сна или Saviora */}
-<Typography
-  sx={{
-    maxWidth: 220, // можно подогнать: 220–260 в зависимости от того, сколько места занимают кнопки
-    textAlign: 'center',
-    fontWeight: 600,
-    fontSize: '0.98rem',
-    color: 'rgba(255,255,255,0.95)',
-    letterSpacing: 0.3,
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  }}
->
-  {dream?.title || 'Saviora'}
-</Typography>
+      <Typography
+        sx={{
+          maxWidth: 220,
+          textAlign: 'center',
+          fontWeight: 600,
+          fontSize: '0.98rem',
+          color: 'rgba(255,255,255,0.95)',
+          letterSpacing: 0.3,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {dream?.title || 'Saviora'}
+      </Typography>
 
       {/* Справа: перегенерировать список + удалить список */}
       <Box sx={{ position: 'absolute', right: 12, display: 'flex', gap: 1, alignItems: 'center' }}>
@@ -963,9 +965,9 @@ const mainCardSx = {
       await setMoodForDate(dateYmd, moodId);
       setSelectedMood(moodId);
       setDayMood(moodId);
-      setSnackbar({ open: true, message: 'Настроение дня обновлено', severity: 'success' });
+      showSnackbar('Настроение дня обновлено', 'success');
     } catch (e: any) {
-      setSnackbar({ open: true, message: e.message || 'Ошибка обновления настроения', severity: 'error' });
+      showSnackbar(e.message || 'Ошибка обновления настроения', 'error');
     } finally {
       handleMoodClose();
     }
@@ -973,240 +975,242 @@ const mainCardSx = {
 
   return (
     <Box sx={pageSx}>
-    {Header}
+      {Header}
 
-    <Box sx={mainCardSx}>
-      {dream && (
-        <Box
-          sx={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            mb: 2,
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Avatar
-              src="/logo.png"
-              alt="Dreamly"
-              sx={{
-                width: 48,
-                height: 48,
-                border: `1px solid ${glassBorder}`,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
-                flex: '0 0 auto',
-              }}
-            />
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-              <Box
+      <Box sx={mainCardSx}>
+        {dream && (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              mb: 2,
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Avatar
+                src="/logo.png"
+                alt="Dreamly"
                 sx={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  gap: 1.5,
-                  minWidth: 0,
+                  width: 48,
+                  height: 48,
+                  border: `1px solid ${glassBorder}`,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  boxShadow: '0 8px 24px rgba(24,32,80,0.3)',
+                  flex: '0 0 auto',
                 }}
-              >
-                {dateStr && (
-                  <Chip
-                    label={dateStr}
-                    size="small"
-                    variant="outlined"
-                    sx={{
-                      borderColor: alpha('#ffffff', 0.24),
-                      background:
-                        'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
-                      color: alpha('#ffffff', 0.92),
-                      backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)',
-                      '& .MuiChip-label': {
-                        px: 1.2,
-                        fontWeight: 600,
-                      },
-                    }}
-                  />
-                )}
-
-                {dream.category && (
-                  <Chip
-                    label={dream.category}
-                    size="small"
-                    sx={{
-                      bgcolor: 'rgba(255,255,255,0.1)',
-                      color: '#fff',
-                      fontWeight: 500,
-                      border: `1px solid ${alpha('#fff', 0.1)}`,
-                    }}
-                  />
-                )}
-
-                {/* Mood */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-                  <Tooltip title={currentMoodOption?.label ?? 'Выбрать настроение'} arrow>
-                    <span>
-                      <IconButton
-                        aria-label="Выбрать настроение"
-                        onClick={handleMoodClick}
-                        sx={{
-                          p: 0,
-                          borderRadius: '50%',
-                          '&:hover': { transform: 'translateY(-1px)' },
-                        }}
-                      >
-                        {currentMoodOption ? (
-                          <Avatar
-                            sx={{
-                              width: 32,
-                              height: 32,
-                              background: moodGradient(currentMoodOption.color),
-                              boxShadow: `0 4px 12px ${alpha('#000', 0.2)}`,
-                            }}
-                          >
-                            {MoodIconComponent ? (
-                              <MoodIconComponent style={{ color: '#fff', fontSize: 16 }} />
-                            ) : (
-                              <MoodIcon style={{ color: '#fff', fontSize: 16 }} />
-                            )}
-                          </Avatar>
-                        ) : (
-                          <Avatar
-                            sx={{
-                              width: 32,
-                              height: 32,
-                              background: alpha('#fff', 0.04),
-                              border: `1px solid ${alpha('#fff', 0.1)}`,
-                            }}
-                          >
-                            <Box
-                              sx={{
-                                width: 4,
-                                height: 4,
-                                borderRadius: '50%',
-                                bgcolor: 'rgba(255,255,255,0.6)',
-                              }}
-                            />
-                          </Avatar>
-                        )}
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  {currentMoodOption && (
-                    <Typography
-                      variant="caption"
-                      sx={{ color: 'rgba(255,255,255,0.8)', fontWeight: 500 }}
-                    >
-                      {currentMoodOption.label}
-                    </Typography>
-                  )}
-                </Box>
-              </Box>
-
-              {/* Меню настроения (переносим сюда, без дублирования) */}
-              <Menu
-                anchorEl={moodAnchorEl}
-                open={moodMenuOpen}
-                onClose={handleMoodClose}
-                MenuListProps={{
-                  'aria-labelledby': 'mood-button',
-                }}
-                PaperProps={{
-                  sx: {
-                    bgcolor: 'rgba(255,255,255,0.06)',
-                    backdropFilter: 'blur(10px)',
-                    border: `1px solid ${glassBorder}`,
-                    color: '#fff',
-                    mt: 1,
-                    minWidth: 260,
-                  },
-                }}
-              >
-                {MOODS.map((mood: MoodOption) => {
-                  const Icon = mood.icon as React.ComponentType<SvgIconProps>;
-                  const isActive = mood.id === effectiveMoodId;
-                  return (
-                    <MenuItem
-                      key={mood.id}
-                      onClick={() => handleMoodSelect(mood.id)}
+              />
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 1.5,
+                    minWidth: 0,
+                  }}
+                >
+                  {dateStr && (
+                    <Chip
+                      label={dateStr}
+                      size="small"
                       sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 1,
-                        color: '#fff',
-                        bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
-                        borderRadius: 1,
-                        px: 1.25,
-                        py: 0.5,
-                        '&:hover': {
-                          bgcolor: `linear-gradient(135deg, ${alpha(
-                            mood.color,
-                            0.16,
-                          )} 0%, ${alpha(mood.color, 0.08)} 100%)`,
+                        borderColor: alpha('#ffffff', 0.24),
+                        background:
+                          'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+                        color: alpha('#ffffff', 0.92),
+                        backdropFilter: 'blur(10px)',
+                        WebkitBackdropFilter: 'blur(10px)',
+                        '& .MuiChip-label': {
+                          px: 1.2,
+                          fontWeight: 600,
                         },
                       }}
-                    >
-                      <Box
+                    />
+                  )}
+
+                  {dream.category && (
+                    <Chip
+                      label={dream.category}
+                      size="small"
+                      sx={{
+                        bgcolor: 'rgba(255,255,255,0.1)',
+                        color: '#fff',
+                        fontWeight: 500,
+                        border: `1px solid ${alpha('#fff', 0.1)}`,
+                      }}
+                    />
+                  )}
+
+                  {/* Mood */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                    <Tooltip title={currentMoodOption?.label ?? 'Выбрать настроение'} arrow>
+                      <span>
+                        <IconButton
+                          aria-label="Выбрать настроение"
+                          onClick={handleMoodClick}
+                          sx={{
+                            p: 0,
+                            borderRadius: '50%',
+                            '&:hover': { transform: 'translateY(-1px)' },
+                          }}
+                        >
+                          {currentMoodOption ? (
+                            <Avatar
+                              sx={{
+                                width: 32,
+                                height: 32,
+                                background: moodGradient(currentMoodOption.color),
+                                boxShadow: `0 4px 12px ${alpha('#000', 0.2)}`,
+                              }}
+                            >
+                              {MoodIconComponent ? (
+                                <MoodIconComponent style={{ color: '#fff', fontSize: 16 }} />
+                              ) : (
+                                <MoodIcon style={{ color: '#fff', fontSize: 16 }} />
+                              )}
+                            </Avatar>
+                          ) : (
+                            <Avatar
+                              sx={{
+                                width: 32,
+                                height: 32,
+                                background: alpha('#fff', 0.04),
+                                border: `1px solid ${alpha('#fff', 0.1)}`,
+                              }}
+                            >
+                              <Box
+                                sx={{
+                                  width: 4,
+                                  height: 4,
+                                  borderRadius: '50%',
+                                  bgcolor: 'rgba(255,255,255,0.6)',
+                                }}
+                              />
+                            </Avatar>
+                          )}
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    {currentMoodOption && (
+                      <Typography
+                        variant="caption"
+                        sx={{ color: 'rgba(255,255,255,0.8)', fontWeight: 500 }}
+                      >
+                        {currentMoodOption.label}
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+
+                {/* Меню настроения */}
+                <Menu
+                  anchorEl={moodAnchorEl}
+                  open={moodMenuOpen}
+                  onClose={handleMoodClose}
+                  MenuListProps={{
+                    'aria-labelledby': 'mood-button',
+                  }}
+                  PaperProps={{
+                    sx: {
+                      bgcolor: 'rgba(255,255,255,0.06)',
+                      backdropFilter: 'blur(10px)',
+                      border: `1px solid ${glassBorder}`,
+                      color: '#fff',
+                      mt: 1,
+                      minWidth: 260,
+                    },
+                  }}
+                >
+                  {MOODS.map((mood: MoodOption) => {
+                    const Icon = mood.icon as React.ComponentType<SvgIconProps>;
+                    const isActive = mood.id === effectiveMoodId;
+                    return (
+                      <MenuItem
+                        key={mood.id}
+                        onClick={() => handleMoodSelect(mood.id)}
                         sx={{
-                          width: 40,
-                          height: 40,
-                          borderRadius: '50%',
-                          display: 'inline-flex',
+                          display: 'flex',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
-                          boxShadow: isActive
-                            ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(
-                                mood.color,
-                                0.06,
-                              )}`
-                            : `0 8px 22px ${alpha('#000', 0.1)}`,
+                          gap: 1,
+                          color: '#fff',
+                          bgcolor: isActive ? alpha('#000', 0.06) : 'transparent',
+                          borderRadius: 1,
+                          px: 1.25,
+                          py: 0.5,
+                          '&:hover': {
+                            bgcolor: `linear-gradient(135deg, ${alpha(
+                              mood.color,
+                              0.16,
+                            )} 0%, ${alpha(mood.color, 0.08)} 100%)`,
+                          },
                         }}
                       >
-                        <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
-                      </Box>
-
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="body2" sx={{ color: '#fff' }}>
-                          {mood.label}
-                        </Typography>
-                      </Box>
-
-                      {isActive && (
-                        <Typography
-                          variant="caption"
-                          sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}
+                        <Box
+                          sx={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: '50%',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: `linear-gradient(135deg, ${mood.color} 0%, rgba(20,30,40,0.06) 100%)`,
+                            boxShadow: isActive
+                              ? `0 14px 36px ${alpha('#000', 0.18)}, 0 0 0 6px ${alpha(
+                                  mood.color,
+                                  0.06,
+                                )}`
+                              : `0 8px 22px ${alpha('#000', 0.1)}`,
+                          }}
                         >
-                          ✓
-                        </Typography>
-                      )}
-                    </MenuItem>
-                  );
-                })}
-              </Menu>
-            </Box>
-          </Box>
+                          <Icon sx={{ color: '#fff', width: 20, height: 20 }} />
+                        </Box>
 
-          {/* справа сверху уже ничего не нужно — кнопки в Header */}
-          <Box sx={{ width: 0, height: 0 }} />
-        </Box>
-      )}
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="body2" sx={{ color: '#fff' }}>
+                            {mood.label}
+                          </Typography>
+                        </Box>
+
+                        {isActive && (
+                          <Typography
+                            variant="caption"
+                            sx={{ color: alpha(mood.color, 0.95), fontWeight: 700 }}
+                          >
+                            ✓
+                          </Typography>
+                        )}
+                      </MenuItem>
+                    );
+                  })}
+                </Menu>
+              </Box>
+            </Box>
+
+            {/* справа сверху уже ничего не нужно — кнопки в Header */}
+            <Box sx={{ width: 0, height: 0 }} />
+          </Box>
+        )}
 
         {/* Insights card */}
         <Paper
-  elevation={0}
-  sx={{
-    p: 2,
-    mb: 2,
-    background: 'rgba(255,255,255,0.03)',
-    border: `1px solid ${glassBorder}`,
-    borderRadius: 2,
-    color: '#fff',
-    boxShadow: 'none',
-  }}
->
+          elevation={0}
+          sx={{
+            p: 2,
+            mb: 2,
+            background: 'rgba(255,255,255,0.03)',
+            border: `1px solid ${glassBorder}`,
+            borderRadius: 2,
+            color: '#fff',
+            boxShadow: 'none',
+          }}
+        >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, minWidth: 0 }}>
             <Box sx={heartSxSmall} aria-hidden />
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Typography
+              variant="subtitle1"
+              sx={{ fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
               Сохранённые инсайты
             </Typography>
             {insightsCount > 0 && (
@@ -1251,22 +1255,22 @@ const mainCardSx = {
                     tabIndex={0}
                     onClick={() => handleInsightClick(insight)}
                     elevation={0}
-  sx={{
-    p: 1.25,
-    textAlign: 'left',
-    cursor: 'pointer',
-    bgcolor: 'rgba(255,255,255,0.03)',
-    border: `1px solid rgba(255,255,255,0.06)`,
-    borderRadius: 2,
-    transition: 'transform 0.18s ease, background 0.18s ease',
-    '&:hover': {
-      transform: 'translateY(-1px)',
-      background:
-        'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(88,120,255,0.10))',
-    },
-    whiteSpace: 'pre-wrap',
-  }}
->
+                    sx={{
+                      p: 1.25,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      bgcolor: 'rgba(255,255,255,0.03)',
+                      border: `1px solid rgba(255,255,255,0.06)`,
+                      borderRadius: 2,
+                      transition: 'transform 0.18s ease, background 0.18s ease',
+                      '&:hover': {
+                        transform: 'translateY(-1px)',
+                        background:
+                          'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(88,120,255,0.10))',
+                      },
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
                     <Typography variant="body2" sx={{ color: '#fff', fontSize: 14 }}>
                       {insight.text}
                     </Typography>
@@ -1310,441 +1314,441 @@ const mainCardSx = {
         </Paper>
 
         {/* Artworks list */}
-<Box
-  sx={{
-    display: 'flex',
-    justifyContent: 'flex-start',
-    alignItems: 'center',
-    mb: 2,
-  }}
->
-  <Chip
-    label="Схожие произведения искусства"
-    size="small"
-    sx={{
-      borderColor: alpha('#ffffff', 0.24),
-      background:
-        'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
-      color: alpha('#ffffff', 0.92),
-      backdropFilter: 'blur(10px)',
-      WebkitBackdropFilter: 'blur(10px)',
-      borderRadius: 999,
-      '& .MuiChip-label': {
-        px: 1.6,
-        py: 0.4,
-        fontWeight: 600,
-        fontSize: '0.85rem',
-      },
-    }}
-  />
-</Box>
-
-{loading && (
-  <Box
-    sx={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      height: '100%',
-    }}
-  >
-    <CircularProgress sx={{ color: accentColor }} />
-  </Box>
-)}
-
-{error && (
-  <Alert
-    severity="error"
-    sx={{
-      bgcolor: 'rgba(255,80,80,0.12)',
-      color: '#fff',
-      border: `1px solid rgba(255,80,80,0.2)`,
-    }}
-  >
-    {error}
-  </Alert>
-)}
-
-{!loading && !error && (
-  <List sx={{ width: '100%' }}>
-    {artworks.length === 0 && (
-      <Typography
-        color="rgba(255,255,255,0.65)"
-        sx={{ mt: 2, textAlign: 'center' }}
-      >
-        Ничего не найдено.
-      </Typography>
-    )}
-
-    {artworks.map((art, idx) => {
-  const isRegenerating = regeneratingArtwork === idx;
-
-  return (
-    <ListItem
-      key={idx}
-      alignItems="flex-start"
-      onClick={() => handleArtworkChat(art, idx)}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          handleArtworkChat(art, idx);
-        }
-      }}
-      sx={{
-        mb: 1.5,
-        py: { xs: 1.4, sm: 1.6 },
-        px: { xs: 1.6, sm: 2 },
-        borderRadius: 2,
-        background: 'rgba(255,255,255,0.04)',
-        border: `1px solid ${glassBorder}`,
-        minHeight: 84,
-        transition: 'all 0.2s ease',
-        '&:hover': {
-          background: 'rgba(255,255,255,0.07)',
-          transform: 'translateY(-2px)',
-        },
-        position: 'relative',
-        overflow: 'visible',
-        cursor: 'pointer',
-      }}
-    >
-      {/* ОБЩИЙ FLEX-КОНТЕЙНЕР */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 1.5,
-          width: '100%',
-        }}
-      >
-        {/* СЛЕВА: АВАТАР / ПРЕВЬЮ */}
-        {renderArtworkAvatar(art, idx)}
-
-        {/* СПРАВА: ТЕКСТ + КНОПКИ */}
         <Box
           sx={{
-            flex: 1,
-            minWidth: 0,
             display: 'flex',
-            flexDirection: 'column',
-            gap: 0.75,
+            justifyContent: 'flex-start',
+            alignItems: 'center',
+            mb: 2,
           }}
         >
-          {/* ВЕРХНЯЯ СТРОКА: ЗАГОЛОВОК + КНОПКИ */}
-          <Box
+          <Chip
+            label="Схожие произведения искусства"
+            size="small"
             sx={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 1,
-              minWidth: 0,
-            }}
-          >
-            {/* ЗАГОЛОВОК — РАСТЯГИВАЕТСЯ, НО НЕ НАЕЗЖАЕТ НА КНОПКИ */}
-            <Typography
-              variant="subtitle1"
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                fontWeight: 700,
-                fontSize: '0.98rem',
-                color: '#fff',
-                lineHeight: 1.25,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                display: '-webkit-box',
-                WebkitLineClamp: 2, // можно 3, если хочешь ещё больше строк
-                WebkitBoxOrient: 'vertical',
-              }}
-            >
-              {art.title}
-            </Typography>
-
-            {/* КНОПКИ — ГОРИЗОНТАЛЬНО, БЕЗ ТЕНЕЙ */}
-            <Box
-              sx={{
-                display: 'flex',
-                flexShrink: 0,
-                gap: 1,
-                alignItems: 'center',
-              }}
-            >
-              <Tooltip title="Перегенерировать">
-                <span>
-                  <IconButton
-                    aria-label="перегенерировать"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRegenerateArtwork(idx);
-                    }}
-                    disabled={isRegenerating}
-                    sx={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: '999px',
-                      color: '#fff',
-                      backgroundColor: 'rgba(255,255,255,0.10)',
-                      border: '1px solid rgba(255,255,255,0.25)',
-                      boxShadow: 'none',
-                      backdropFilter: 'blur(8px)',
-                      WebkitBackdropFilter: 'blur(8px)',
-                      transition:
-                        'background-color 0.18s ease, transform 0.18s ease',
-                      '&:hover': {
-                        backgroundColor: 'rgba(255,255,255,0.18)',
-                        transform: 'translateY(-1px)',
-                      },
-                      '& .MuiSvgIcon-root': {
-                        fontSize: 18,
-                      },
-                    }}
-                  >
-                    {isRegenerating ? (
-                      <Box
-                        sx={{
-                          ...spin3dKeyframes,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <Box sx={{ ...heartSxBase }} aria-hidden />
-                      </Box>
-                    ) : (
-                      <AutorenewIcon
-                        sx={{ color: 'rgba(255,255,255,0.95)' }}
-                      />
-                    )}
-                  </IconButton>
-                </span>
-              </Tooltip>
-
-              <Tooltip title="Удалить">
-                <span>
-                  <IconButton
-                    aria-label="удалить"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      promptDeleteArtwork(idx);
-                    }}
-                    sx={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: '999px',
-                      color: '#fff',
-                      backgroundColor: 'rgba(255,255,255,0.10)',
-                      border: '1px solid rgba(255,255,255,0.25)',
-                      boxShadow: 'none',
-                      backdropFilter: 'blur(8px)',
-                      WebkitBackdropFilter: 'blur(8px)',
-                      transition:
-                        'background-color 0.18s ease, transform 0.18s ease',
-                      '&:hover': {
-                        backgroundColor: 'rgba(255,255,255,0.18)',
-                        transform: 'translateY(-1px)',
-                      },
-                      '& .MuiSvgIcon-root': {
-                        fontSize: 18,
-                      },
-                    }}
-                  >
-                    <DeleteIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </Box>
-          </Box>
-
-          {/* НИЖНИЙ БЛОК: АВТОР + ОПИСАНИЕ НА ВСЮ ШИРИНУ */}
-          <Box sx={{ mt: 0.25 }}>
-            <Typography
-              component="span"
-              variant="body2"
-              sx={{
-                display: 'block',
-                fontSize: '0.86rem',
-                fontWeight: 500,
-                color: 'rgba(255,255,255,0.9)',
-                mb: 0.25,
-              }}
-            >
-              {art.author}
-            </Typography>
-
-            <Typography
-              variant="body2"
-              sx={{
-                fontSize: '0.83rem',
-                lineHeight: 1.35,
-                color: 'rgba(255,255,255,0.8)',
-                overflow: 'hidden',
-                display: '-webkit-box',
-                WebkitLineClamp: 4,
-                WebkitBoxOrient: 'vertical',
-              }}
-            >
-              {art.desc}
-            </Typography>
-          </Box>
-        </Box>
-      </Box>
-    </ListItem>
-  );
-})}
-
-{artworks.length < MAX_ARTWORKS &&
-  (() => {
-    const isAdding = regeneratingArtwork === ADDING_INDEX;
-
-    return (
-      <ListItem
-        key="add-placeholder"
-        alignItems="center"
-        onClick={(e) => {
-          if (isAdding) return;
-          handleAddArtwork();
-        }}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (isAdding) return;
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleAddArtwork();
-          }
-        }}
-        sx={{
-          mb: 1.5,
-          py: { xs: 1.4, sm: 1.6 },
-          px: { xs: 1.6, sm: 2 },
-          borderRadius: 2,
-          background: 'rgba(255,255,255,0.04)',
-          border: `1px solid ${glassBorder}`,
-          minHeight: 84,
-          transition: 'all 0.18s ease',
-          '&:hover': {
-            background: 'rgba(255,255,255,0.07)',
-            transform: 'translateY(-2px)',
-          },
-          position: 'relative',
-          overflow: 'visible',
-          cursor: isAdding ? 'default' : 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          opacity: isAdding ? 0.98 : 1,
-        }}
-      >
-        {isAdding && (
-          <Box
-            sx={{
-              position: 'absolute',
-              top: 10,
-              right: 10,
-              display: 'flex',
-              gap: 0.75,
-              alignItems: 'center',
-              zIndex: 5,
-            }}
-          >
-            <Tooltip title="Генерация..." placement="top">
-              <span>
-                <IconButton
-                  aria-label="генерация"
-                  disabled
-                  sx={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: '999px',
-                    color: '#fff',
-                    backgroundColor: 'rgba(255,255,255,0.10)',
-                    border: '1px solid rgba(255,255,255,0.25)',
-                    boxShadow: 'none',
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                  }}
-                >
-                  <Box
-                    sx={{
-                      ...spin3dKeyframes,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Box sx={{ ...heartSxBase }} aria-hidden />
-                  </Box>
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Box>
-        )}
-
-        <Box
-          sx={{
-            width: 64,
-            height: 64,
-            mr: 2,
-            position: 'relative',
-            flexShrink: 0,
-          }}
-        >
-          <Avatar
-            src="/logo.png"
-            alt="Saviora"
-            variant="rounded"
-            sx={{
-              width: 64,
-              height: 64,
-              borderRadius: 2,
-              boxShadow: 1,
-              border: `1px solid rgba(255,255,255,0.04)`,
-              bgcolor: 'rgba(255,255,255,0.03)',
-              opacity: 0.95,
-              objectFit: 'contain',
+              borderColor: alpha('#ffffff', 0.24),
+              background:
+                'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.14))',
+              color: alpha('#ffffff', 0.92),
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              borderRadius: 999,
+              '& .MuiChip-label': {
+                px: 1.6,
+                py: 0.4,
+                fontWeight: 600,
+                fontSize: '0.85rem',
+              },
             }}
           />
         </Box>
 
-        <ListItemText
-          sx={{
-            minWidth: 0,
-          }}
-          primary={
-            <Typography
-              variant="subtitle1"
-              sx={{
-                fontWeight: 700,
-                fontSize: '0.98rem',
-                color: '#fff',
-                lineHeight: 1.25,
-              }}
-            >
-              Добавление произведения
-            </Typography>
-          }
-          secondary={
-            <Typography
-              variant="body2"
-              sx={{
-                fontSize: '0.83rem',
-                color: 'rgba(255,255,255,0.8)',
-                lineHeight: 1.4,
-                mt: 0.4,
-              }}
-            >
-              Нажмите на карточку, чтобы сгенерировать новое похожее
-              произведение.
-            </Typography>
-          }
-        />
-      </ListItem>
-    );
-  })()}
-  </List>
-)}
+        {loading && (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              height: '100%',
+            }}
+          >
+            <CircularProgress sx={{ color: accentColor }} />
+          </Box>
+        )}
 
-        {/* Delete dialogs, snackbar */}
+        {error && (
+          <Alert
+            severity="error"
+            sx={{
+              bgcolor: 'rgba(255,80,80,0.12)',
+              color: '#fff',
+              border: `1px solid rgba(255,80,80,0.2)`,
+            }}
+          >
+            {error}
+          </Alert>
+        )}
+
+        {!loading && !error && (
+          <List sx={{ width: '100%' }}>
+            {artworks.length === 0 && (
+              <Typography
+                color="rgba(255,255,255,0.65)"
+                sx={{ mt: 2, textAlign: 'center' }}
+              >
+                Ничего не найдено.
+              </Typography>
+            )}
+
+            {artworks.map((art, idx) => {
+              const isRegenerating = regeneratingArtwork === idx;
+
+              return (
+                <ListItem
+                  key={idx}
+                  alignItems="flex-start"
+                  onClick={() => handleArtworkChat(art, idx)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleArtworkChat(art, idx);
+                    }
+                  }}
+                  sx={{
+                    mb: 1.5,
+                    py: { xs: 1.4, sm: 1.6 },
+                    px: { xs: 1.6, sm: 2 },
+                    borderRadius: 2,
+                    background: 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${glassBorder}`,
+                    minHeight: 84,
+                    transition: 'all 0.2s ease',
+                    '&:hover': {
+                      background: 'rgba(255,255,255,0.07)',
+                      transform: 'translateY(-2px)',
+                    },
+                    position: 'relative',
+                    overflow: 'visible',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {/* ОБЩИЙ FLEX-КОНТЕЙНЕР */}
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 1.5,
+                      width: '100%',
+                    }}
+                  >
+                    {/* СЛЕВА: АВАТАР / ПРЕВЬЮ */}
+                    {renderArtworkAvatar(art, idx)}
+
+                    {/* СПРАВА: ТЕКСТ + КНОПКИ */}
+                    <Box
+                      sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 0.75,
+                      }}
+                    >
+                      {/* ВЕРХНЯЯ СТРОКА: ЗАГОЛОВОК + КНОПКИ */}
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {/* ЗАГОЛОВОК — РАСТЯГИВАЕТСЯ, НО НЕ НАЕЗЖАЕТ НА КНОПКИ */}
+                        <Typography
+                          variant="subtitle1"
+                          sx={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontWeight: 700,
+                            fontSize: '0.98rem',
+                            color: '#fff',
+                            lineHeight: 1.25,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                          }}
+                        >
+                          {art.title}
+                        </Typography>
+
+                        {/* КНОПКИ — ГОРИЗОНТАЛЬНО, БЕЗ ТЕНЕЙ */}
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            flexShrink: 0,
+                            gap: 1,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Tooltip title="Перегенерировать">
+                            <span>
+                              <IconButton
+                                aria-label="перегенерировать"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRegenerateArtwork(idx);
+                                }}
+                                disabled={isRegenerating}
+                                sx={{
+                                  width: 32,
+                                  height: 32,
+                                  borderRadius: '999px',
+                                  color: '#fff',
+                                  backgroundColor: 'rgba(255,255,255,0.10)',
+                                  border: '1px solid rgba(255,255,255,0.25)',
+                                  boxShadow: 'none',
+                                  backdropFilter: 'blur(8px)',
+                                  WebkitBackdropFilter: 'blur(8px)',
+                                  transition:
+                                    'background-color 0.18s ease, transform 0.18s ease',
+                                  '&:hover': {
+                                    backgroundColor: 'rgba(255,255,255,0.18)',
+                                    transform: 'translateY(-1px)',
+                                  },
+                                  '& .MuiSvgIcon-root': {
+                                    fontSize: 18,
+                                  },
+                                }}
+                              >
+                                {isRegenerating ? (
+                                  <Box
+                                    sx={{
+                                      ...spin3dKeyframes,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                    }}
+                                  >
+                                    <Box sx={{ ...heartSxBase }} aria-hidden />
+                                  </Box>
+                                ) : (
+                                  <AutorenewIcon
+                                    sx={{ color: 'rgba(255,255,255,0.95)' }}
+                                  />
+                                )}
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+
+                          <Tooltip title="Удалить">
+                            <span>
+                              <IconButton
+                                aria-label="удалить"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  promptDeleteArtwork(idx);
+                                }}
+                                sx={{
+                                  width: 32,
+                                  height: 32,
+                                  borderRadius: '999px',
+                                  color: '#fff',
+                                  backgroundColor: 'rgba(255,255,255,0.10)',
+                                  border: '1px solid rgba(255,255,255,0.25)',
+                                  boxShadow: 'none',
+                                  backdropFilter: 'blur(8px)',
+                                  WebkitBackdropFilter: 'blur(8px)',
+                                  transition:
+                                    'background-color 0.18s ease, transform 0.18s ease',
+                                  '&:hover': {
+                                    backgroundColor: 'rgba(255,255,255,0.18)',
+                                    transform: 'translateY(-1px)',
+                                  },
+                                  '& .MuiSvgIcon-root': {
+                                    fontSize: 18,
+                                  },
+                                }}
+                              >
+                                <DeleteIcon sx={{ color: 'rgba(255,255,255,0.95)' }} />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        </Box>
+                      </Box>
+
+                      {/* НИЖНИЙ БЛОК: АВТОР + ОПИСАНИЕ НА ВСЮ ШИРИНУ */}
+                      <Box sx={{ mt: 0.25 }}>
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          sx={{
+                            display: 'block',
+                            fontSize: '0.86rem',
+                            fontWeight: 500,
+                            color: 'rgba(255,255,255,0.9)',
+                            mb: 0.25,
+                          }}
+                        >
+                          {art.author}
+                        </Typography>
+
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontSize: '0.83rem',
+                            lineHeight: 1.35,
+                            color: 'rgba(255,255,255,0.8)',
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 4,
+                            WebkitBoxOrient: 'vertical',
+                          }}
+                        >
+                          {art.desc}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Box>
+                </ListItem>
+              );
+            })}
+
+            {artworks.length < MAX_ARTWORKS &&
+              (() => {
+                const isAdding = regeneratingArtwork === ADDING_INDEX;
+
+                return (
+                  <ListItem
+                    key="add-placeholder"
+                    alignItems="center"
+                    onClick={(e) => {
+                      if (isAdding) return;
+                      handleAddArtwork();
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (isAdding) return;
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleAddArtwork();
+                      }
+                    }}
+                    sx={{
+                      mb: 1.5,
+                      py: { xs: 1.4, sm: 1.6 },
+                      px: { xs: 1.6, sm: 2 },
+                      borderRadius: 2,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${glassBorder}`,
+                      minHeight: 84,
+                      transition: 'all 0.18s ease',
+                      '&:hover': {
+                        background: 'rgba(255,255,255,0.07)',
+                        transform: 'translateY(-2px)',
+                      },
+                      position: 'relative',
+                      overflow: 'visible',
+                      cursor: isAdding ? 'default' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      opacity: isAdding ? 0.98 : 1,
+                    }}
+                  >
+                    {isAdding && (
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          top: 10,
+                          right: 10,
+                          display: 'flex',
+                          gap: 0.75,
+                          alignItems: 'center',
+                          zIndex: 5,
+                        }}
+                      >
+                        <Tooltip title="Генерация..." placement="top">
+                          <span>
+                            <IconButton
+                              aria-label="генерация"
+                              disabled
+                              sx={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: '999px',
+                                color: '#fff',
+                                backgroundColor: 'rgba(255,255,255,0.10)',
+                                border: '1px solid rgba(255,255,255,0.25)',
+                                boxShadow: 'none',
+                                backdropFilter: 'blur(8px)',
+                                WebkitBackdropFilter: 'blur(8px)',
+                              }}
+                            >
+                              <Box
+                                sx={{
+                                  ...spin3dKeyframes,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                <Box sx={{ ...heartSxBase }} aria-hidden />
+                              </Box>
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Box>
+                    )}
+
+                    <Box
+                      sx={{
+                        width: 64,
+                        height: 64,
+                        mr: 2,
+                        position: 'relative',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Avatar
+                        src="/logo.png"
+                        alt="Saviora"
+                        variant="rounded"
+                        sx={{
+                          width: 64,
+                          height: 64,
+                          borderRadius: 2,
+                          boxShadow: 1,
+                          border: `1px solid rgba(255,255,255,0.04)`,
+                          bgcolor: 'rgba(255,255,255,0.03)',
+                          opacity: 0.95,
+                          objectFit: 'contain',
+                        }}
+                      />
+                    </Box>
+
+                    <ListItemText
+                      sx={{
+                        minWidth: 0,
+                      }}
+                      primary={
+                        <Typography
+                          variant="subtitle1"
+                          sx={{
+                            fontWeight: 700,
+                            fontSize: '0.98rem',
+                            color: '#fff',
+                            lineHeight: 1.25,
+                          }}
+                        >
+                          Добавление произведения
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontSize: '0.83rem',
+                            color: 'rgba(255,255,255,0.8)',
+                            lineHeight: 1.4,
+                            mt: 0.4,
+                          }}
+                        >
+                          Нажмите на карточку, чтобы сгенерировать новое похожее
+                          произведение.
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                );
+              })()}
+          </List>
+        )}
+
+        {/* Delete dialogs */}
         <Dialog
           open={deletingArtworkIndex !== null}
           onClose={() => {
@@ -1837,31 +1841,51 @@ const mainCardSx = {
           </DialogActions>
         </Dialog>
 
+        {/* SNACKBAR: стеклянный как в ProfileScreen */}
         <Snackbar
-  open={snackbar.open}
-  autoHideDuration={4000}
-  onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-  sx={{
-    '&.MuiSnackbar-root': {
-      bottom: '25vh',
-    },
-  }}
->
-          <Alert
-            onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-            severity={snackbar.severity}
+          open={snackbarOpen}
+          autoHideDuration={3000}
+          onClose={() => setSnackbarOpen(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          sx={{
+            bottom: '20vh', // при необходимости подгони под свой футер
+          }}
+          ContentProps={{
+            sx: {
+              backgroundColor: 'transparent',
+              boxShadow: 'none',
+              padding: 0,
+            },
+          }}
+        >
+          <Paper
+            elevation={0}
             sx={{
-              width: '100%',
-              '& .MuiAlert-message': { fontSize: '0.95rem' },
-              bgcolor: 'rgba(0,0,0,0.35)',
-              color: '#fff',
+              px: 2.4,
+              py: 1.4,
+              borderRadius: 2.5,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              background: 'rgba(255,255,255,0.10)',
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
               border: `1px solid ${glassBorder}`,
-              backdropFilter: 'blur(6px)',
+              boxShadow: 'none',
+              color: '#fff',
+              maxWidth: 520,
             }}
           >
-            {snackbar.message}
-          </Alert>
+            <Box
+              component="span"
+              sx={{
+                fontSize: '1.0rem',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {snackbarMessage}
+            </Box>
+          </Paper>
         </Snackbar>
       </Box>
     </Box>

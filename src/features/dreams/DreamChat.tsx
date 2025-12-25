@@ -93,6 +93,7 @@ export const DreamChat: React.FC = () => {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [headerExpanded, setHeaderExpanded] = useState(true);
   const [generatingInterpretation, setGeneratingInterpretation] = useState(false);
 
@@ -683,20 +684,22 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   };
 
   const handleClear = async () => {
-    if (!dream || !currentBlock) return;
-    try {
-      setSendingReply(true);
-      await clearChat(dream.id, currentBlock.id);
-      setMessages([]);
-      kickoffDoneRef.current = null;
-      await runKickoff();
-      await recomputeInterpretedCount();
-    } catch (e: any) {
-      setError(e.message || 'Не удалось очистить чат');
-    } finally {
-      setSendingReply(false);
-    }
-  };
+  if (!dream || !currentBlock) return;
+  try {
+    setSendingReply(true);
+    await clearChat(dream.id, currentBlock.id);
+    setMessages([]);
+    kickoffDoneRef.current = null;
+    await runKickoff();
+    await recomputeInterpretedCount();
+    // закрываем модалку, как в SimilarArtworksScreen
+    setClearDialogOpen(false);
+  } catch (e: any) {
+    setError(e.message || 'Не удалось очистить чат');
+  } finally {
+    setSendingReply(false);
+  }
+};
 
   const navigateToBlock = (targetBlock?: WordBlock | null) => {
   if (!targetBlock) return;
@@ -823,17 +826,17 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
               )}
 
               <Tooltip title="Очистить чат">
-                <span>
-                  <IconButton
-                    onClick={handleClear}
-                    sx={{ color: '#fff' }}
-                    aria-label="Очистить чат"
-                    disabled={sendingReply}
-                  >
-                    <DeleteSweepIcon />
-                  </IconButton>
-                </span>
-              </Tooltip>
+  <span>
+    <IconButton
+      onClick={() => setClearDialogOpen(true)}
+      sx={{ color: '#fff' }}
+      aria-label="Очистить чат"
+      disabled={sendingReply}
+    >
+      <DeleteSweepIcon />
+    </IconButton>
+  </span>
+</Tooltip>
               <IconButton
                 onClick={() => setHeaderExpanded(!headerExpanded)}
                 sx={{ color: '#fff' }}
@@ -1325,93 +1328,190 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
         </Box>
       </Box>
 
-      {/* ДИАЛОГ ИТОГОВОГО ТОЛКОВАНИЯ */}
-      <Dialog
-        open={finalDialogOpen}
-        onClose={() => setFinalDialogOpen(false)}
-        fullWidth
-        maxWidth="md"
-        PaperProps={{
-          sx: {
-            background:
-              'linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            color: '#fff',
-            maxHeight: '80vh',
-          },
-        }}
-      >
-        <DialogTitle
+      {/* ДИАЛОГ ПОДТВЕРЖДЕНИЯ ОЧИСТКИ ЧАТА (по стилю SimilarArtworksScreen) */}
+<Dialog
+  open={clearDialogOpen}
+  onClose={() => {
+    if (!sendingReply) setClearDialogOpen(false);
+  }}
+  PaperProps={{
+    sx: {
+      background:
+        'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+      border: `1px solid ${glassBorder}`,
+      color: '#fff',
+      borderRadius: 3,
+    },
+  }}
+>
+  <DialogTitle>Очистить историю беседы?</DialogTitle>
+  <DialogContent>
+    <Typography sx={{ color: 'rgba(255,255,255,0.85)' }}>
+      Вы уверены, что хотите удалить все сообщения для этого блока сна?
+      Сон и его блоки останутся, будет очищена только переписка с ассистентом.
+    </Typography>
+  </DialogContent>
+  <DialogActions sx={{ px: 3, pb: 2 }}>
+    <Button
+      onClick={() => setClearDialogOpen(false)}
+      sx={{
+        color: '#fff',
+        borderRadius: 12,      // <- только это добавлено
+        height: 44,
+        textTransform: 'none',
+      }}
+      disabled={sendingReply}
+    >
+      Отмена
+    </Button>
+    <Button
+      variant="contained"
+      color="error"
+      onClick={handleClear}
+      sx={{
+        bgcolor: 'rgba(255, 100, 100, 0.95)',
+        '&:hover': {
+          bgcolor: 'rgba(255, 100, 100, 0.85)',
+        },
+        borderRadius: 12,      // <- и здесь
+        height: 44,
+        textTransform: 'none',
+      }}
+      disabled={sendingReply}
+    >
+      {sendingReply ? 'Очистка…' : 'Очистить чат'}
+    </Button>
+  </DialogActions>
+</Dialog>
+
+{/* ДИАЛОГ ИТОГОВОГО ТОЛКОВАНИЯ — стекло в цвет хедера DreamChat */}
+<Dialog
+  open={finalDialogOpen}
+  onClose={() => setFinalDialogOpen(false)}
+  fullWidth
+  maxWidth="md"
+  PaperProps={{
+    sx: {
+      background: glassBackground,          // как у хедера
+      backdropFilter: 'blur(20px)',        // как у хедера
+      WebkitBackdropFilter: 'blur(20px)',
+      border: `1px solid ${glassBorder}`,  // как у хедера
+      color: '#fff',
+      maxHeight: '80vh',
+      borderRadius: 3,
+    },
+  }}
+>
+  <DialogTitle
+    sx={{
+      color: '#fff',
+      fontWeight: 600,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      pb: 1.25,
+    }}
+  >
+    <span>Итоговое толкование</span>
+    <Tooltip title="Обновить толкование">
+      <span>
+        <IconButton
+          onClick={handleRefreshFinal}
+          disabled={
+            refreshingFinal || loadingFinalInterpretation || !canFinalInterpret
+          }
           sx={{
             color: '#fff',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+            '&:hover': { background: 'rgba(255, 255, 255, 0.1)' },
           }}
+          size="small"
         >
-          <span>Итоговое толкование сна</span>
-          <Tooltip title="Обновить толкование">
-            <span>
-              <IconButton
-                onClick={handleRefreshFinal}
-                disabled={
-                  refreshingFinal || loadingFinalInterpretation || !canFinalInterpret
-                }
-                sx={{
-                  color: '#fff',
-                  '&:hover': { background: 'rgba(255, 255, 255, 0.1)' },
-                }}
-                size="small"
-              >
-                <RefreshIcon
-                  sx={{
-                    animation: refreshingFinal ? 'spin 1s linear infinite' : 'none',
-                    '@keyframes spin': {
-                      '0%': { transform: 'rotate(0deg)' },
-                      '100%': { transform: 'rotate(360deg)' },
-                    },
-                  }}
-                />
-              </IconButton>
-            </span>
-          </Tooltip>
-        </DialogTitle>
-        <DialogContent dividers sx={{ borderColor: 'rgba(255, 255, 255, 0.2)' }}>
-          {loadingFinalInterpretation ? (
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                py: 4,
-              }}
-            >
-              <CircularProgress sx={{ color: '#fff' }} />
-            </Box>
-          ) : finalInterpretationText ? (
-            <Typography
-              variant="body1"
-              sx={{ whiteSpace: 'pre-wrap', color: '#fff', lineHeight: 1.6 }}
-            >
-              {finalInterpretationText}
-            </Typography>
-          ) : (
-            <Typography
-              variant="body2"
-              sx={{ color: 'rgba(255, 255, 255, 0.7)' }}
-            >
-              Итоговое толкование ещё не сформировано.
-            </Typography>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ borderColor: 'rgba(255, 255, 255, 0.2)' }}>
-          <Button onClick={() => setFinalDialogOpen(false)} sx={{ color: '#fff' }}>
-            Закрыть
-          </Button>
-        </DialogActions>
-      </Dialog>
+          <RefreshIcon
+            sx={{
+              animation: refreshingFinal ? 'spin 1s linear infinite' : 'none',
+              '@keyframes spin': {
+                '0%': { transform: 'rotate(0deg)' },
+                '100%': { transform: 'rotate(360deg)' },
+              },
+            }}
+          />
+        </IconButton>
+      </span>
+    </Tooltip>
+  </DialogTitle>
+
+  <DialogContent
+    dividers
+    sx={{
+      borderColor: 'rgba(255, 255, 255, 0.18)',
+      pt: 2,
+      pb: 2.5,
+    }}
+  >
+    {loadingFinalInterpretation ? (
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          py: 4,
+        }}
+      >
+        <CircularProgress sx={{ color: '#fff' }} />
+      </Box>
+    ) : finalInterpretationText ? (
+      <Typography
+        variant="body1"
+        sx={{
+          whiteSpace: 'pre-wrap',
+          color: '#fff',
+          lineHeight: 1.6,
+        }}
+      >
+        {finalInterpretationText}
+      </Typography>
+    ) : (
+      <Typography
+        variant="body2"
+        sx={{ color: 'rgba(255, 255, 255, 0.75)' }}
+      >
+        Итоговое толкование ещё не сформировано.
+      </Typography>
+    )}
+  </DialogContent>
+
+  <DialogActions
+    sx={{
+      borderColor: 'rgba(255, 255, 255, 0.18)',
+      px: 3,
+      pb: 2.2,
+      pt: 1.3,
+      justifyContent: 'flex-end',
+    }}
+  >
+    <Button
+      onClick={() => setFinalDialogOpen(false)}
+      sx={{
+        color: '#fff',
+        borderRadius: 12,
+        height: 44,
+        textTransform: 'none',
+        px: 3,
+        fontSize: '0.95rem',
+        border: '1px solid rgba(255,255,255,0.35)',  // тонкий светлый обвод
+        bgcolor: 'transparent',                       // без заливки
+        '&:hover': {
+          bgcolor: 'rgba(255,255,255,0.06)',          // лёгкий hover
+        },
+      }}
+    >
+      Закрыть
+    </Button>
+  </DialogActions>
+</Dialog>
+
       {/* Снекбар о толковании (в стиле профиля, над лунной кнопкой) */}
       {/* Снекбар о толковании — реально стеклянный */}
 <Snackbar

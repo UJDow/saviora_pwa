@@ -659,17 +659,17 @@ export function ProfileScreen() {
         )}
 
         <Box
-          sx={{
-            flexGrow: 1,
-            mt: 0,
-            maxWidth: 760,
-            mx: 'auto',
-            overflowY: 'auto',
-            position: 'relative',
-            width: '100%',
-            px: 0,
-          }}
-        >
+  sx={{
+    flexGrow: 1,
+    mt: 0,
+    maxWidth: 760,
+    mx: 'auto',
+    position: 'relative',
+    width: '100%',
+    px: 0,
+    pb: 4,
+  }}
+>
           <AnimatePresence mode="wait">
             {selectedDreamDate ? (
               <motion.div

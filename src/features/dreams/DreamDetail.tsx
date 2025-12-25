@@ -1022,7 +1022,7 @@ export function DreamDetail() {
                 variant="subtitle1"
                 sx={{ fontWeight: 600, mb: 1, color: '#fff' }}
               >
-                Итоговое толкование сна
+                Итоговое толкование
               </Typography>
               <Typography
                 variant="body2"
