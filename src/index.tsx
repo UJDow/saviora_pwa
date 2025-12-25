@@ -3,10 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import { AuthProvider } from './features/auth/AuthProvider';
-
-import { PullToRefreshProvider } from './pullToRefresh/PullToRefreshProvider';
-import { globalRefresh } from './refresh/globalRefresh';
+import { AuthProvider } from './features/auth/AuthProvider'; // <--- добавь этот импорт
 
 const theme = createTheme({
   palette: {
@@ -25,18 +22,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <PullToRefreshProvider
-          onRefresh={globalRefresh}
-          isEnabled={() => {
-            const path = window.location.pathname;
-            // чаты — отключаем
-            if (path.startsWith('/dreams/') && path.includes('/chat')) return false;
-            if (path.startsWith('/daily/') && path.includes('/chat')) return false;
-            return true;
-          }}
-        >
-          <App />
-        </PullToRefreshProvider>
+        <App />
       </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>
