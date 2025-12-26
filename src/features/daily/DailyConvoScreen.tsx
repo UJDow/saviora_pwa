@@ -1133,30 +1133,24 @@ export function DailyConvoScreen() {
                 }}
               >
                 <IconButton
-                  aria-label="Открыть чат"
-                  title="Открыть чат"
-                  onClick={() =>
-                    navigate(`/daily/${convo.id}/chat`)
-                  }
-                  sx={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: '50%',
-                    color: '#fff',
-                    backgroundColor: 'transparent',
-                    border:
-                      '1px solid rgba(209,213,219,0.45)',
-                    transition: 'all 0.18s ease',
-                    '&:hover': {
-                      backgroundColor:
-                        'rgba(209,213,219,0.12)',
-                    },
-                  }}
-                >
-                  <ChatBubbleOutlineRoundedIcon
-                    sx={{ fontSize: 20 }}
-                  />
-                </IconButton>
+  aria-label="Открыть чат"
+  title="Открыть чат"
+  onClick={() => navigate(`/daily/${convo.id}/chat`)}
+  sx={{
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    color: '#fff',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(209,213,219,0.45)',
+    transition: 'all 0.18s ease',
+    '&:hover': {
+      backgroundColor: 'rgba(209,213,219,0.12)',
+    },
+  }}
+>
+  <ChatBubbleOutlineRoundedIcon sx={{ fontSize: 20 }} />
+</IconButton>
               </Box>
             </Paper>
           </>

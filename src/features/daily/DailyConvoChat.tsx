@@ -703,12 +703,8 @@ export default function DailyConvoChat({
   const canBlockInterpret = messages.length > 0;
 
   const handleBack = () => {
-    if (convo?.id) {
-      navigate(`/daily/${convo.id}`);
-    } else {
-      navigate('/daily');
-    }
-  };
+  navigate(-1);
+};
 
   const handleClear = useCallback(async () => {
     if (!convo || clearing || sending) return;
