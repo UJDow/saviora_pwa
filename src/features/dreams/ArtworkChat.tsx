@@ -1,4 +1,4 @@
-// ArtworkChat.tsx (обновлённый под DreamChat)
+// ArtworkChat.tsx
 
 import React, {
   useState,
@@ -725,14 +725,15 @@ export const ArtworkChat: React.FC = () => {
   };
 
   const goToArtwork = (idx: number) => {
-    if (!id) return;
-    navigate(`/dreams/${id}/artwork-chat/${idx}`);
-  };
+  if (!id) return;
+  navigate(`/dreams/${id}/artwork-chat/${idx}`, {
+    replace: true,
+  });
+};
 
   const handleBack = () => {
-    if (!id) return;
-    navigate(`/dreams/${id}/similar`);
-  };
+  navigate(-1);
+};
 
   if (loading) {
     return (
@@ -855,12 +856,12 @@ export const ArtworkChat: React.FC = () => {
               }}
             >
               <IconButton
-                onClick={handleBack}
-                sx={{ color: '#fff', mr: 1 }}
-                aria-label="Назад"
-              >
-                <ArrowBackIosNewIcon />
-              </IconButton>
+  onClick={handleBack}
+  sx={{ color: '#fff', mr: 1 }}
+  aria-label="Назад"
+>
+  <ArrowBackIosNewIcon />
+</IconButton>
 
               <Box sx={{ minWidth: 0 }}>
                 <Typography

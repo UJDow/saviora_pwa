@@ -445,9 +445,11 @@ export function SimilarArtworksScreen(): React.ReactElement {
   };
 
   const handleArtworkChat = (art: SimilarArtwork, idx: number) => {
-    if (!id) return;
-    navigate(`/dreams/${id}/artwork-chat/${idx}`);
-  };
+  if (!id) return;
+  navigate(`/dreams/${id}/artwork-chat/${idx}`, {
+    replace: true,      // КЛЮЧЕВОЕ
+  });
+};
 
   const handleInsightClick = (insight: any) => {
     if (!dream || !id) return;
