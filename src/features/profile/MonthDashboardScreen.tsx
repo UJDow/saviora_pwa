@@ -320,7 +320,7 @@ const EngagementCard: React.FC<{
             },
             {
               key: 'streak',
-              title: 'Стрик',
+              title: 'Актуальный стрик',
               icon: <TrendingUpIcon />,
               data: breakdown.streak,
               unit: 'дн.',
@@ -844,48 +844,43 @@ const handleCloseNewBadges = async () => {
 };
 
   const normalizeDashboardServerPayload = (
-    data: any,
-  ): DashboardPayload => {
-    if (!data || typeof data !== 'object') return data;
+  data: any,
+): DashboardPayload => {
+  if (!data || typeof data !== 'object') return data;
 
-    const insightsDreamsCount =
-      Number(
-        data.insightsDreamsCount ??
-          data.insights_dreams_count ??
-          data.insights_count ??
-          data.insightsTotal ??
-          data.insights_total ??
-          0,
-      ) || 0;
+  // новый контракт — camelCase
+  const insightsDreamsCount =
+    Number(
+      data.insightsDreamsCount ??
+        data.insights_dreams_count ?? // на всякий fallback
+        0,
+    ) || 0;
 
-    const insightsArtworksCount =
-      Number(
-        data.insightsArtworksCount ??
-          data.insights_artworks_count ??
-          data.artworkInsightsCount ??
-          data.artwork_insights_count ??
-          data.artworks_insights_count ??
-          0,
-      ) || 0;
+  const insightsArtworksCount =
+    Number(
+      data.insightsArtworksCount ??
+        data.insights_artworks_count ?? // на всякий fallback
+        0,
+    ) || 0;
 
-    let moodCounts = data.moodCounts;
-    if (typeof moodCounts === 'string') {
-      try {
-        moodCounts = JSON.parse(moodCounts);
-      } catch {
-        moodCounts = undefined;
-      }
+  let moodCounts = data.moodCounts;
+  if (typeof moodCounts === 'string') {
+    try {
+      moodCounts = JSON.parse(moodCounts);
+    } catch {
+      moodCounts = undefined;
     }
+  }
 
-    return {
-      ...data,
-      insightsDreamsCount,
-      insightsArtworksCount,
-      moodCounts,
-      moodTotal:
-        Number(data.moodTotal ?? sumValues(moodCounts) ?? 0) || 0,
-    };
+  return {
+    ...data,
+    insightsDreamsCount,
+    insightsArtworksCount,
+    moodCounts,
+    moodTotal:
+      Number(data.moodTotal ?? sumValues(moodCounts) ?? 0) || 0,
   };
+};
 
   const fetchDashboard = useCallback(
   async (range: TimeRangeKey = '30days') => {
@@ -1047,6 +1042,11 @@ const level = usedDashboard?.gamification?.level ?? {
   min: 0,
   max: 100,
 };
+
+// 🔥 ДОБАВИТЬ: считаем общее количество инсайтов
+const insightsTotal =
+  (usedDashboard?.insightsDreamsCount ?? 0) +
+  (usedDashboard?.insightsArtworksCount ?? 0);
 
 {/* Безопасный расчёт процента прогресса */}
 const progressPercent = React.useMemo(() => {
@@ -1880,16 +1880,16 @@ const toggleCategory = (category: string) => {
                 
 
                   <EngagementCard
-                    score={usedDashboard.gamification?.engagementScorePeriod ?? 0}
-                    details={{
-                      activityCount: usedDashboard.totalDreamsInPeriod ?? 0,
-                      interpretedPct: usedDashboard.breakdownPercent?.interpreted ?? 0,
-                      insightsCount: 0,
-                      artworkInteractions: usedDashboard.breakdownCounts?.artworks ?? 0,
-                      dialogCount: usedDashboard.breakdownCounts?.dialogs ?? 0,
-                      streakDays: usedDashboard.streak ?? 0,
-                    }}
-                  />
+  score={usedDashboard.gamification?.engagementScorePeriod ?? 0}
+  details={{
+    activityCount: usedDashboard.totalDreamsInPeriod ?? 0,
+    interpretedPct: usedDashboard.breakdownPercent?.interpreted ?? 0,
+    insightsCount: insightsTotal, // 👈 использует объявленную выше константу
+    artworkInteractions: usedDashboard.breakdownCounts?.artworks ?? 0,
+    dialogCount: usedDashboard.breakdownCounts?.dialogs ?? 0,
+    streakDays: usedDashboard.streak ?? 0,
+  }}
+/>
 
                   <Divider
                     sx={{

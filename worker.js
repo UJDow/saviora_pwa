@@ -4772,21 +4772,11 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
       history.push(point);
     }
 
-    // If no history points, provide a fallback single point using current totals
-    if (history.length === 0) {
-      const fallbackAgg = {
-        total: totalDreams,
-        interpreted: interpretedCount,
-        summarized: summarizedForScoreResult?.count || 0,
-        artworks: artworksCount,
-        dialogs: dialogDreamsCount
-      };
-      history.push({
-        date: new Date().toISOString(),
-        score: computeScoreFromAgg(fallbackAgg),
-        counts: fallbackAgg
-      });
-    }
+   // ✅ Если нет данных за период — возвращаем пустой массив
+if (history.length === 0) {
+  // НЕ добавляем фейковую точку — пусть фронт сам решает, что показывать
+  console.warn(`[dashboard] No history data for range=${rangeParam}`);
+}
 
     // 9.3 Build historyOut (date + score)
     const historyOut = history.map(h => ({ date: h.date, score: h.score }));
@@ -4800,39 +4790,26 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
     // 9.5 recentDreams (last N)
     // ---------- recentDreams (за период / all) ----------
     // ---------- recentDreams (за период / all) ----------
+// ✅ Всегда возвращаем последние 12 снов (независимо от range)
 const recentLimit = 12;
-
-console.log('[recentDreams] sinceTs:', sinceTs, 'isAll:', isAll);
-console.log('[recentDreams] sinceTs date:', new Date(sinceTs).toISOString());
-
 const recentSql = `
-  SELECT
-    id,
-    title,
-    date,
-    (globalFinalInterpretation IS NOT NULL
-      AND globalFinalInterpretation != '') AS interpreted
+  SELECT id, title, date,
+    (globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '') AS interpreted
   FROM dreams
-  WHERE user = ? ${isAll ? '' : 'AND date >= ?'}
+  WHERE user = ?
   ORDER BY date DESC
   LIMIT ?
 `;
 
-const recentStmt = isAll
-  ? d1.prepare(recentSql).bind(userEmail, recentLimit)
-  : d1.prepare(recentSql).bind(userEmail, sinceTs, recentLimit);
-
+const recentStmt = d1.prepare(recentSql).bind(userEmail, recentLimit);
 const recentRes = await recentStmt.all();
 
-console.log('[recentDreams] Found:', recentRes.results?.length || 0);
-
-const recentDreams =
-  (recentRes.results || []).map((r) => ({
-    id: r.id,
-    title: r.title || null,
-    date: new Date(Number(r.date)).toISOString(),
-    interpreted: Boolean(r.interpreted),
-  }));
+const recentDreams = (recentRes.results || []).map((r) => ({
+  id: r.id,
+  title: r.title || null,
+  date: new Date(Number(r.date)).toISOString(),
+  interpreted: Boolean(r.interpreted),
+}));
 
     // 9.6 breakdownCounts & breakdownPercent (from final cumulative)
     const finalCounts = history.length ? history[history.length - 1].counts : { total: 0, interpreted: 0, summarized: 0, artworks: 0, dialogs: 0 };
@@ -4893,46 +4870,37 @@ const moodsStmt = isAll
     let insightsDreamsCount = 0;
     let insightsArtworksCount = 0;
 
-    try {
-      // Сначала попытка агрегировать по колонкам/JSON-полям в dreams (как раньше)
-      const insightsSql = isAll
-        ? `
-          SELECT
-            SUM(COALESCE(insightsCount, 0)) AS insights_sum_col,
-            SUM(COALESCE(artworkInsightsCount, 0)) AS artwork_sum_col,
-            SUM(COALESCE(json_array_length(insights), 0)) AS insights_sum_arr,
-            SUM(COALESCE(json_array_length(similarArtworks), 0)) AS artwork_sum_arr
-          FROM dreams
-          WHERE user = ?
-        `
-        : `
-          SELECT
-            SUM(COALESCE(insightsCount, 0)) AS insights_sum_col,
-            SUM(COALESCE(artworkInsightsCount, 0)) AS artwork_sum_col,
-            SUM(COALESCE(json_array_length(insights), 0)) AS insights_sum_arr,
-            SUM(COALESCE(json_array_length(similarArtworks), 0)) AS artwork_sum_arr
-          FROM dreams
-          WHERE user = ? AND date >= ?
-        `;
+    // ✅ ПРАВИЛЬНЫЙ подсчёт инсайтов из messages
+try {
+  const insightsSql = isAll
+    ? `
+      SELECT
+        COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS insights_dreams,
+        COUNT(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 END) AS insights_artworks
+      FROM messages
+      WHERE user = ?
+    `
+    : `
+      SELECT
+        COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS insights_dreams,
+        COUNT(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 END) AS insights_artworks
+      FROM messages
+      WHERE user = ? AND created_at >= ?
+    `;
 
-      const insightsStmt = isAll
-        ? d1.prepare(insightsSql).bind(userEmail)
-        : d1.prepare(insightsSql).bind(userEmail, sinceTs);
+  const insightsStmt = isAll
+    ? d1.prepare(insightsSql).bind(userEmail)
+    : d1.prepare(insightsSql).bind(userEmail, sinceTs);
 
-      const insightsRes = await insightsStmt.first();
-      const colInsights = Number(insightsRes?.insights_sum_col ?? 0);
-      const arrInsights = Number(insightsRes?.insights_sum_arr ?? 0);
-      const colArt = Number(insightsRes?.artwork_sum_col ?? 0);
-      const arrArt = Number(insightsRes?.artwork_sum_arr ?? 0);
+  const insightsRes = await insightsStmt.first();
+  insightsDreamsCount = Number(insightsRes?.insights_dreams ?? 0);
+  insightsArtworksCount = Number(insightsRes?.insights_artworks ?? 0);
 
-      insightsDreamsCount = Math.max(colInsights, arrInsights);
-      insightsArtworksCount = Math.max(colArt, arrArt);
-
-    } catch (err) {
-      // fallbacks below will try other strategies
-      insightsDreamsCount = 0;
-      insightsArtworksCount = 0;
-    }
+} catch (err) {
+  console.error('Failed to aggregate insights:', err);
+  insightsDreamsCount = 0;
+  insightsArtworksCount = 0;
+}
 
     // Дополнительно: посчитаем инсайты по сообщениям, если там выставлены флаги
     try {
