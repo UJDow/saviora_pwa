@@ -31,29 +31,48 @@ body {
   color: #fff !important;
 }
 
-/* ===== ГЛОБАЛЬНЫЙ ФИКС АВТОЗАПОЛНЕНИЯ НА IOS SAFARI ===== */
+/* ===== ГЛОБАЛЬНЫЙ ФИКС АВТОЗАПОЛНЕНИЯ НА IOS SAFARI / WEBVIEW ===== */
 
+/* Основной фикс для autofill */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
-input:-webkit-autofill:focus {
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
   -webkit-text-fill-color: #ffffff !important;
   caret-color: #ffffff !important;
-
-  /* Заливаем фон инпута темным/полупрозрачным, чтобы не было белой "заливки" */
-  -webkit-box-shadow: 0 0 0 1000px rgba(15, 23, 42, 0.85) inset !important;
-
+  
+  /* Стеклянный фон вместо белого */
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
+  
   /* Чтобы цвет и фон не мигали */
   transition: background-color 9999s ease-out, color 9999s ease-out !important;
+  
+  border-radius: 8px;
 }
 
-/* Если хочешь, чтобы autofill визуально вписывался в стекло-инпуты: 
-   можешь заменить фон на более светлый, близкий к твоему glass:
-   rgba(255,255,255,0.06) или 0.12
-*/
-/*
-input:-webkit-autofill,
-input:-webkit-autofill:hover,
-input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
+/* Страховка для MUI-обёртки инпутов */
+.MuiOutlinedInput-root {
+  background-color: rgba(255, 255, 255, 0.06) !important;
 }
-*/
+
+/* Дополнительная страховка для самих input-элементов внутри MUI */
+.MuiOutlinedInput-input:-webkit-autofill,
+.MuiOutlinedInput-input:-webkit-autofill:hover,
+.MuiOutlinedInput-input:-webkit-autofill:focus,
+.MuiOutlinedInput-input:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
+  transition: background-color 9999s ease-out !important;
+}
+
+/* Фикс для полей type="email" и type="password" специально */
+input[type="email"]:-webkit-autofill,
+input[type="email"]:-webkit-autofill:hover,
+input[type="email"]:-webkit-autofill:focus,
+input[type="password"]:-webkit-autofill,
+input[type="password"]:-webkit-autofill:hover,
+input[type="password"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
+  background-color: transparent !important;
+}
