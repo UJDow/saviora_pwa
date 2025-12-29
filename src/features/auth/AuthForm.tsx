@@ -6,30 +6,48 @@ import { Box, Button, TextField, Typography, Alert } from '@mui/material';
 const inputGlassSx = {
   '& .MuiInputLabel-root': {
     color: '#fff',
-    opacity: 0.8,
-    '&.Mui-focused': { color: '#fff', opacity: 1 },
+    opacity: 0.95,
+    '&.Mui-focused': { color: '#fff' },
   },
   '& .MuiOutlinedInput-root': {
     color: '#fff',
+    background: 'rgba(255,255,255,0.06)',
     borderRadius: 2,
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
+    backgroundClip: 'padding-box',
+    WebkitBackgroundClip: 'padding-box',
     '& fieldset': {
-      borderColor: 'rgba(255,255,255,0.2)',
+      borderColor: 'rgba(255,255,255,0.24)',
+      borderWidth: '1px',
     },
     '&:hover fieldset': {
-      borderColor: 'rgba(255,255,255,0.4)',
+      borderColor: 'rgba(255,255,255,0.45)',
+      borderWidth: '1px',
     },
     '&.Mui-focused fieldset': {
-      borderColor: 'rgba(255,255,255,0.8)',
+      borderColor: 'rgba(255,255,255,0.9)',
+      borderWidth: '1px',
     },
   },
   '& .MuiOutlinedInput-input': {
     color: '#fff !important',
+    fontWeight: 500,
     '&::placeholder': {
-      color: 'rgba(255,255,255,0.5)',
+      color: 'rgba(248,250,252,0.7)',
+    },
+    '&:focus::placeholder': {
+      opacity: 0,
     },
   },
+  '& input:-webkit-autofill, & input:-webkit-autofill:hover, & input:-webkit-autofill:focus':
+    {
+      WebkitTextFillColor: '#fff',
+      caretColor: '#fff',
+      WebkitBoxShadow: '0 0 0 1000px rgba(255,255,255,0.06) inset',
+      transition: 'background-color 9999s ease-out, color 9999s ease-out',
+      borderRadius: 2,
+    },
 };
 
 export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
@@ -72,13 +90,7 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         autoFocus
         variant="outlined"
         InputLabelProps={{
-          shrink: true,
-        }}
-        inputProps={{
-          style: {
-            backgroundColor: 'transparent',
-            WebkitAppearance: 'none',
-          },
+          shrink: Boolean(email),
         }}
         placeholder="you@example.com"
         sx={inputGlassSx}
@@ -94,13 +106,7 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         required
         variant="outlined"
         InputLabelProps={{
-          shrink: true,
-        }}
-        inputProps={{
-          style: {
-            backgroundColor: 'transparent',
-            WebkitAppearance: 'none',
-          },
+          shrink: Boolean(password),
         }}
         placeholder="Ваш пароль"
         sx={inputGlassSx}
@@ -134,7 +140,7 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
           borderRadius: 2,
           background:
             'linear-gradient(135deg, rgba(88,120,255,0.98), rgba(139,92,246,0.98))',
-          boxShadow: 'none',
+          boxShadow: 'none', // убрана тень
           '&:hover': {
             background:
               'linear-gradient(135deg, rgba(88,120,255,1), rgba(139,92,246,1))',
