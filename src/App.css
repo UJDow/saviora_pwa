@@ -2,7 +2,9 @@ body {
   min-height: 100vh;
   margin: 0;
   font-family: 'Roboto', Arial, sans-serif;
+  /* Спокойный градиент: голубой → светло-фиолетовый → бирюзовый */
   background: linear-gradient(120deg, #e0e7ff 0%, #f5f6fa 50%, #e0f7fa 100%);
+  transition: background 0.5s;
 }
 
 #root {
@@ -11,46 +13,20 @@ body {
   flex-direction: column;
   justify-content: center;
   align-items: center;
+  /* Можно ограничить ширину, если нужно */
   max-width: 1280px;
   margin: 0 auto;
   padding: 2rem;
 }
 
-/* Фикс для дейтпикера */
-.deadline-date-picker input {
+/* ===== СТИЛИ ДЛЯ ДЕДЛАЙН-ДЕЙТПИКЕРА ===== */
+
+/* Белый текст даты внутри инпута DatePicker в модалке дедлайна */
+.deadline-date-picker .MuiInputBase-input {
   color: #fff !important;
 }
 
-/* ГЛОБАЛЬНЫЙ ФИКС ДЛЯ ИНПУТОВ (iPhone 11 / Telegram WebView) */
-
-/* 1. Делаем САМ элемент input абсолютно прозрачным */
-.MuiOutlinedInput-root input {
-  background-color: transparent !important;
-  background: transparent !important;
-  -webkit-appearance: none !important;
-  appearance: none !important;
-  box-shadow: none !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important; /* Важно для iOS */
-}
-
-/* 2. Убираем фон у fieldset (рамки MUI) */
-.MuiOutlinedInput-notchedOutline {
-  background-color: transparent !important;
-}
-
-/* 3. Задаем стеклянный фон только обертке (её WebView не трогает) */
-.MuiOutlinedInput-root {
-  background-color: rgba(255, 255, 255, 0.06) !important;
-}
-
-/* 4. Убираем серый фон при фокусе на iOS */
-input:focus {
-  outline: none !important;
-  background: transparent !important;
-}
-
-/* 5. Чтобы текст был виден при автофилле (пусть и на желтом фоне) */
-input:-webkit-autofill {
-  -webkit-text-fill-color: #000000 !important; /* На желтом лучше черный текст */
+/* Доп. страховка, если MUI рендерит input без класса */
+.deadline-date-picker input {
+  color: #fff !important;
 }
