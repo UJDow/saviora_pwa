@@ -2,7 +2,6 @@ body {
   min-height: 100vh;
   margin: 0;
   font-family: 'Roboto', Arial, sans-serif;
-  /* Спокойный градиент: голубой → светло-фиолетовый → бирюзовый */
   background: linear-gradient(120deg, #e0e7ff 0%, #f5f6fa 50%, #e0f7fa 100%);
   transition: background 0.5s;
 }
@@ -13,66 +12,77 @@ body {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  /* Можно ограничить ширину, если нужно */
   max-width: 1280px;
   margin: 0 auto;
   padding: 2rem;
 }
 
-/* ===== СТИЛИ ДЛЯ ДЕДЛАЙН-ДЕЙТПИКЕРА ===== */
-
-/* Белый текст даты внутри инпута DatePicker в модалке дедлайна */
-.deadline-date-picker .MuiInputBase-input {
-  color: #fff !important;
-}
-
-/* Доп. страховка, если MUI рендерит input без класса */
+/* ===== Дейтпикер ===== */
+.deadline-date-picker .MuiInputBase-input,
 .deadline-date-picker input {
   color: #fff !important;
 }
 
-/* ===== ГЛОБАЛЬНЫЙ ФИКС АВТОЗАПОЛНЕНИЯ НА IOS SAFARI / WEBVIEW ===== */
+/* ===== ЖЁСТКИЙ ГЛОБАЛЬНЫЙ ФИКС ДЛЯ ИНПУТОВ И AUTOFILL ===== */
 
-/* Основной фикс для autofill */
-input:-webkit-autofill,
-input:-webkit-autofill:hover,
-input:-webkit-autofill:focus,
-input:-webkit-autofill:active {
-  -webkit-text-fill-color: #ffffff !important;
-  caret-color: #ffffff !important;
-  
-  /* Стеклянный фон вместо белого */
-  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
-  
-  /* Чтобы цвет и фон не мигали */
-  transition: background-color 9999s ease-out, color 9999s ease-out !important;
-  
-  border-radius: 8px;
+/* 1. ВСЕ input делаем прозрачными, чтобы не было белого фона вообще */
+input,
+textarea,
+select {
+  background-color: transparent !important;
+  color: #ffffff;
 }
 
-/* Страховка для MUI-обёртки инпутов */
+/* 2. Убираем фон и тень, которые может навешивать WebView */
+input,
+textarea,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none !important;
+}
+
+/* 3. Специально для MUI: фон держим только на .MuiOutlinedInput-root */
 .MuiOutlinedInput-root {
   background-color: rgba(255, 255, 255, 0.06) !important;
 }
 
-/* Дополнительная страховка для самих input-элементов внутри MUI */
-.MuiOutlinedInput-input:-webkit-autofill,
-.MuiOutlinedInput-input:-webkit-autofill:hover,
-.MuiOutlinedInput-input:-webkit-autofill:focus,
-.MuiOutlinedInput-input:-webkit-autofill:active {
-  -webkit-text-fill-color: #ffffff !important;
-  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
-  transition: background-color 9999s ease-out !important;
+/* 4. Полностью убираем белый фон/заливку у fieldset (рамка MUI) */
+.MuiOutlinedInput-notchedOutline,
+.MuiOutlinedInput-root fieldset {
+  background-color: transparent !important;
 }
 
-/* Фикс для полей type="email" и type="password" специально */
-input[type="email"]:-webkit-autofill,
-input[type="email"]:-webkit-autofill:hover,
-input[type="email"]:-webkit-autofill:focus,
-input[type="password"]:-webkit-autofill,
-input[type="password"]:-webkit-autofill:hover,
-input[type="password"]:-webkit-autofill:focus {
+/* 5. Autofill — делаем input прозрачным и перекрашиваем текст */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
   -webkit-text-fill-color: #ffffff !important;
-  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
+  caret-color: #ffffff !important;
+
+  /* убираем любую системную заливку */
+  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+  box-shadow: 0 0 0 1000px transparent inset !important;
+  background-color: transparent !important;
+
+  transition: background-color 9999s ease-out, color 9999s ease-out !important;
+}
+
+/* 6. На всякий случай — именно для email/password */
+input[type="email"],
+input[type="password"] {
+  background-color: transparent !important;
+}
+
+input[type="email"]:-webkit-autofill,
+input[type="password"]:-webkit-autofill {
+  -webkit-text-fill-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
   background-color: transparent !important;
 }
