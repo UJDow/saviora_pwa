@@ -31,3 +31,29 @@ body {
   color: #fff !important;
 }
 
+/* ===== ГЛОБАЛЬНЫЙ ФИКС АВТОЗАПОЛНЕНИЯ НА IOS SAFARI ===== */
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+
+  /* Заливаем фон инпута темным/полупрозрачным, чтобы не было белой "заливки" */
+  -webkit-box-shadow: 0 0 0 1000px rgba(15, 23, 42, 0.85) inset !important;
+
+  /* Чтобы цвет и фон не мигали */
+  transition: background-color 9999s ease-out, color 9999s ease-out !important;
+}
+
+/* Если хочешь, чтобы autofill визуально вписывался в стекло-инпуты: 
+   можешь заменить фон на более светлый, близкий к твоему glass:
+   rgba(255,255,255,0.06) или 0.12
+*/
+/*
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.06) inset !important;
+}
+*/

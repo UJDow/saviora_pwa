@@ -42,11 +42,13 @@ const inputGlassSx = {
   },
   '& input:-webkit-autofill, & input:-webkit-autofill:hover, & input:-webkit-autofill:focus':
     {
-      WebkitTextFillColor: '#fff',
+      WebkitTextFillColor: '#fff !important',
       caretColor: '#fff',
-      WebkitBoxShadow: '0 0 0 1000px rgba(255,255,255,0.06) inset',
+      WebkitBoxShadow: '0 0 0 1000px rgba(15,23,42,0.8) inset !important', // более тёмный фон
       transition: 'background-color 9999s ease-out, color 9999s ease-out',
-      borderRadius: 2,
+      borderRadius: 8,
+      backgroundClip: 'padding-box',
+      WebkitBackgroundClip: 'padding-box',
     },
 };
 
