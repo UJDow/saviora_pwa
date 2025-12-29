@@ -6,43 +6,30 @@ import { Box, Button, TextField, Typography, Alert } from '@mui/material';
 const inputGlassSx = {
   '& .MuiInputLabel-root': {
     color: '#fff',
-    opacity: 0.95,
-    '&.Mui-focused': { color: '#fff' },
+    opacity: 0.8,
+    '&.Mui-focused': { color: '#fff', opacity: 1 },
   },
   '& .MuiOutlinedInput-root': {
     color: '#fff',
-    background: 'rgba(255,255,255,0.06)',
     borderRadius: 2,
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
     '& fieldset': {
-      borderColor: 'rgba(255,255,255,0.24)',
-      borderWidth: '1px',
-      backgroundColor: 'transparent',
+      borderColor: 'rgba(255,255,255,0.2)',
     },
     '&:hover fieldset': {
-      borderColor: 'rgba(255,255,255,0.45)',
-      borderWidth: '1px',
+      borderColor: 'rgba(255,255,255,0.4)',
     },
     '&.Mui-focused fieldset': {
-      borderColor: 'rgba(255,255,255,0.9)',
-      borderWidth: '1px',
+      borderColor: 'rgba(255,255,255,0.8)',
     },
   },
   '& .MuiOutlinedInput-input': {
     color: '#fff !important',
-    fontWeight: 500,
-    backgroundColor: 'transparent !important',
-    WebkitAppearance: 'none',
     '&::placeholder': {
-      color: 'rgba(248,250,252,0.7)',
-    },
-    '&:focus': {
-      backgroundColor: 'transparent !important',
-      outline: 'none',
+      color: 'rgba(255,255,255,0.5)',
     },
   },
-  // autofill стили вынесены в глобальный app.css
 };
 
 export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
@@ -84,9 +71,8 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         required
         autoFocus
         variant="outlined"
-        autoComplete="email"
         InputLabelProps={{
-          shrink: Boolean(email),
+          shrink: true,
         }}
         inputProps={{
           style: {
@@ -107,9 +93,8 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         margin="normal"
         required
         variant="outlined"
-        autoComplete="current-password"
         InputLabelProps={{
-          shrink: Boolean(password),
+          shrink: true,
         }}
         inputProps={{
           style: {
