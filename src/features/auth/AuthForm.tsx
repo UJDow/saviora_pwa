@@ -15,11 +15,10 @@ const inputGlassSx = {
     borderRadius: 2,
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
-    backgroundClip: 'padding-box',
-    WebkitBackgroundClip: 'padding-box',
     '& fieldset': {
       borderColor: 'rgba(255,255,255,0.24)',
       borderWidth: '1px',
+      backgroundColor: 'transparent',
     },
     '&:hover fieldset': {
       borderColor: 'rgba(255,255,255,0.45)',
@@ -33,23 +32,17 @@ const inputGlassSx = {
   '& .MuiOutlinedInput-input': {
     color: '#fff !important',
     fontWeight: 500,
+    backgroundColor: 'transparent !important',
+    WebkitAppearance: 'none',
     '&::placeholder': {
       color: 'rgba(248,250,252,0.7)',
     },
-    '&:focus::placeholder': {
-      opacity: 0,
+    '&:focus': {
+      backgroundColor: 'transparent !important',
+      outline: 'none',
     },
   },
-  '& input:-webkit-autofill, & input:-webkit-autofill:hover, & input:-webkit-autofill:focus':
-    {
-      WebkitTextFillColor: '#fff !important',
-      caretColor: '#fff',
-      WebkitBoxShadow: '0 0 0 1000px rgba(15,23,42,0.8) inset !important', // более тёмный фон
-      transition: 'background-color 9999s ease-out, color 9999s ease-out',
-      borderRadius: 8,
-      backgroundClip: 'padding-box',
-      WebkitBackgroundClip: 'padding-box',
-    },
+  // autofill стили вынесены в глобальный app.css
 };
 
 export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
@@ -91,8 +84,15 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         required
         autoFocus
         variant="outlined"
+        autoComplete="email"
         InputLabelProps={{
           shrink: Boolean(email),
+        }}
+        inputProps={{
+          style: {
+            backgroundColor: 'transparent',
+            WebkitAppearance: 'none',
+          },
         }}
         placeholder="you@example.com"
         sx={inputGlassSx}
@@ -107,8 +107,15 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
         margin="normal"
         required
         variant="outlined"
+        autoComplete="current-password"
         InputLabelProps={{
           shrink: Boolean(password),
+        }}
+        inputProps={{
+          style: {
+            backgroundColor: 'transparent',
+            WebkitAppearance: 'none',
+          },
         }}
         placeholder="Ваш пароль"
         sx={inputGlassSx}
@@ -142,7 +149,7 @@ export const AuthForm: React.FC<{ onSwitch: () => void }> = ({ onSwitch }) => {
           borderRadius: 2,
           background:
             'linear-gradient(135deg, rgba(88,120,255,0.98), rgba(139,92,246,0.98))',
-          boxShadow: 'none', // убрана тень
+          boxShadow: 'none',
           '&:hover': {
             background:
               'linear-gradient(135deg, rgba(88,120,255,1), rgba(139,92,246,1))',
