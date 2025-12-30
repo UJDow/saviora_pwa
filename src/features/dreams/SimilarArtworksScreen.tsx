@@ -8,6 +8,7 @@ import {
   getDreamArtworksInsights,
   getMoodForDate,
   setMoodForDate,
+  clearArtChat,
 } from '../../utils/api';
 import type { Dream, SimilarArtwork } from '../../utils/api';
 import {
@@ -144,6 +145,20 @@ function detectType(art: SimilarArtwork): ArtworkType {
   return 'default';
 }
 
+// ✅ Утилита для гарантированного uniqueId
+const attachUniqueId = (art: SimilarArtwork, index: number): SimilarArtwork => ({
+  ...art,
+  uniqueId:
+    (art as any).uniqueId ||
+    art.artworkId ||
+    `art_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 11)}`,
+});
+
+// ✅ Стабильный ключ для artwork (одинаковый в списке и в чате)
+const getArtworkKey = (art: SimilarArtwork, index: number): string => {
+  return art.artworkId || (art as any).uniqueId || `art_${index}`;
+};
+
 export function SimilarArtworksScreen(): React.ReactElement {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
@@ -164,7 +179,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // SNACKBAR: единый стеклянный стиль как в ProfileScreen
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
@@ -219,49 +233,9 @@ export function SimilarArtworksScreen(): React.ReactElement {
     p: { xs: 2, sm: 3 },
     pt: 2,
     pb: 3,
-    mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`, // ключевое смещение под хедер
+    mt: `calc(${HEADER_BASE}px + env(safe-area-inset-top))`,
   };
 
-  const iconBtnSxLight = {
-    bgcolor: 'rgba(255,255,255,0.18)',
-    color: 'rgba(255,255,255,0.95)',
-    borderRadius: 2,
-    boxShadow: '0 6px 18px rgba(0,0,0,0.14)',
-    backdropFilter: 'blur(6px)',
-    border: `1px solid rgba(255,255,255,0.08)`,
-    '&:hover': {
-      bgcolor: 'rgba(255,255,255,0.24)',
-      boxShadow: '0 8px 22px rgba(0,0,0,0.18)',
-    },
-    p: 1,
-    minWidth: 44,
-    minHeight: 44,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as const;
-
-  const cardIconSx = {
-    bgcolor: 'rgba(255,255,255,0.12)',
-    color: 'rgba(255,255,255,0.95)',
-    borderRadius: 1.5,
-    boxShadow: '0 6px 14px rgba(0,0,0,0.12)',
-    backdropFilter: 'blur(6px)',
-    border: `1px solid rgba(255,255,255,0.06)`,
-    '&:hover': {
-      bgcolor: 'rgba(255,255,255,0.20)',
-    },
-    p: 0.5,
-    minWidth: 36,
-    minHeight: 36,
-    width: 36,
-    height: 36,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  } as const;
-
-  // heart and spin config (unchanged)
   const heartSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 6.01 3.99 4 6.5 4c1.74 0 3.41 0.81 4.5 2.09C12.09 4.81 13.76 4 15.5 4 18.01 4 20 6.01 20 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z' /></svg>`;
   const heartMaskUrl = `url("data:image/svg+xml;utf8,${encodeURIComponent(heartSvg)}")`;
 
@@ -341,7 +315,10 @@ export function SimilarArtworksScreen(): React.ReactElement {
       }
 
       if (!force && d.similarArtworks && d.similarArtworks.length > 0) {
-        setArtworks(d.similarArtworks as SimilarArtwork[]);
+        const arts = (d.similarArtworks as SimilarArtwork[]).map((art, i) =>
+          attachUniqueId(art, i),
+        );
+        setArtworks(arts);
         setSaved(true);
       } else {
         let blockInterpretations = '';
@@ -354,6 +331,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
         const res = await findSimilarArtworks(
           d.dreamText,
+          d.id,
           d.globalFinalInterpretation ?? undefined,
           blockInterpretations
         );
@@ -368,7 +346,8 @@ export function SimilarArtworksScreen(): React.ReactElement {
           );
           setArtworks([]);
         } else {
-          setArtworks(res.similarArtworks || []);
+          const withId = (res.similarArtworks || []).map((art, i) => attachUniqueId(art, i));
+          setArtworks(withId);
           await updateDream(
             d.id,
             d.dreamText,
@@ -376,7 +355,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
             d.blocks,
             d.globalFinalInterpretation,
             d.dreamSummary,
-            res.similarArtworks || [],
+            withId,
             d.category,
             d.date
           );
@@ -420,36 +399,22 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
   useEffect(() => {
     fetchArtworks();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const handleSave = async () => {
-    if (!dream) return;
-    try {
-      await updateDream(
-        dream.id,
-        dream.dreamText,
-        dream.title,
-        dream.blocks,
-        dream.globalFinalInterpretation,
-        dream.dreamSummary,
-        artworks,
-        dream.category,
-        dream.date
-      );
-      setSaved(true);
-      showSnackbar('Список сохранён!', 'success');
-    } catch (e: any) {
-      showSnackbar(e?.message || 'Ошибка сохранения', 'error');
-    }
-  };
-
   const handleArtworkChat = (art: SimilarArtwork, idx: number) => {
-  if (!id) return;
-  navigate(`/dreams/${id}/artwork-chat/${idx}`, {
-    replace: true,      // КЛЮЧЕВОЕ
-  });
-};
+    if (!id) return;
+
+    const artworkKey = getArtworkKey(art, idx);
+
+    navigate(`/dreams/${id}/artwork-chat/${idx}`, {
+      state: {
+        artwork: art,
+        artworkId: artworkKey,
+        artworkIndex: idx,
+        origin: 'art_list',
+      },
+    });
+  };
 
   const handleInsightClick = (insight: any) => {
     if (!dream || !id) return;
@@ -463,11 +428,21 @@ export function SimilarArtworksScreen(): React.ReactElement {
       }
     }
 
-    navigate(`/dreams/${id}/artwork-chat/${idx}?messageId=${encodeURIComponent(insight.messageId)}`, {
-      state: {
-        highlightMessageId: insight.messageId,
+    const art = dream.similarArtworks?.[idx] as SimilarArtwork | undefined;
+    const artworkKey = art ? getArtworkKey(art, idx) : undefined;
+
+    navigate(
+      `/dreams/${id}/artwork-chat/${idx}?messageId=${encodeURIComponent(insight.messageId)}`,
+      {
+        state: {
+          highlightMessageId: insight.messageId,
+          artwork: art,
+          artworkId: artworkKey,
+          artworkIndex: idx,
+          origin: 'insight',
+        },
       },
-    });
+    );
   };
 
   const normalizeText = (s?: string | null) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -483,6 +458,11 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
     setRegeneratingArtwork(idx);
     try {
+      const currentArt = artworks[idx];
+      const artworkId = getArtworkKey(currentArt, idx);
+
+      await clearArtChat(id, artworkId);
+
       let blockInterpretations = '';
       if (Array.isArray(dream.blocks)) {
         blockInterpretations = dream.blocks
@@ -505,6 +485,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
       const res = await findSimilarArtworks(
         (dream.dreamText || '') + subPrompt,
+        dream.id,
         dream.globalFinalInterpretation ?? undefined,
         blockInterpretations
       );
@@ -513,8 +494,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
         throw new Error(res.message || 'Ошибка перегенерации произведения');
       }
 
-      const candidates = res.similarArtworks || [];
-      const currentArt = artworks[idx];
+      const candidates = (res.similarArtworks || []) as SimilarArtwork[];
       let chosen: SimilarArtwork | null = null;
 
       for (const cand of candidates) {
@@ -537,7 +517,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
       }
 
       const updated = [...artworks];
-      updated[idx] = chosen;
+      updated[idx] = attachUniqueId(chosen, idx);
       setArtworks(updated);
 
       await updateDream(
@@ -588,6 +568,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
 
       const res = await findSimilarArtworks(
         (dream.dreamText || '') + subPrompt,
+        dream.id,
         dream.globalFinalInterpretation ?? undefined,
         blockInterpretations
       );
@@ -611,7 +592,8 @@ export function SimilarArtworksScreen(): React.ReactElement {
         throw new Error('Не удалось сгенерировать произведение');
       }
 
-      const updated = [...artworks, chosen].slice(0, MAX_ARTWORKS);
+      const withNew = attachUniqueId(chosen, artworks.length);
+      const updated = [...artworks, withNew].slice(0, MAX_ARTWORKS);
       setArtworks(updated);
 
       await updateDream(
@@ -639,13 +621,18 @@ export function SimilarArtworksScreen(): React.ReactElement {
   };
 
   const confirmDeleteArtwork = async () => {
-    if (deletingArtworkIndex === null || !dream) {
+    if (deletingArtworkIndex === null || !dream || !id) {
       setDeletingArtworkIndex(null);
       return;
     }
     const idx = deletingArtworkIndex;
+    const currentArt = artworks[idx];
+    const artworkId = getArtworkKey(currentArt, idx);
+
     setDeletingProcessing(true);
     try {
+      await clearArtChat(id, artworkId);
+
       const updated = artworks.filter((_, i) => i !== idx);
       setArtworks(updated);
 
@@ -675,12 +662,18 @@ export function SimilarArtworksScreen(): React.ReactElement {
   };
 
   const confirmDeleteList = async () => {
-    if (!dream) {
+    if (!dream || !id) {
       setDeletingListOpen(false);
       return;
     }
     setDeletingProcessing(true);
     try {
+      const deletePromises = artworks.map((art, i) => {
+        const artworkId = getArtworkKey(art, i);
+        return clearArtChat(id, artworkId).catch(() => null);
+      });
+      await Promise.all(deletePromises);
+
       await updateDream(
         dream.id,
         dream.dreamText,
@@ -841,7 +834,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
         px: 2,
       }}
     >
-      {/* Назад */}
       <IconButton
         aria-label="Назад"
         onClick={() => navigate(-1)}
@@ -859,7 +851,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
         <ArrowBackIosNewIcon fontSize="small" />
       </IconButton>
 
-      {/* Центр: заголовок — название сна или Saviora */}
       <Typography
         sx={{
           maxWidth: 220,
@@ -876,7 +867,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
         {dream?.title || 'Saviora'}
       </Typography>
 
-      {/* Справа: перегенерировать список + удалить список */}
       <Box sx={{ position: 'absolute', right: 12, display: 'flex', gap: 1, alignItems: 'center' }}>
         <Tooltip title="Перегенерировать весь список (форс-запрос)">
           <span>
@@ -1044,7 +1034,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                     />
                   )}
 
-                  {/* Mood */}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
                     <Tooltip title={currentMoodOption?.label ?? 'Выбрать настроение'} arrow>
                       <span>
@@ -1105,7 +1094,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                   </Box>
                 </Box>
 
-                {/* Меню настроения */}
                 <Menu
                   anchorEl={moodAnchorEl}
                   open={moodMenuOpen}
@@ -1189,12 +1177,10 @@ export function SimilarArtworksScreen(): React.ReactElement {
               </Box>
             </Box>
 
-            {/* справа сверху уже ничего не нужно — кнопки в Header */}
             <Box sx={{ width: 0, height: 0 }} />
           </Box>
         )}
 
-        {/* Insights card */}
         <Paper
           elevation={0}
           sx={{
@@ -1315,7 +1301,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
           )}
         </Paper>
 
-        {/* Artworks list */}
         <Box
           sx={{
             display: 'flex',
@@ -1385,9 +1370,14 @@ export function SimilarArtworksScreen(): React.ReactElement {
             {artworks.map((art, idx) => {
               const isRegenerating = regeneratingArtwork === idx;
 
+              const key =
+                (art as any).uniqueId ||
+                art.artworkId ||
+                `art-${idx}`;
+
               return (
                 <ListItem
-                  key={idx}
+                  key={key}
                   alignItems="flex-start"
                   onClick={() => handleArtworkChat(art, idx)}
                   role="button"
@@ -1416,7 +1406,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                     cursor: 'pointer',
                   }}
                 >
-                  {/* ОБЩИЙ FLEX-КОНТЕЙНЕР */}
                   <Box
                     sx={{
                       display: 'flex',
@@ -1425,10 +1414,8 @@ export function SimilarArtworksScreen(): React.ReactElement {
                       width: '100%',
                     }}
                   >
-                    {/* СЛЕВА: АВАТАР / ПРЕВЬЮ */}
                     {renderArtworkAvatar(art, idx)}
 
-                    {/* СПРАВА: ТЕКСТ + КНОПКИ */}
                     <Box
                       sx={{
                         flex: 1,
@@ -1438,7 +1425,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                         gap: 0.75,
                       }}
                     >
-                      {/* ВЕРХНЯЯ СТРОКА: ЗАГОЛОВОК + КНОПКИ */}
                       <Box
                         sx={{
                           display: 'flex',
@@ -1447,7 +1433,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                           minWidth: 0,
                         }}
                       >
-                        {/* ЗАГОЛОВОК — РАСТЯГИВАЕТСЯ, НО НЕ НАЕЗЖАЕТ НА КНОПКИ */}
                         <Typography
                           variant="subtitle1"
                           sx={{
@@ -1467,7 +1452,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                           {art.title}
                         </Typography>
 
-                        {/* КНОПКИ — ГОРИЗОНТАЛЬНО, БЕЗ ТЕНЕЙ */}
                         <Box
                           sx={{
                             display: 'flex',
@@ -1562,7 +1546,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
                         </Box>
                       </Box>
 
-                      {/* НИЖНИЙ БЛОК: АВТОР + ОПИСАНИЕ НА ВСЮ ШИРИНУ */}
                       <Box sx={{ mt: 0.25 }}>
                         <Typography
                           component="span"
@@ -1750,7 +1733,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
           </List>
         )}
 
-        {/* Delete dialogs */}
         <Dialog
           open={deletingArtworkIndex !== null}
           onClose={() => {
@@ -1843,14 +1825,13 @@ export function SimilarArtworksScreen(): React.ReactElement {
           </DialogActions>
         </Dialog>
 
-        {/* SNACKBAR: стеклянный как в ProfileScreen */}
         <Snackbar
           open={snackbarOpen}
           autoHideDuration={3000}
           onClose={() => setSnackbarOpen(false)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
           sx={{
-            bottom: '20vh', // при необходимости подгони под свой футер
+            bottom: '20vh',
           }}
           ContentProps={{
             sx: {

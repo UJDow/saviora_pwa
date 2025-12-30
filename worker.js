@@ -289,15 +289,21 @@ const FINAL_INTERPRETATION_PROMPT_DAILY = `
 `;
 
 const ART_BLOCK_INTERPRETATION_PROMPT = `
-Проанализируй блок диалога, связанный с арт-произведением. Ответь на русском языке в формате JSON:
+Ты — внимательный психолог и арт‑терапевт. 
+Твоя задача — помочь человеку осмыслить произведение искусства в контексте его внутреннего мира и текущего диалога.
 
-{
-  "visual_summary": "Что изображено в арт-объекте? (1–2 предложения)",
-  "emotional_response": "Какие эмоции вызывает изображение?",
-  "symbolism": ["символ1", "символ2"],
-  "connection_to_user": "Как изображение связано с опытом пользователя?",
-  "interpretation": "Что это может значить в контексте разговора?"
-}
+Правила ответа:
+- Пиши на русском языке.
+- Отвечай обычным связным текстом, без JSON, без списков, без разметки кода.
+- Можно использовать абзацы, но не делай маркированных списков.
+- Не повторяй дословно формулировки инструкций, говори естественно и по‑человечески.
+
+В ответе обязательно:
+1) Кратко опиши, что за образ перед тобой и какая в нём атмосфера.
+2) Опиши возможные эмоции и внутренние состояния, которые может отражать это произведение.
+3) Поговори о возможной символике (что могут означать цвета, композиция, сюжет).
+4) Свяжи произведение с внутренним миром пользователя и тем, о чём шёл диалог.
+5) Заверши мягкой, поддерживающей мыслью или вопросом, который помогает двинуться глубже.
 `;
 
 const ART_FINAL_INTERPRETATION_PROMPT = `
@@ -668,95 +674,141 @@ function generateAdvice(level, nextGoal, dashboardData) {
 // --- Функции для работы с rolling summary ---
 
 // Получить summary с количеством обработанных сообщений
-async function getRollingSummary(env, userEmail, dreamId, blockId) {
-  const stmt = env.DB.prepare(
-    'SELECT summary, last_message_count FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id = ?'
-  );
-  const row = await stmt.bind(userEmail, dreamId, blockId).first();
-  return row ? { 
-    summary: row.summary, 
-    lastMessageCount: row.last_message_count || 0 
-  } : null;
+async function getRollingSummary(env, user, dreamId, blockId, artworkId = null) {
+  let sql = `
+    SELECT summary, last_message_count
+    FROM dialog_summaries
+    WHERE user = ? AND dream_id = ? AND block_id = ?
+  `;
+  const params = [user, dreamId, blockId];
+
+  if (artworkId) {
+    sql += ` AND artwork_id = ?`;
+    params.push(artworkId);
+  }
+
+  const row = await env.DB.prepare(sql).bind(...params).first();
+
+  return row
+    ? {
+        summary: row.summary,
+        lastMessageCount: row.last_message_count || 0,
+      }
+    : null;
 }
 
 // Сохранить summary с количеством обработанных сообщений
 // --- Сохранить summary с количеством обработанных сообщений ---
-async function saveRollingSummary(env, userEmail, dreamId, blockId, summaryText, messageCount) {
-  const id = crypto.randomUUID();
+async function saveRollingSummary(env, user, dreamId, blockId, summary, lastMessageCount, artworkId = null) {
+  console.log("[saveRollingSummary] Saving:", { user, dreamId, blockId, artworkId, lastMessageCount });
+  const d1 = env.DB;
   const now = Date.now();
 
-  console.log('[saveRollingSummary] Saving:', { 
-    userEmail, 
-    dreamId, 
-    blockId, 
-    messageCount,
-    summaryLength: summaryText?.length || 0
-  });
+  // ✅ ВКЛЮЧАЕМ artworkId в уникальный ключ
+  const uniqueId = artworkId 
+    ? `${user}__${dreamId}__${blockId}__${artworkId}`
+    : `${user}__${dreamId}__${blockId}`;
 
   try {
-    const stmt = env.DB.prepare(`
-      INSERT INTO dialog_summaries (id, user, dream_id, block_id, summary, last_message_count, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user, dream_id, block_id) DO UPDATE SET 
-        summary = excluded.summary, 
-        last_message_count = excluded.last_message_count,
-        updated_at = excluded.updated_at
-    `);
-
-    const result = await stmt.bind(
-      id, userEmail, dreamId, blockId, summaryText, messageCount, now
+    const result = await d1.prepare(
+      `INSERT INTO dialog_summaries (id, user, dream_id, block_id, summary, updated_at, last_message_count, artwork_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         summary = excluded.summary,
+         updated_at = excluded.updated_at,
+         last_message_count = excluded.last_message_count,
+         artwork_id = excluded.artwork_id`
+    ).bind(
+      uniqueId,           // ✅ используем новый uniqueId
+      user,
+      dreamId,
+      blockId,
+      summary,
+      now,
+      lastMessageCount,
+      artworkId
     ).run();
 
-    console.log('[saveRollingSummary] Success:', result);
+    console.log("[saveRollingSummary] Success:", result);
     return result;
   } catch (e) {
-    console.error('[saveRollingSummary] ERROR:', e);
+    console.error("[saveRollingSummary] ERROR:", e);
     throw e;
   }
 }
 
 // Обновить rolling summary
-// --- Обновить rolling summary ---
-async function updateRollingSummary(env, userEmail, dreamId, blockId, blockText, deepseekApiKey) {
-  console.log('[updateRollingSummary] START:', { userEmail, dreamId, blockId });
-
+async function updateRollingSummary(
+  env,
+  user,
+  dreamId,
+  blockId,
+  baseText,
+  apiKey,          // используем как DeepSeek API key
+  artworkId
+) {
+  console.log("[updateRollingSummary] START:", { user, dreamId, blockId, artworkId });
   const d1 = env.DB;
 
-  // 1. Получаем текущий summary
-  const currentSummary = await getRollingSummary(env, userEmail, dreamId, blockId);
+  // 1. Текущее summary
+  const currentSummary = await getRollingSummary(env, user, dreamId, blockId, artworkId);
   const lastMessageCount = currentSummary?.lastMessageCount || 0;
 
-  console.log('[updateRollingSummary] Current state:', { 
-    hasSummary: !!currentSummary?.summary, 
-    lastMessageCount 
+  console.log("[updateRollingSummary] Current state:", {
+    hasSummary: !!currentSummary?.summary,
+    lastMessageCount
   });
 
-  // 2. Получаем все сообщения
-  const allMessagesRes = await d1.prepare(
-    `SELECT role, content FROM messages
-     WHERE user = ? AND dream_id = ? AND block_id = ?
-     ORDER BY created_at ASC`
-  ).bind(userEmail, dreamId, blockId).all();
+  // 2. Берём все сообщения для этого диалога
+  let query = `
+    SELECT role, content
+    FROM messages
+    WHERE user = ? AND dream_id = ? AND block_id = ?
+  `;
+  const params = [user, dreamId, blockId];
 
+  if (artworkId) {
+    query += ` AND artwork_id = ?`;
+    params.push(artworkId);
+  }
+
+  query += ` ORDER BY created_at ASC`;
+
+  const allMessagesRes = await d1.prepare(query).bind(...params).all();
   const allMessages = allMessagesRes.results || [];
   const newMessageCount = allMessages.length - lastMessageCount;
 
-  console.log('[updateRollingSummary] Messages:', { 
-    total: allMessages.length, 
-    new: newMessageCount 
+  console.log("[updateRollingSummary] Messages:", {
+    total: allMessages.length,
+    new: newMessageCount
   });
 
-  // 3. Проверяем, нужно ли обновлять
-  if (newMessageCount < SUMMARY_UPDATE_THRESHOLD && currentSummary?.summary) {
-    console.log('[updateRollingSummary] Threshold not reached, skipping');
+  // 3. Проверяем порог, если он у тебя где-то объявлен
+  if (typeof SUMMARY_UPDATE_THRESHOLD === "number" &&
+      newMessageCount < SUMMARY_UPDATE_THRESHOLD &&
+      currentSummary?.summary) {
+    console.log("[updateRollingSummary] Threshold not reached, skipping");
     return currentSummary.summary;
+  }
+
+  if (allMessages.length === 0) {
+    console.log("[updateRollingSummary] No messages, skipping");
+    return currentSummary?.summary || "";
   }
 
   // 4. Берём только новые сообщения
   const newMessages = allMessages.slice(lastMessageCount);
 
-  // 5. Формируем промпт
-  const prompt = currentSummary?.summary 
+  if (newMessages.length === 0 && currentSummary?.summary) {
+    console.log("[updateRollingSummary] No new messages, skipping");
+    return currentSummary.summary;
+  }
+
+  // 5. Текст блока
+  const blockText = baseText || "";
+
+  // 6. Формируем промпт
+  const prompt = currentSummary?.summary
     ? `
       ${SUMMARY_UPDATE_PROMPT}
 
@@ -783,64 +835,102 @@ async function updateRollingSummary(env, userEmail, dreamId, blockId, blockText,
       Создай краткое резюме этого диалога.
     `;
 
-  console.log('[updateRollingSummary] Calling DeepSeek...');
+  console.log("[updateRollingSummary] Calling DeepSeek...");
 
-  // 6. Вызываем DeepSeek
+  // 7. Вызываем DeepSeek
   const deepseekRequestBody = {
-    model: 'deepseek-chat',
-    messages: [{ role: 'user', content: prompt }],
+    model: "deepseek-chat",
+    messages: [{ role: "user", content: prompt }],
     max_tokens: 300,
     temperature: 0.3,
     stream: false
   };
 
-  const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
-    method: 'POST',
+  const deepseekResponse = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${deepseekApiKey}`
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}` // apiKey как deepseekApiKey
     },
     body: JSON.stringify(deepseekRequestBody)
   });
 
+  if (!deepseekResponse.ok) {
+    const text = await deepseekResponse.text();
+    console.error("[updateRollingSummary] DeepSeek error:", deepseekResponse.status, text);
+    return currentSummary?.summary || "";
+  }
+
   const responseBody = await deepseekResponse.json();
-  const updatedSummary = responseBody?.choices?.[0]?.message?.content || currentSummary?.summary || '';
+  const updatedSummary =
+    (responseBody &&
+      responseBody.choices &&
+      responseBody.choices[0] &&
+      responseBody.choices[0].message &&
+      responseBody.choices[0].message.content &&
+      responseBody.choices[0].message.content.trim()) ||
+    currentSummary?.summary ||
+    "";
 
-  console.log('[updateRollingSummary] DeepSeek response length:', updatedSummary.length);
+  console.log("[updateRollingSummary] DeepSeek response length:", updatedSummary.length);
 
-  // 7. Сохраняем обновлённый summary
-  console.log('[updateRollingSummary] Saving summary, message count:', allMessages.length);
-  await saveRollingSummary(env, userEmail, dreamId, blockId, updatedSummary, allMessages.length);
+  // 8. Сохраняем обновлённый summary
+  console.log("[updateRollingSummary] Saving summary, message count:", allMessages.length);
 
-  console.log('[updateRollingSummary] DONE');
+  await saveRollingSummary(
+    env,
+    user,
+    dreamId,
+    blockId,
+    updatedSummary,
+    allMessages.length,
+    artworkId
+  );
+
+  console.log("[updateRollingSummary] DONE");
   return updatedSummary;
 }
 
-async function getUnprocessedMessages(env, userEmail, dreamId, blockId) {
-  // Получаем summary
-  const summaryRow = await env.DB.prepare(
-    `SELECT summary, last_message_count FROM dialog_summaries 
-     WHERE user = ? AND dream_id = ? AND block_id = ?`
-  ).bind(userEmail, dreamId, blockId).first();
+async function getUnprocessedMessages(env, user, dreamId, blockId, artworkId = null) {
+  // 1) Берём записанное summary
+  let summarySql = `
+    SELECT summary, last_message_count
+    FROM dialog_summaries
+    WHERE user = ? AND dream_id = ? AND block_id = ?
+  `;
+  const summaryParams = [user, dreamId, blockId];
 
+  if (artworkId) {
+    summarySql += ` AND artwork_id = ?`;
+    summaryParams.push(artworkId);
+  }
+
+  const summaryRow = await env.DB.prepare(summarySql).bind(...summaryParams).first();
   const lastProcessed = summaryRow?.last_message_count || 0;
 
-  // Получаем все сообщения
-  const unprocessedRows = await env.DB.prepare(
-    `SELECT role, content FROM messages 
-     WHERE user = ? AND dream_id = ? AND block_id = ? 
-     ORDER BY created_at ASC`
-  ).bind(userEmail, dreamId, blockId).all();
+  // 2) Берём все сообщения
+  let msgSql = `
+    SELECT role, content
+    FROM messages
+    WHERE user = ? AND dream_id = ? AND block_id = ?
+  `;
+  const msgParams = [user, dreamId, blockId];
 
+  if (artworkId) {
+    msgSql += ` AND artwork_id = ?`;
+    msgParams.push(artworkId);
+  }
+
+  msgSql += ` ORDER BY created_at ASC`;
+
+  const unprocessedRows = await env.DB.prepare(msgSql).bind(...msgParams).all();
   const allMessages = unprocessedRows.results || [];
-
-  // Берём только необработанные
   const unprocessed = allMessages.slice(lastProcessed);
 
   return {
-    rollingSummary: summaryRow?.summary || '',
+    rollingSummary: summaryRow?.summary || "",
     unprocessedMessages: unprocessed,
-    totalCount: allMessages.length
+    totalCount: allMessages.length,
   };
 }
 
@@ -1782,7 +1872,6 @@ if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goal
   } = body;
 
   try {
-    // Формируем UPDATE динамически
     const sets = [];
     const binds = [];
 
@@ -1795,7 +1884,8 @@ if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goal
     if (typeof dueDate !== 'undefined') { sets.push('due_date = ?'); binds.push(dueDate); }
     if (typeof status !== 'undefined') { sets.push('status = ?'); binds.push(status); }
 
-    sets.push('updated_at = strftime(\'%s\',\'now\')');
+    sets.push('updated_at = ?'); // ✅ ИСПРАВЛЕНО
+    binds.push(Date.now());      // ✅ ИСПРАВЛЕНО
 
     binds.push(goalId, userId);
 
@@ -2347,122 +2437,169 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
 
     // --- DREAMS API with D1 integration ---
 
-    if (url.pathname === '/dreams' && request.method === 'GET') {
-      const userEmail = await getUserEmail(request);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      if (!(await isTrialActive(userEmail, env))) {
-        return new Response(JSON.stringify({ error: 'Trial expired' }), {
-          status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
-        const d1 = env.DB;
-        const result = await d1.prepare('SELECT * FROM dreams WHERE user = ? ORDER BY date DESC').bind(userEmail).all();
-        const dreams = result.results.map(row => {
-          if (row.blocks) {
-            try { row.blocks = JSON.parse(row.blocks); } catch { row.blocks = []; }
-          } else {
+if (url.pathname === '/dreams' && request.method === 'GET') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  if (!(await isTrialActive(userEmail, env))) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const d1 = env.DB;
+    const result = await d1
+      .prepare('SELECT * FROM dreams WHERE user = ? ORDER BY date DESC')
+      .bind(userEmail)
+      .all();
+
+    const dreams = await Promise.all(
+      result.results.map(async (row) => {
+        // Парсим blocks
+        if (row.blocks) {
+          try {
+            row.blocks = JSON.parse(row.blocks);
+          } catch {
             row.blocks = [];
           }
-          if (row.similarArtworks) {
-            try { row.similarArtworks = JSON.parse(row.similarArtworks); } catch { row.similarArtworks = []; }
-          } else {
-            row.similarArtworks = [];
-          }
-          return normalizeDream(row);
-        });
-        return new Response(JSON.stringify(dreams), {
-          status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('Error fetching dreams:', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+        } else {
+          row.blocks = [];
+        }
 
-    if (url.pathname === '/dreams' && request.method === 'POST') {
-      const userEmail = await getUserEmail(request);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      if (!(await isTrialActive(userEmail, env))) {
-        return new Response(JSON.stringify({ error: 'Trial expired' }), {
-          status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+        // Загружаем similarArtworks из dream_similar_artworks + artworks
+        const similarRes = await d1.prepare(`
+          SELECT
+            a.id AS artworkId,
+            a.title,
+            a.author,
+            a.desc,
+            a.value,
+            a.type,
+            dsa.position AS rank
+          FROM dream_similar_artworks dsa
+          JOIN artworks a ON dsa.artwork_id = a.id
+          WHERE dsa.dream_id = ?
+          ORDER BY dsa.position ASC
+        `).bind(row.id).all();
 
-      const validation = validateDreamData(body);
-      if (!validation.valid) {
-        return new Response(JSON.stringify({ error: 'Invalid dream data', message: validation.error }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+        row.similarArtworks = (similarRes.results || []).map((art) => ({
+          artworkId: art.artworkId,
+          title: art.title,
+          author: art.author,
+          desc: art.desc,
+          value: art.value,
+          type: art.type,
+          rank: art.rank,
+          imageUrl: art.value, // для совместимости
+        }));
 
-      const { dreamText } = body;
-      const id = crypto.randomUUID();
-      const date = Date.now();
+        return normalizeDream(row);
+      })
+    );
 
-      try {
-        const d1 = env.DB;
-        await d1.prepare(
-          `INSERT INTO dreams (id, user, title, dreamText, date, category, dreamSummary, globalFinalInterpretation, blocks, similarArtworks, context)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(
-          id,
-          userEmail,
-          null,
-          dreamText.trim(),
-          date,
-          null,
-          null,
-          null,
-          JSON.stringify([]),
-          JSON.stringify([]),
-          null
-        ).run();
+    return new Response(JSON.stringify(dreams), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('Error fetching dreams:', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
 
-        const dream = {
-          id,
-          user: userEmail,
-          title: null,
-          dreamText: dreamText.trim(),
-          date,
-          category: null,
-          dreamSummary: null,
-          globalFinalInterpretation: null,
-          blocks: [],
-          similarArtworks: [],
-          context: null
-        };
+if (url.pathname === '/dreams' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+  if (!(await isTrialActive(userEmail, env))) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
 
-        return new Response(JSON.stringify(dream), {
-          status: 201, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('Error inserting dream:', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e instanceof Error ? e.message : String(e) }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
 
-    if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'dreams') {
+  const validation = validateDreamData(body);
+  if (!validation.valid) {
+    return new Response(JSON.stringify({ error: 'Invalid dream data', message: validation.error }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const { dreamText } = body;
+  const id = crypto.randomUUID();
+  const date = Date.now();
+
+  try {
+    const d1 = env.DB;
+    await d1.prepare(
+      `INSERT INTO dreams (id, user, title, dreamText, date, category, dreamSummary, globalFinalInterpretation, blocks, similarArtworks, context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id,
+      userEmail,
+      null,
+      dreamText.trim(),
+      date,
+      null,
+      null,
+      null,
+      JSON.stringify([]),
+      JSON.stringify([]), // не используется, но оставляем для совместимости
+      null
+    ).run();
+
+    const dream = {
+      id,
+      user: userEmail,
+      title: null,
+      dreamText: dreamText.trim(),
+      date,
+      category: null,
+      dreamSummary: null,
+      globalFinalInterpretation: null,
+      blocks: [],
+      similarArtworks: [], // будет заполнено при GET
+      context: null
+    };
+
+    return new Response(JSON.stringify(dream), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('Error inserting dream:', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e instanceof Error ? e.message : String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'dreams') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
@@ -2500,6 +2637,7 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
       });
     }
 
+    // Парсим blocks
     if (row.blocks) {
       try {
         row.blocks = JSON.parse(row.blocks);
@@ -2510,15 +2648,32 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
       row.blocks = [];
     }
 
-    if (row.similarArtworks) {
-      try {
-        row.similarArtworks = JSON.parse(row.similarArtworks);
-      } catch {
-        row.similarArtworks = [];
-      }
-    } else {
-      row.similarArtworks = [];
-    }
+    // Загружаем similarArtworks из dream_similar_artworks + artworks
+    const similarRes = await d1.prepare(`
+      SELECT
+        a.id AS artworkId,
+        a.title,
+        a.author,
+        a.desc,
+        a.value,
+        a.type,
+        dsa.position AS rank
+      FROM dream_similar_artworks dsa
+      JOIN artworks a ON dsa.artwork_id = a.id
+      WHERE dsa.dream_id = ?
+      ORDER BY dsa.position ASC
+    `).bind(id).all();
+
+    row.similarArtworks = (similarRes.results || []).map((art) => ({
+      artworkId: art.artworkId,
+      title: art.title,
+      author: art.author,
+      desc: art.desc,
+      value: art.value,
+      type: art.type,
+      rank: art.rank,
+      imageUrl: art.value, // для совместимости
+    }));
 
     return new Response(JSON.stringify(normalizeDream(row)), {
       status: 200,
@@ -2531,7 +2686,7 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
       {
         status: 500,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      },
+      }
     );
   }
 }
@@ -2967,19 +3122,21 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
     }
 
     const {
-      dreamText = existing.dreamText,
-      title = existing.title,
-      category = existing.category,
-      dreamSummary = existing.dreamSummary,
-      globalFinalInterpretation = existing.globalFinalInterpretation,
-      blocks = existing.blocks ? JSON.parse(existing.blocks) : [],
-      similarArtworks = existing.similarArtworks ? JSON.parse(existing.similarArtworks) : [],
-      context = existing.context
-    } = body;
+  dreamText = existing.dreamText,
+  title = existing.title,
+  category = existing.category,
+  dreamSummary = existing.dreamSummary,
+  globalFinalInterpretation = existing.globalFinalInterpretation,
+  blocks = existing.blocks ? JSON.parse(existing.blocks) : [],
+  // similarArtworks больше не берём из body
+  context = existing.context
+} = body;
 
-    const textChanged = existing.dreamText !== dreamText;
+const similarArtworks = existing.similarArtworks || '[]';
 
-    await d1.prepare(
+    const textChanged = (existing.dreamText !== dreamText);
+
+    await env.DB.prepare(
       `UPDATE dreams SET 
         title = ?, 
         dreamText = ?, 
@@ -2989,7 +3146,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
         blocks = ?, 
         similarArtworks = ?, 
         context = ?,
-        autoSummary = ${textChanged ? 'NULL' : 'autoSummary'}
+        autoSummary = ${textChanged ? "NULL" : "autoSummary"}
       WHERE id = ? AND user = ?`
     ).bind(
       title,
@@ -2998,7 +3155,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
       dreamSummary,
       globalFinalInterpretation,
       JSON.stringify(blocks),
-      JSON.stringify(similarArtworks),
+      similarArtworks, // ✅ Используем из existing
       context,
       id,
       userEmail
@@ -3299,12 +3456,13 @@ if (url.pathname === '/daily_chat' && request.method === 'GET') {
     ).bind(userEmail, dailyConvoId).all();
 
     const messages = (res.results || []).map((r) => ({
-      id: r.id,
-      role: r.role,
-      content: r.content,
-      created_at: r.created_at,
-      meta: r.meta ? JSON.parse(r.meta) : undefined,
-    }));
+  id: r.id,
+  role: r.role,
+  content: r.content,
+  created_at: r.created_at,
+  meta: r.meta ? JSON.parse(r.meta) : undefined,
+  artworkId: r.artwork_id || null, // ← добавляем artworkId
+}));
 
     return new Response(JSON.stringify({ messages }), {
       status: 200,
@@ -3364,14 +3522,38 @@ if (url.pathname === '/daily_chat' && request.method === 'POST') {
       .bind(
         msgId,
         userEmail,
-        dailyConvoId,     // <-- store dailyConvoId into existing dream_id column
-        safeBlockId,      // <-- never NULL
+        dailyConvoId,
+        safeBlockId,
         role,
         String(content).slice(0, 12000),
         createdAt,
         meta ? JSON.stringify(meta) : null
       )
       .run();
+
+    // 🆕 ДОБАВЬ СЮДА: обновление rolling summary
+if (role === 'assistant') {
+  try {
+    // Получаем текст записи для контекста
+    const dailyRow = await env.DB.prepare(
+      'SELECT notes FROM daily_convos WHERE id = ? AND user = ?'
+    ).bind(dailyConvoId, userEmail).first();
+    
+    const notesText = dailyRow?.notes || '';
+    
+    await updateRollingSummary(
+      env,
+      userEmail,
+      dailyConvoId,        // ← dream_id
+      safeBlockId,         // ← block_id
+      notesText,           // ← текст для контекста
+      env.DEEPSEEK_API_KEY,
+      null                 // ← artwork_id (null для daily_chat)
+    );
+  } catch (e) {
+    console.warn('[POST /daily_chat] Failed to update summary:', e);
+  }
+}
 
     return new Response(
       JSON.stringify({
@@ -3536,7 +3718,7 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
   }
 }
 
-    // --- Analyze endpoint (с rolling summary) ---
+// --- Analyze endpoint (с rolling summary) ---
 if (url.pathname === '/analyze' && request.method === 'POST') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
@@ -3568,65 +3750,77 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
     }
 
     const requestData = await request.json();
-    const { blockText, lastTurns, extraSystemPrompt, dreamId, blockId } = requestData;
+    const { blockText, lastTurns, extraSystemPrompt, dreamId, blockId, artworkId } = requestData;
 
-    // 1. Получаем rolling summary
-let rollingSummary = null;
-if (dreamId && blockId) {
-  const summaryData = await getRollingSummary(env, userEmail, dreamId, blockId);
-  rollingSummary = summaryData?.summary || null;
-
-  console.log('[analyze] Summary state:', { 
-    hasSummary: !!summaryData, 
-    dreamId, 
-    blockId 
-  });
-
-  // 2. Проверяем, нужно ли обновить summary
-  const d1 = env.DB;
-  const allMessagesRes = await d1.prepare(
-    `SELECT COUNT(*) as count FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`
-  ).bind(userEmail, dreamId, blockId).first();
-
-  const currentMessageCount = allMessagesRes?.count || 0;
-
-  console.log('[analyze] Message count:', currentMessageCount);
-
-  // 🆕 Если summary нет, но есть хотя бы 2 сообщения — создаём
-  if (!summaryData && currentMessageCount >= 2) {
-    console.log('[analyze] Creating initial summary');
-    try {
-      rollingSummary = await updateRollingSummary(
-        env, userEmail, dreamId, blockId, blockText, env.DEEPSEEK_API_KEY
+    // 1. Получаем rolling summary (✅ ТЕПЕРЬ С artworkId)
+    let rollingSummary = null;
+    if (dreamId && blockId) {
+      const summaryData = await getRollingSummary(
+        env, 
+        userEmail, 
+        dreamId, 
+        blockId, 
+        artworkId ?? null  // ✅ ИСПРАВЛЕНО
       );
-    } catch (e) {
-      console.error('[analyze] Failed to create initial summary:', e);
-    }
-  } 
-  // Если summary есть, проверяем порог обновления
-  else if (summaryData) {
-    const newMessageCount = currentMessageCount - summaryData.lastMessageCount;
+      rollingSummary = summaryData?.summary || null;
 
-    console.log('[analyze] New messages since last summary:', newMessageCount);
+      console.log('[analyze] Summary state:', { 
+        hasSummary: !!summaryData, 
+        dreamId, 
+        blockId,
+        artworkId: artworkId ?? null
+      });
 
-    if (newMessageCount >= SUMMARY_UPDATE_THRESHOLD) {
-      console.log('[analyze] Updating summary');
-      try {
-        rollingSummary = await updateRollingSummary(
-          env, userEmail, dreamId, blockId, blockText, env.DEEPSEEK_API_KEY
-        );
-      } catch (e) {
-        console.error('[analyze] Failed to update summary:', e);
+      // 2. Проверяем, нужно ли обновить summary
+      const d1 = env.DB;
+      let countQuery = `SELECT COUNT(*) as count FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`;
+      let countParams = [userEmail, dreamId, blockId];
+
+      if (artworkId) {
+        countQuery += ` AND artwork_id = ?`;
+        countParams.push(artworkId);
+      }
+
+      const allMessagesRes = await d1.prepare(countQuery).bind(...countParams).first();
+      const currentMessageCount = allMessagesRes?.count || 0;
+
+      console.log('[analyze] Message count:', currentMessageCount);
+
+      // 🆕 Если summary нет, но есть хотя бы 2 сообщения — создаём
+      if (!summaryData && currentMessageCount >= 2) {
+        console.log('[analyze] Creating initial summary');
+        try {
+          rollingSummary = await updateRollingSummary(
+            env, userEmail, dreamId, blockId, blockText, env.DEEPSEEK_API_KEY, artworkId ?? null
+          );
+        } catch (e) {
+          console.error('[analyze] Failed to create initial summary:', e);
+        }
+      } 
+      // Если summary есть, проверяем порог обновления
+      else if (summaryData) {
+        const newMessageCount = currentMessageCount - summaryData.lastMessageCount;
+
+        console.log('[analyze] New messages since last summary:', newMessageCount);
+
+        if (newMessageCount >= SUMMARY_UPDATE_THRESHOLD) {
+          console.log('[analyze] Updating summary');
+          try {
+            rollingSummary = await updateRollingSummary(
+              env, userEmail, dreamId, blockId, blockText, env.DEEPSEEK_API_KEY, artworkId ?? null
+            );
+          } catch (e) {
+            console.error('[analyze] Failed to update summary:', e);
+          }
+        }
       }
     }
-  }
-}
 
     let messages = [];
     const isArtworkDialog = blockId?.startsWith('artwork__');
     const systemPrompt = isArtworkDialog ? ARTDIALOG_SYSTEM_PROMPT : DIALOG_SYSTEM_PROMPT;
 
-messages.push({ role: 'system', content: systemPrompt });
+    messages.push({ role: 'system', content: systemPrompt });
 
     const d1 = env.DB;
     let dreamSummary = null;
@@ -4053,18 +4247,62 @@ ${contextText}
         }
 
         const works = Array.isArray(parsed.works) ? parsed.works : [];
+// После генерации similarArtworks:
 const similarArtworks = works.slice(0, 5).map(w => ({
   title: w.title || '',
   author: w.author || '',
   desc: w.desc || '',
   value: w.value || '',
-  type: w.type || 'default'  // теперь type будет передаваться!
+  type: w.type || 'default'
 }));
 
-        return new Response(JSON.stringify({ similarArtworks }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+// 🆕 СОХРАНЯЕМ В НОВЫЕ ТАБЛИЦЫ
+const { dreamId } = body;
+
+if (dreamId) {
+  const d1 = env.DB;
+
+  // ✅ УДАЛЯЕМ СТАРЫЕ ЗАПИСИ ПЕРЕД ВСТАВКОЙ НОВЫХ
+  await d1.prepare(
+    `DELETE FROM dream_similar_artworks WHERE dream_id = ?`
+  ).bind(dreamId).run();
+
+  for (let i = 0; i < similarArtworks.length; i++) {
+    const art = similarArtworks[i];
+
+    // 1) Ищем или создаём artwork
+    let artworkRow = await d1.prepare(
+      `SELECT id FROM artworks WHERE title = ? AND author = ? AND type = ?`
+    ).bind(art.title, art.author, art.type).first();
+
+    let artworkId;
+    if (artworkRow) {
+      artworkId = artworkRow.id;
+    } else {
+      artworkId = crypto.randomUUID();
+      await d1.prepare(
+        `INSERT INTO artworks (id, title, author, type, value, desc)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(artworkId, art.title, art.author, art.type, art.value, art.desc).run();
+    }
+
+    // 2) Связываем с dream
+    await d1.prepare(
+      `INSERT INTO dream_similar_artworks (id, dream_id, artwork_id, position, score)
+       VALUES (?, ?, ?, ?, ?)`
+    ).bind(crypto.randomUUID(), dreamId, artworkId, i, null).run();
+  }
+
+  // 3) Опционально: обновляем dreams.similarArtworks для кэша
+  await d1.prepare(
+    `UPDATE dreams SET similarArtworks = ? WHERE id = ? AND user = ?`
+  ).bind(JSON.stringify(similarArtworks), dreamId, userEmail).run();
+}
+
+return new Response(JSON.stringify({ similarArtworks }), {
+  status: 200,
+  headers: { 'Content-Type': 'application/json', ...corsHeaders }
+});
 
       } catch (e) {
         console.error('Error in /find_similar:', e);
@@ -4075,8 +4313,7 @@ const similarArtworks = works.slice(0, 5).map(w => ({
       }
     }
 
-    // --- Interpret block endpoint (с rolling summary + необработанные сообщения) ---
-    // --- Interpret block endpoint (ИСПРАВЛЕННЫЙ) ---
+ // --- Interpret block endpoint (ИСПРАВЛЕННЫЙ) ---
 if (url.pathname === '/interpret_block' && request.method === 'POST') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
@@ -4092,7 +4329,7 @@ if (url.pathname === '/interpret_block' && request.method === 'POST') {
 
   try {
     const body = await request.json();
-    const { blockText, dreamId, blockId } = body;
+    const { blockText, dreamId, blockId, artworkId } = body;  // ✅ artworkId уже есть
 
     if (!blockText) {
       return new Response(JSON.stringify({ error: 'No blockText' }), {
@@ -4116,7 +4353,11 @@ if (url.pathname === '/interpret_block' && request.method === 'POST') {
     }
 
     const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
-      env, userEmail, dreamId, blockId
+      env,
+      userEmail,
+      dreamId,
+      blockId,
+      artworkId ?? null  // ✅ Корректно
     );
 
     let unprocessedContext = '';
@@ -4167,47 +4408,48 @@ ${unprocessedContext}
     interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
 
     // 🆕 СОХРАНЯЕМ толкование блока в messages с правильным meta
-if (dreamId && blockId && interpretation) {
-  const msgId = crypto.randomUUID();
-  const createdAt = Date.now();
-
-  await d1.prepare(
-    `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    msgId,
-    userEmail,
-    dreamId,
-    blockId,
-    'assistant',
-    interpretation,
-    createdAt,
-    JSON.stringify({ kind: 'block_interpretation' })
-  ).run();
-
-  // Также сохраняем в blocks для истории
-  const dreamRow = await d1.prepare(
-    `SELECT blocks FROM dreams WHERE id = ? AND user = ?`
-  ).bind(dreamId, userEmail).first();
-
-  if (dreamRow) {
-    let blocks = [];
-    try {
-      blocks = JSON.parse(dreamRow.blocks || '[]');
-    } catch {
-      blocks = [];
-    }
-
-    const blockIndex = blocks.findIndex(b => b.id === blockId);
-    if (blockIndex !== -1) {
-      blocks[blockIndex].interpretation = interpretation;
+    if (dreamId && blockId && interpretation) {
+      const msgId = crypto.randomUUID();
+      const createdAt = Date.now();
 
       await d1.prepare(
-        `UPDATE dreams SET blocks = ? WHERE id = ? AND user = ?`
-      ).bind(JSON.stringify(blocks), dreamId, userEmail).run();
+        `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta, artwork_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        msgId,
+        userEmail,
+        dreamId,
+        blockId,
+        'assistant',
+        interpretation,
+        createdAt,
+        JSON.stringify({ kind: 'block_interpretation' }),
+        artworkId ?? null  // ✅ Сохраняем artwork_id если есть
+      ).run();
+
+      // Также сохраняем в blocks для истории
+      const dreamRow = await d1.prepare(
+        `SELECT blocks FROM dreams WHERE id = ? AND user = ?`
+      ).bind(dreamId, userEmail).first();
+
+      if (dreamRow) {
+        let blocks = [];
+        try {
+          blocks = JSON.parse(dreamRow.blocks || '[]');
+        } catch {
+          blocks = [];
+        }
+
+        const blockIndex = blocks.findIndex(b => b.id === blockId);
+        if (blockIndex !== -1) {
+          blocks[blockIndex].interpretation = interpretation;
+
+          await d1.prepare(
+            `UPDATE dreams SET blocks = ? WHERE id = ? AND user = ?`
+          ).bind(JSON.stringify(blocks), dreamId, userEmail).run();
+        }
+      }
     }
-  }
-}
 
     return new Response(JSON.stringify({ 
       interpretation,
@@ -4226,7 +4468,7 @@ if (dreamId && blockId && interpretation) {
   }
 }
 
-    // --- Interpret final endpoint (с rolling summary + необработанные сообщения по всем блокам) ---
+// --- Interpret final endpoint (с rolling summary + необработанные сообщения по всем блокам) ---
 if (url.pathname === '/interpret_final' && request.method === 'POST') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
@@ -4272,11 +4514,14 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
         const blockId = block.id;
-        const blockText = block.text;
-
-        // Получаем rolling summary + необработанные сообщения
+        const blockText = block.text || block.content || "";
+        
+        // ✅ ИСПРАВЛЕНО: убрали artworkId (итоговая интерпретация — по сну целиком)
         const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
-          env, userEmail, dreamId, blockId
+          env,
+          userEmail,
+          dreamId,
+          blockId
         );
 
         blocksContext += `\n\n### Блок ${i + 1}:\n${blockText}\n`;
@@ -4353,7 +4598,7 @@ ${blocksContext}
   }
 }
 
-// --- Interpret final for daily convo (save into daily_convos.globalFinalInterpretation) ---
+// --- Interpret final for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST') {
   const userEmail = await getUserEmail(request);
   if (!userEmail) {
@@ -4364,23 +4609,56 @@ if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST'
   }
 
   try {
-    const ct = request.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) {
-      return new Response(JSON.stringify({ error: 'Invalid content type' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
-    }
-
     const body = await request.json();
-    const { notesText, dailyConvoId } = body || {};
+    const { notesText, dailyConvoId, blockId = 'main' } = body || {};
 
-    if (!notesText || typeof notesText !== 'string') {
-      return new Response(JSON.stringify({ error: 'No notesText' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    if (!notesText || !dailyConvoId) {
+      return new Response(JSON.stringify({ error: 'notesText and dailyConvoId required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
       });
     }
 
-    const prompt = `${FINAL_INTERPRETATION_PROMPT}\n\nТЕКСТ:\n${notesText.slice(0, 4000)}`;
+    const d1 = env.DB;
+    
+    // 1. Получаем autoSummary
+    let autoSummary = '';
+    const dailyRow = await d1.prepare(
+      'SELECT autoSummary FROM daily_convos WHERE id = ? AND user = ?'
+    ).bind(dailyConvoId, userEmail).first();
+    
+    if (dailyRow) {
+      autoSummary = dailyRow.autoSummary || '';
+    }
+
+    // 2. Получаем rolling summary + необработанные сообщения
+    const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
+      env, userEmail, dailyConvoId, blockId
+    );
+
+    let unprocessedContext = '';
+    if (unprocessedMessages.length > 0) {
+      unprocessedContext = '\n\n### Последние сообщения диалога:\n';
+      unprocessedMessages.forEach(msg => {
+        const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
+        unprocessedContext += `${label}: ${msg.content}\n`;
+      });
+    }
+
+    // 3. Формируем промпт
+    const prompt = `${FINAL_INTERPRETATION_PROMPT_DAILY}
+
+ВЫЖИМКА ЗАПИСИ:
+${autoSummary || 'Не указана'}
+
+ТЕКСТ ЗАПИСИ:
+${notesText.slice(0, 4000)}
+
+КОНТЕКСТ ДИАЛОГА (ROLLING SUMMARY):
+${rollingSummary || 'Диалог только начался'}
+${unprocessedContext}
+
+Создай целостное итоговое толкование, учитывая весь контекст диалога.`;
 
     const deepseekRequestBody = {
       model: 'deepseek-chat',
@@ -4403,14 +4681,11 @@ if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST'
     let interpretation = responseBody?.choices?.[0]?.message?.content || '';
     interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
 
-    if (dailyConvoId && interpretation) {
-      try {
-        await env.DB.prepare(
-          `UPDATE daily_convos SET globalFinalInterpretation = ? WHERE id = ? AND user = ?`
-        ).bind(interpretation, dailyConvoId, userEmail).run();
-      } catch (e) {
-        console.warn('interpret_final_daily_convo: failed to save interpretation', e);
-      }
+    // 4. Сохраняем в БД
+    if (interpretation) {
+      await d1.prepare(
+        `UPDATE daily_convos SET globalFinalInterpretation = ? WHERE id = ? AND user = ?`
+      ).bind(interpretation, dailyConvoId, userEmail).run();
     }
 
     return new Response(JSON.stringify({ interpretation }), {
@@ -4470,6 +4745,123 @@ if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST'
   }
 }
 
+// --- Interpret block for daily convo WITH CONTEXT ---
+if (url.pathname === '/interpret_block_daily_convo_context' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const body = await request.json();
+    const { notesText, dailyConvoId, blockId = 'main' } = body || {};
+
+    if (!notesText || !dailyConvoId) {
+      return new Response(JSON.stringify({ error: 'notesText and dailyConvoId required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    // 1. Получаем autoSummary
+    const d1 = env.DB;
+    let autoSummary = '';
+    const dailyRow = await d1.prepare(
+      'SELECT autoSummary FROM daily_convos WHERE id = ? AND user = ?'
+    ).bind(dailyConvoId, userEmail).first();
+    
+    if (dailyRow) {
+      autoSummary = dailyRow.autoSummary || '';
+    }
+
+    // 2. Получаем rolling summary + необработанные сообщения
+    const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
+      env, userEmail, dailyConvoId, blockId
+    );
+
+    let unprocessedContext = '';
+    if (unprocessedMessages.length > 0) {
+      unprocessedContext = '\n\n### Последние сообщения диалога:\n';
+      unprocessedMessages.forEach(msg => {
+        const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
+        unprocessedContext += `${label}: ${msg.content}\n`;
+      });
+    }
+
+    // 3. Формируем промпт
+    const prompt = `${BLOCK_INTERPRETATION_PROMPT_DAILY}
+
+ВЫЖИМКА ЗАПИСИ:
+${autoSummary || 'Не указана'}
+
+ТЕКУЩИЙ ТЕКСТ:
+${notesText.slice(0, 4000)}
+
+ROLLING SUMMARY ДИАЛОГА:
+${rollingSummary || 'Диалог только начался'}
+${unprocessedContext}
+
+На основе ВСЕГО контекста дай развёрнутое толкование.`;
+
+    const deepseekRequestBody = {
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 600,
+      temperature: 0.7,
+      stream: false
+    };
+
+    const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify(deepseekRequestBody)
+    });
+
+    const responseBody = await deepseekResponse.json();
+    let interpretation = responseBody?.choices?.[0]?.message?.content || '';
+    interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+
+    // 4. Сохраняем толкование в messages
+    const msgId = crypto.randomUUID();
+    const createdAt = Date.now();
+
+    await d1.prepare(
+      `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      msgId,
+      userEmail,
+      dailyConvoId,
+      blockId,
+      'assistant',
+      interpretation,
+      createdAt,
+      JSON.stringify({ kind: 'daily_block_interpretation' })
+    ).run();
+
+    return new Response(JSON.stringify({ 
+      interpretation,
+      isBlockInterpretation: true
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+
+  } catch (err) {
+    console.error('Error in /interpret_block_daily_convo_context:', err);
+    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
 // --- Interpret final for daily convo (NEW) ---
 if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'POST') {
   const userEmail = await getUserEmail(request);
@@ -4513,6 +4905,473 @@ if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'P
   }
 }
 
+// --- ART CHAT: GET /art_chat?artDialogId=...&artworkId=...&blockId=... ---
+if (url.pathname === '/art_chat' && request.method === 'GET') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const dreamId = url.searchParams.get('dreamId');    // ✅ чистый UUID
+  const artworkId = url.searchParams.get('artworkId');
+  const blockId = url.searchParams.get('blockId');
+
+  if (!dreamId || !blockId) {
+    return new Response(JSON.stringify({ error: 'Missing dreamId or blockId' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    let query = `
+      SELECT id, role, content, created_at, meta
+      FROM messages
+      WHERE user = ? AND dream_id = ? AND block_id = ?
+    `;
+    const params = [userEmail, dreamId, blockId];
+
+    // ✅ Если есть artworkId — фильтруем по нему
+    if (artworkId) {
+      query += ` AND artwork_id = ?`;
+      params.push(artworkId);
+    }
+
+    query += ` ORDER BY created_at ASC`;
+
+    const res = await env.DB.prepare(query).bind(...params).all();
+
+    const messages = (res.results || []).map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      created_at: r.created_at,
+      meta: r.meta ? JSON.parse(r.meta) : undefined,
+    }));
+
+    return new Response(JSON.stringify({ messages }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('GET /art_chat error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', details: e?.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+// --- POST /art_chat ---
+if (url.pathname === '/art_chat' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const { id, dreamId, blockId, artworkId, role, content, meta } = body || {};
+  
+  if (!dreamId || !blockId || !role || !content || !['user', 'assistant'].includes(role)) {
+    return new Response(JSON.stringify({ error: 'Invalid payload' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const msgId = id || crypto.randomUUID();
+  const createdAt = Date.now();
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta, artwork_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      msgId,
+      userEmail,
+      dreamId,        // ✅ чистый UUID сна
+      blockId,
+      role,
+      String(content).slice(0, 12000),
+      createdAt,
+      meta ? JSON.stringify(meta) : null,
+      artworkId || null
+    )
+    .run();
+
+    // Rolling summary
+    if (role === 'assistant') {
+      try {
+        let artworkText = '';
+        if (artworkId) {
+          const artworkRow = await env.DB.prepare(
+            `SELECT title, author, desc FROM artworks WHERE id = ?`
+          ).bind(artworkId).first();
+
+          if (artworkRow) {
+            artworkText = `${artworkRow.title} — ${artworkRow.author}\n${artworkRow.desc}`;
+          }
+        }
+
+        await updateRollingSummary(
+          env,
+          userEmail,
+          dreamId,        // ✅ чистый UUID
+          blockId,
+          artworkText,
+          env.DEEPSEEK_API_KEY,
+          artworkId || null
+        );
+      } catch (e) {
+        console.warn('[POST /art_chat] Failed to update summary:', e);
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: msgId,
+        role,
+        content,
+        created_at: createdAt,
+        meta: meta ?? null,
+      }),
+      {
+        status: 201,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
+  } catch (e) {
+    console.error('POST /art_chat error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', details: e?.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+// --- GET /dreams/:dreamId/similar_artworks ---
+if (url.pathname.match(/^\/dreams\/[^/]+\/similar_artworks$/) && request.method === 'GET') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const dreamId = url.pathname.split('/')[2];
+
+  try {
+    const res = await env.DB.prepare(
+      `SELECT 
+         a.id as artwork_id,
+         a.title,
+         a.author,
+         a.type,
+         a.value,
+         a.desc,
+         dsa.position,
+         dsa.score
+       FROM dream_similar_artworks dsa
+       JOIN artworks a ON a.id = dsa.artwork_id
+       WHERE dsa.dream_id = ?
+       ORDER BY dsa.position ASC`
+    ).bind(dreamId).all();
+
+    const artworks = (res.results || []).map((r) => ({
+      artwork_id: r.artwork_id,
+      title: r.title,
+      author: r.author,
+      type: r.type,
+      value: r.value,
+      desc: r.desc,
+      position: r.position,
+      score: r.score,
+    }));
+
+    return new Response(JSON.stringify({ artworks }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('GET /dreams/:dreamId/similar_artworks error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', details: e?.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+// --- Interpret block for art WITH CONTEXT ---
+if (url.pathname === '/interpret_block_art' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    const body = await request.json();
+    const { dreamId, blockId, artworkId } = body || {};
+
+    if (!dreamId || !blockId) {
+      return new Response(
+        JSON.stringify({ error: 'dreamId and blockId required' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    let artworkRow = null;
+
+    if (artworkId) {
+      artworkRow = await env.DB.prepare(
+        `SELECT title, author, type, value, desc FROM artworks WHERE id = ?`
+      ).bind(artworkId).first();
+    } else if (blockId && blockId.startsWith('artwork__')) {
+      const match = blockId.match(/^artwork__(\d+)$/);
+      if (match) {
+        const artIndex = parseInt(match[1], 10);
+
+        const dreamRow = await env.DB.prepare(
+          `SELECT similarArtworks FROM dreams WHERE id = ?`
+        ).bind(dreamId).first();
+
+        if (dreamRow && dreamRow.similarArtworks) {
+          let similarArtworks = [];
+          try {
+            similarArtworks = JSON.parse(dreamRow.similarArtworks);
+          } catch {}
+
+          const artwork = similarArtworks[artIndex];
+          if (artwork) {
+            artworkRow = {
+              title: artwork.title || '',
+              author: artwork.author || '',
+              type: artwork.type || 'default',
+              value: artwork.value || '',
+              desc: artwork.desc || '',
+            };
+          }
+        }
+      }
+    }
+
+    if (!artworkRow) {
+      return new Response(
+        JSON.stringify({ error: 'Artwork not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    const artworkText = `
+Название: ${artworkRow.title}
+Автор: ${artworkRow.author}
+Тип: ${artworkRow.type}
+Описание: ${artworkRow.desc}
+`.trim();
+
+    // ✅ ИСПРАВЛЕНО: добавили artworkId для строгого контекста по artwork
+    const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
+      env,
+      userEmail,
+      dreamId,
+      blockId,
+      artworkId || null  // ✅ Теперь контекст строго по artwork
+    );
+
+    let unprocessedContext = '';
+    if (unprocessedMessages.length > 0) {
+      unprocessedContext = '\n\nПоследние сообщения диалога:\n';
+      unprocessedMessages.forEach((msg) => {
+        const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
+        unprocessedContext += `${label}: ${msg.content}\n`;
+      });
+    }
+
+    const userPrompt = `
+${ART_BLOCK_INTERPRETATION_PROMPT}
+
+---
+
+Описание произведения (artwork):
+${artworkText.slice(0, 4000)}
+
+---
+
+Краткое содержание диалога (rolling summary):
+${rollingSummary || 'Диалог только начался, подробного резюме ещё нет.'}
+
+${unprocessedContext}
+`.trim();
+
+    const deepseekRequestBody = {
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'Ты внимательный психолог и арт-терапевт. Отвечай всегда на русском, живым человеческим языком.',
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 800,
+      temperature: 0.7,
+      stream: false,
+    };
+
+    const deepseekResponse = await fetch(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+        },
+        body: JSON.stringify(deepseekRequestBody),
+      },
+    );
+
+    if (!deepseekResponse.ok) {
+      const errText = await deepseekResponse.text().catch(() => '');
+      console.error('DeepSeek /interpret_block_art error', deepseekResponse.status, errText);
+      throw new Error(`DeepSeek error: ${deepseekResponse.status}`);
+    }
+
+    const responseBody = await deepseekResponse.json();
+
+    let interpretation =
+      responseBody?.choices?.[0]?.message?.content || '';
+
+    interpretation = interpretation
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
+
+    if (!interpretation) {
+      interpretation =
+        'Мне не удалось сформировать развёрнутую интерпретацию, но это произведение явно несёт важный эмоциональный смысл. Попробуй задать ещё один вопрос или уточнить, что ты чувствуешь, глядя на него.';
+    }
+
+    const msgId = crypto.randomUUID();
+    const createdAt = Date.now();
+
+    await env.DB.prepare(
+      `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta, artwork_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        msgId,
+        userEmail,
+        dreamId,
+        blockId,
+        'assistant',
+        interpretation,
+        createdAt,
+        JSON.stringify({ kind: 'art_block_interpretation' }),
+        artworkId || null
+      )
+      .run();
+
+    return new Response(
+      JSON.stringify({
+        interpretation,
+        isBlockInterpretation: true,
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      },
+    );
+  } catch (err) {
+    console.error('Error in /interpret_block_art:', err);
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: err?.message || String(err),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      },
+    );
+  }
+}
+
+// --- DELETE /art_chat ---
+if (url.pathname === '/art_chat' && request.method === 'DELETE') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const { dreamId, blockId, artworkId } = body || {};
+
+  if (!dreamId || !blockId) {
+    return new Response(JSON.stringify({ error: 'Missing dreamId or blockId' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    let deleteMessagesQuery = `DELETE FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`;
+    let deleteSummariesQuery = `DELETE FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id = ?`;
+    const params = [userEmail, dreamId, blockId];
+
+    if (artworkId) {
+      deleteMessagesQuery += ` AND artwork_id = ?`;
+      deleteSummariesQuery += ` AND artwork_id = ?`;
+      params.push(artworkId);
+    }
+
+    await env.DB.prepare(deleteMessagesQuery).bind(...params).run();
+    await env.DB.prepare(deleteSummariesQuery).bind(...params).run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('DELETE /art_chat error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', details: e?.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+
+
 // --- Dashboard metrics endpoint (нормальный range) ---
 if (url.pathname === '/dashboard' && request.method === 'GET') {
   const userEmail = await getUserEmail(request);
@@ -4530,44 +5389,42 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     });
   }
 
- try {
-  const d1 = env.DB;
+try {
+    const d1 = env.DB;
+
+    // ✅ ОПРЕДЕЛЯЕМ ФУНКЦИЮ СРАЗУ
+    function resolveSinceTs(range) {
+      const now = Date.now();
+      let sinceTs;
+
+      switch (range) {
+        case '7d':   sinceTs = now - (7  * 24 * 60 * 60 * 1000); break;
+        case '30d':  sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
+        case '60d':  sinceTs = now - (60 * 24 * 60 * 60 * 1000); break;
+        case '90d':  sinceTs = now - (90 * 24 * 60 * 60 * 1000); break;
+        case '365d': sinceTs = now - (365 * 24 * 60 * 60 * 1000); break;
+        case 'all':  sinceTs = 0; break;
+        default:     sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
+      }
+
+      const date = new Date(sinceTs);
+      date.setUTCHours(0, 0, 0, 0);
+      sinceTs = date.getTime();
+
+      console.log(`[resolveSinceTs] range=${range}, sinceTs=${sinceTs}, date=${new Date(sinceTs).toISOString()}`);
+      return sinceTs;
+    }
 
   // ---------- БЛОК RANGE ----------
-  const rangeParamRaw = url.searchParams.get('range') || '30d';
-  const allowedRanges = ['7d','30d','60d','90d','365d','all'];
-  const rangeParam = (allowedRanges.includes(rangeParamRaw) ? rangeParamRaw : '30d');
+    const rangeParamRaw = url.searchParams.get('range') || '30d';
+    const allowedRanges = ['7d','30d','60d','90d','365d','all'];
+    const rangeParam = (allowedRanges.includes(rangeParamRaw) ? rangeParamRaw : '30d');
 
-  const isAll = rangeParam === 'all';
+    const isAll = rangeParam === 'all';
 
-  function resolveSinceTs(range) {
-    const now = Date.now();
-    let sinceTs;
-  
-    switch (range) {
-      case '7d':   sinceTs = now - (7  * 24 * 60 * 60 * 1000); break;
-      case '30d':  sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
-      case '60d':  sinceTs = now - (60 * 24 * 60 * 60 * 1000); break;
-      case '90d':  sinceTs = now - (90 * 24 * 60 * 60 * 1000); break;
-      case '365d': sinceTs = now - (365 * 24 * 60 * 60 * 1000); break;
-      case 'all':  sinceTs = 0; break;
-      default:     sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
-    }
-  
-    // 🆕 Округляем до начала дня (00:00:00 UTC)
-    const date = new Date(sinceTs);
-    date.setUTCHours(0, 0, 0, 0);
-    sinceTs = date.getTime();
-  
-    console.log(`[resolveSinceTs] range=${range}, sinceTs=${sinceTs}, date=${new Date(sinceTs).toISOString()}`);
-    return sinceTs;
-  }
-
-  // ✅ ВЫЗЫВАЕМ ФУНКЦИЮ И СОХРАНЯЕМ РЕЗУЛЬТАТ
-  const sinceTs = resolveSinceTs(rangeParam);
-
-  // ---------- ALL‑TIME метрики ----------
-  const thirtyDaysAgo = resolveSinceTs('30d');
+    // ✅ ВЫЗЫВАЕМ ФУНКЦИЮ И СОХРАНЯЕМ РЕЗУЛЬТАТ
+    const sinceTs = resolveSinceTs(rangeParam);
+    const thirtyDaysAgo = resolveSinceTs('30d');
 
     // Всего снов
     const totalDreamsRow = await d1
@@ -4707,22 +5564,23 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
 
     // 9.1 Aggregation per day (GROUP BY day) within requested period (or all)
     const aggSql = `
-  SELECT
-    DATE(date/1000, 'unixepoch') as day,
-    MIN(date) as day_first_ts,
-    COUNT(*) as total,
-    SUM(CASE WHEN globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '' THEN 1 ELSE 0 END) as interpreted,
-    SUM(CASE WHEN dreamSummary IS NOT NULL AND dreamSummary != '' THEN 1 ELSE 0 END) as summarized,
-    SUM(CASE WHEN similarArtworks IS NOT NULL AND similarArtworks != '' AND similarArtworks != '[]' THEN 1 ELSE 0 END) as artworks,
-    SUM(CASE WHEN EXISTS (SELECT 1 FROM messages m WHERE m.user = dreams.user AND m.dream_id = dreams.id AND m.role = 'assistant') THEN 1 ELSE 0 END) as dialogs
-  FROM dreams
-  WHERE user = ? ${isAll ? '' : 'AND strftime(\'%s\', date(date/1000, \'unixepoch\')) * 1000 >= ?'}
-  GROUP BY day
-  ORDER BY day ASC
-`;
+      SELECT
+        DATE(date/1000, 'unixepoch') as day,
+        MIN(date) as day_first_ts,
+        COUNT(*) as total,
+        SUM(CASE WHEN globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '' THEN 1 ELSE 0 END) as interpreted,
+        SUM(CASE WHEN dreamSummary IS NOT NULL AND dreamSummary != '' THEN 1 ELSE 0 END) as summarized,
+        SUM(CASE WHEN similarArtworks IS NOT NULL AND similarArtworks != '' AND similarArtworks != '[]' THEN 1 ELSE 0 END) as artworks,
+        SUM(CASE WHEN EXISTS (SELECT 1 FROM messages m WHERE m.user = dreams.user AND m.dream_id = dreams.id AND m.role = 'assistant') THEN 1 ELSE 0 END) as dialogs
+      FROM dreams
+      WHERE user = ? ${isAll ? "" : "AND date >= ?"}
+      GROUP BY day
+      ORDER BY day ASC
+    `;
 
-    // Bind params depending on isAll
-    const aggStmt = isAll ? d1.prepare(aggSql).bind(userEmail) : d1.prepare(aggSql).bind(userEmail, sinceTs);
+    const aggStmt = isAll 
+      ? d1.prepare(aggSql).bind(userEmail) 
+      : d1.prepare(aggSql).bind(userEmail, sinceTs);
     const aggRes = await aggStmt.all();
     const aggRows = aggRes.results || [];
 
@@ -4841,12 +5699,12 @@ const recentDreams = (recentRes.results || []).map((r) => ({
   : `SELECT context, COUNT(*) AS cnt 
      FROM moods 
      WHERE user_email = ? 
-       AND date >= date(?, 'unixepoch', 'start of day')
+       AND date >= ?  -- ✅ Убираем date(), сравниваем напрямую
      GROUP BY context`;
 
 const moodsStmt = isAll
   ? d1.prepare(moodsSql).bind(userEmail)
-  : d1.prepare(moodsSql).bind(userEmail, Math.floor(sinceTs / 1000)); // ⚠️ Конвертируем в секунды!
+  : d1.prepare(moodsSql).bind(userEmail, sinceTs); // ✅ Передаём миллисекунды напрямую
 
       const moodsRes = await moodsStmt.all();
       const moodRows = moodsRes?.results ?? [];
@@ -4866,11 +5724,9 @@ const moodsStmt = isAll
     // =============================
     // ✅ НОВЫЙ БЛОК: АГРЕГАЦИЯ ИНСАЙТОВ
     // =============================
+let insightsDreamsCount = 0;
+let insightsArtworksCount = 0;
 
-    let insightsDreamsCount = 0;
-    let insightsArtworksCount = 0;
-
-    // ✅ ПРАВИЛЬНЫЙ подсчёт инсайтов из messages
 try {
   const insightsSql = isAll
     ? `
@@ -4898,48 +5754,9 @@ try {
 
 } catch (err) {
   console.error('Failed to aggregate insights:', err);
-  insightsDreamsCount = 0;
-  insightsArtworksCount = 0;
 }
 
-    // Дополнительно: посчитаем инсайты по сообщениям, если там выставлены флаги
-    try {
-      const msgsSql = isAll
-        ? `
-          SELECT
-            COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS dreams_with_insight,
-            SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS artworks_insight_messages
-          FROM messages
-          WHERE user = ?
-        `
-        : `
-          SELECT
-            COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS dreams_with_insight,
-            SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS artworks_insight_messages
-          FROM messages
-          WHERE user = ? AND created_at >= ?
-        `;
-
-      const msgsStmt = isAll
-        ? d1.prepare(msgsSql).bind(userEmail)
-        : d1.prepare(msgsSql).bind(userEmail, sinceTs);
-
-      const msgsRes = await msgsStmt.first();
-      const dreamsWithInsight = Number(msgsRes?.dreams_with_insight ?? 0);
-      const artworksInsightMsgs = Number(msgsRes?.artworks_insight_messages ?? 0);
-
-      // Объединяем: берём максимум между подсчитанным по dreams и подсчитанным по сообщениям,
-      // т.к. структура может быть разной в базе
-      insightsDreamsCount = Math.max(insightsDreamsCount || 0, dreamsWithInsight || 0);
-      // Для артов — если в dreams есть массив similarArtworks, он даёт количество арт-работ;
-      // сообщения дают количество лайков/инсайтов по арт-работам — сложим (или берём max по логике)
-      insightsArtworksCount = Math.max(insightsArtworksCount || 0, artworksInsightMsgs || 0);
-
-    } catch (e) {
-      console.warn('Failed to aggregate insights from messages:', e);
-      // уже имеющиеся значения сохраняются
-    }
-
+    
     // === DAILY CONVOS AGGREGATION FOR DASHBOARD ===
     let totalDailyConvos = 0;
     let dailyConvoInsightsCount = 0;
@@ -5267,7 +6084,7 @@ if (url.pathname === '/api/gamification/mark-level-seen' && request.method === '
     }
 
     const token = authHeader.substring(7);
-    const payload = await verifyJWT(token, JWT_SECRET);
+    const payload = await verifyToken(token, JWT_SECRET);
     const userEmail = payload.email;
 
     const body = await request.json();

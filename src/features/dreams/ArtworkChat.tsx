@@ -1,5 +1,3 @@
-// ArtworkChat.tsx
-
 import React, {
   useState,
   useEffect,
@@ -47,12 +45,13 @@ import { useSnackbar as useNotistackSnackbar } from 'notistack';
 
 import {
   getDream,
-  getChat,
-  appendChat,
-  clearChat,
+  getArtChat,
+  appendArtChat,
+  clearArtChat,
   analyzeDream,
   toggleArtworkInsight,
   interpretFinal,
+  interpretBlockArt,
 } from '../../utils/api';
 
 import { GlassInputBox } from '../profile/GlassInputBox';
@@ -146,6 +145,83 @@ export const ArtworkChat: React.FC = () => {
   const kickoffDoneRef = useRef<string | null>(null);
   const kickoffInProgressRef = useRef<boolean>(false);
 
+  // 🔐 защита от гонок: актуальный ключ чата
+  const latestChatKeyRef = useRef<string | null>(null);
+
+  // ✅ безопасно читаем state из навигации
+  const rawState = location.state as any | null | undefined;
+  const stateAny = (rawState && typeof rawState === 'object') ? rawState : {};
+  const stateArtworkIndex = stateAny.artworkIndex as number | undefined;
+  const artworkIdFromState: string | undefined = stateAny.artworkId;
+
+  // ✅ индекс текущего арта
+  const currentIdx = useMemo(() => {
+    if (typeof stateArtworkIndex === 'number') {
+      return stateArtworkIndex;
+    }
+    const idx = Number(artworkIdx ?? 0);
+    return Number.isNaN(idx) ? 0 : idx;
+  }, [artworkIdx, stateArtworkIndex]);
+
+  // ✅ blockId (для бэкенда/сводок)
+  const blockId = useMemo(
+    () => `artwork__${currentIdx}`,
+    [currentIdx]
+  );
+
+  // ✅ artDialogId (для UI/логики фронта)
+const artDialogId = useMemo(
+  () => (id ? `${id}__art__${currentIdx}` : ''),
+  [id, currentIdx]
+);
+
+// ✅ dreamId (чистый UUID для бэкенда)
+const dreamId = id ?? '';
+
+ const artworkId = useMemo(() => {
+  if (artworkIdFromState) {
+    console.log("🔑 [ARTWORK_ID] from state:", artworkIdFromState);
+    return artworkIdFromState;
+  }
+  if (artwork && typeof artwork === 'object') {
+    const keys = Object.keys(artwork);
+    const resolved = 
+      artwork.artworkId ??
+      artwork.artwork_id ??
+      artwork.id ??
+      artwork._id ??
+      artwork.uniqueId ??
+      undefined;
+    
+    console.log("🔑 [ARTWORK_ID] from artwork object", { 
+      keys, 
+      resolved,
+      artworkId: artwork.artworkId,
+      artwork_id: artwork.artwork_id,
+      id: artwork.id,
+      _id: artwork._id,
+      uniqueId: artwork.uniqueId
+    });
+    
+    return resolved;
+  }
+  console.log("🔑 [ARTWORK_ID] undefined (no artwork)");
+  return undefined;
+}, [artworkIdFromState, artwork]);
+
+  // ✅ ключ для kickoff, чтобы не гонять его лишний раз
+  // Вместо artDialogId/blockId в ключе
+const kickoffKey = useMemo(
+  () => (dreamId && artworkId ? `${dreamId}::${artworkId}` : ''),
+  [dreamId, artworkId]
+);
+
+// сбрасываем состояние kickoff при смене произведения / artworkId
+useEffect(() => {
+  kickoffDoneRef.current = null;
+  kickoffInProgressRef.current = false;
+}, [currentIdx, artworkId]);
+
   // подсказки для луны
   const [interpretHintShown, setInterpretHintShown] = useState(false);
   const [interpretSnackbarOpen, setInterpretSnackbarOpen] = useState(false);
@@ -167,13 +243,6 @@ export const ArtworkChat: React.FC = () => {
   const glassBackground = 'rgba(255, 255, 255, 0.1)';
   const glassBorder = 'rgba(255, 255, 255, 0.18)';
   const assistantAvatarUrl = '/logo.png';
-
-  const currentIdx = useMemo(() => {
-    const idx = Number(artworkIdx ?? 0);
-    return Number.isNaN(idx) ? 0 : idx;
-  }, [artworkIdx]);
-
-  const blockId = `artwork__${currentIdx}`;
 
   const renderAssistantAvatar = useCallback(
     (variant: 'default' | 'interpretation' = 'default') => (
@@ -201,151 +270,246 @@ export const ArtworkChat: React.FC = () => {
     [assistantAvatarUrl],
   );
 
-  // загружаем сон + произведение
+ // загружаем сон + произведение
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        if (!id) {
-          setError('ID не указан');
-          return;
-        }
-        const d = await getDream(id);
-        if (!d) {
-          setError('Сон не найден');
-          return;
-        }
-        setDream(d);
-
-        const stateAny = (location.state as any) ?? {};
-        const stateArtwork = stateAny.artwork;
-        const stateIdx =
-          typeof stateAny.artworkIndex === 'number'
-            ? stateAny.artworkIndex
-            : undefined;
-
-        if (
-          stateArtwork &&
-          (stateIdx === undefined ||
-            stateIdx === currentIdx ||
-            Number(stateIdx) === currentIdx)
-        ) {
-          setArtwork(stateArtwork);
-        } else if (d?.similarArtworks && Array.isArray(d.similarArtworks)) {
-          const candidate = d.similarArtworks[currentIdx];
-          setArtwork(candidate ?? null);
-        } else {
-          setArtwork(null);
-        }
-
-        if (d?.globalFinalInterpretation) {
-          setFinalInterpretationText(d.globalFinalInterpretation);
-        }
-      } catch (e: any) {
-        setError(e?.message || 'Ошибка загрузки данных');
-      } finally {
-        setLoading(false);
+  (async () => {
+    console.log("📦 [DREAM LOAD] start", { id, currentIdx });
+    setLoading(true);
+    setError(null);
+    try {
+      if (!id) {
+        setError('ID не указан');
+        return;
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, currentIdx, location.state]);
 
-  const runKickoff = useCallback(async () => {
-    if (!id || !blockId || !artwork) return;
-    if (kickoffDoneRef.current === blockId) return;
-    if (kickoffInProgressRef.current) return;
-    if (sendingReply) return;
+      // 1. Сначала пробуем взять artwork из location.state — это синхронно
+      const stateAny = (location.state as any) ?? {};
+      const stateArtwork = stateAny.artwork;
+      const stateIdx =
+        typeof stateAny.artworkIndex === 'number'
+          ? stateAny.artworkIndex
+          : undefined;
 
-    kickoffInProgressRef.current = true;
-    setSendingReply(true);
+      console.log("📦 [DREAM LOAD] state", { stateArtwork: !!stateArtwork, stateIdx, currentIdx });
+
+      if (
+        stateArtwork &&
+        (stateIdx === undefined ||
+          stateIdx === currentIdx ||
+          Number(stateIdx) === currentIdx)
+      ) {
+        console.log("📦 [DREAM LOAD] setting artwork from state");
+        setArtwork(stateArtwork);
+      }
+
+      // 2. Затем уже грузим сон и, если нужно, доуточняем artwork из similarArtworks
+      const d = await getDream(id);
+      if (!d) {
+        setError('Сон не найден');
+        return;
+      }
+      console.log("📦 [DREAM LOAD] dream loaded, similarArtworks count:", d?.similarArtworks?.length ?? 0);
+      setDream(d);
+
+      if (
+        !stateArtwork && // если из state не поставили,
+        d?.similarArtworks &&
+        Array.isArray(d.similarArtworks)
+      ) {
+        const candidate = d.similarArtworks[currentIdx];
+        console.log("🖼️ [ARTWORK CANDIDATE]", { 
+          currentIdx, 
+          candidate,
+          keys: candidate ? Object.keys(candidate) : [],
+          artworkId: candidate?.artworkId ?? candidate?.artwork_id ?? candidate?.id ?? candidate?.uniqueId
+        });
+        setArtwork(candidate ?? null);
+      } else if (!stateArtwork) {
+        console.log("📦 [DREAM LOAD] no artwork available");
+        setArtwork(null);
+      }
+
+      if (d?.globalFinalInterpretation) {
+        setFinalInterpretationText(d.globalFinalInterpretation);
+      }
+    } catch (e: any) {
+      console.error("📦 [DREAM LOAD] error", e);
+      setError(e?.message || 'Ошибка загрузки данных');
+    } finally {
+      setLoading(false);
+      console.log("📦 [DREAM LOAD] done");
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [id, currentIdx, location.state]);
+
+
+// 🔄 МГНОВЕННЫЙ СБРОС ЧАТА ПРИ СМЕНЕ ПРОИЗВЕДЕНИЯ
+  useEffect(() => {
+    if (!artDialogId || !blockId) return;
+
+    console.log('[CHAT RESET] switching artwork, clearing local messages', {
+      artDialogId,
+      blockId,
+      artworkId,
+    });
+
+    // Убираем старые сообщения, чтобы не мигали в новом арте
+    setMessages([]);
+    setError(null);
+    setHighlightedMessageId(null);
+    // messagesLoading и sendingReply трогать не обязательно —
+    // их выставит useEffect загрузки/отправки
+  }, [artDialogId, blockId, artworkId]);
+
+
+
+// ✅ ЕДИНСТВЕННЫЙ useEffect для загрузки истории + kickoff (защищённый)
+useEffect(() => {
+  let isCancelled = false;
+
+  (async () => {
+    const hasArtwork = Boolean(artwork);
+
+    // ✅ формируем уникальный ключ текущего чата
+    const chatKey = `${dreamId}::${blockId}::${artworkId}`;
+    latestChatKeyRef.current = chatKey;
+
+    console.log('🔄 [CHAT USE_EFFECT TRIGGERED]', {
+      artDialogId,
+      blockId,
+      artworkId,
+      hasArtwork,
+      dreamId,
+      chatKey,
+    });
+
+    if (!artDialogId || !blockId || !artwork || !dreamId || !artworkId) {
+      console.log('[CHAT LOAD] missing deps (waiting)');
+      return;
+    }
+
+    setMessagesLoading(true);
+    setError(null);
 
     try {
-      const kickoffPrompt =
-        'Сформулируй первый вопрос для обсуждения этого произведения в контексте сна пользователя. ' +
-        'Тон: тёплый, поддерживающий, без преамбулы, без списков. Коротко (1–2 предложения). ' +
-        'Используй детали описания произведения и сна.';
-      const blockText = JSON.stringify(artwork, null, 2);
+      const resp = await getArtChat(dreamId, blockId, artworkId);
+      const rawMsgs = resp?.messages ?? [];
 
-      const ai = await analyzeDream(
-        blockText,
-        [],
-        kickoffPrompt,
-        id,
-        blockId,
-        dream?.dreamSummary ?? null,
-        dream?.autoSummary ?? null,
-      );
+      // ✅ проверяем, актуален ли ещё этот чат
+      if (latestChatKeyRef.current !== chatKey) {
+        console.log('[CHAT LOAD] stale response, ignoring', { chatKey });
+        return;
+      }
 
-      const assistantText =
-        ai?.choices?.[0]?.message?.content ||
-        'Что в этом произведении кажется вам наиболее созвучным вашему сну?';
+      if (isCancelled) return;
 
-      const saved = await appendChat({
-        dreamId: id,
-        blockId,
-        role: 'assistant',
-        content: assistantText,
-      });
+      const msgs: Message[] = rawMsgs.map((m: any) => ({
+        id: m.id,
+        text: m.content,
+        sender: m.role === 'user' ? 'user' : 'assistant',
+        role: (m.role as Role) || (m.role === 'user' ? 'user' : 'assistant'),
+        timestamp: toTimestamp(m.created_at ?? Date.now()),
+        meta: m.meta ?? null,
+        insightArtworksLiked: Boolean(m.meta?.insightArtworksLiked),
+      }));
 
-      setMessages([
-        {
-          id: saved.id,
-          text: saved.content,
-          sender: 'assistant',
-          role: 'assistant',
-          timestamp: toTimestamp(saved.createdAt),
-          meta: saved.meta ?? null,
-          insightArtworksLiked: Boolean(saved.meta?.insightArtworksLiked),
-        },
-      ]);
+      const shouldRunKickoff =
+        msgs.length === 0 && !kickoffInProgressRef.current;
 
-      kickoffDoneRef.current = blockId;
-    } catch (e: any) {
-      console.error('Kickoff error', e);
-      setError(e?.message || 'Не удалось начать диалог');
-    } finally {
-      kickoffInProgressRef.current = false;
-      setSendingReply(false);
-    }
-  }, [id, blockId, artwork, dream?.dreamSummary, dream?.autoSummary, sendingReply]);
+      if (!shouldRunKickoff) {
+        console.log('[CHAT LOAD] showing existing messages', msgs.length);
+        setMessages(msgs);
+        return;
+      }
 
-  // загрузка истории чата
-  useEffect(() => {
-    (async () => {
-      if (!id || !blockId || !artwork) return;
-      setMessagesLoading(true);
-      setError(null);
+      kickoffInProgressRef.current = true;
+      setSendingReply(true);
+
       try {
-        const resp = await getChat(id, blockId);
-        const msgs = (resp.messages || []).map((m: any) => ({
-          id: m.id,
-          text: m.content,
-          sender: m.role === 'user' ? 'user' : 'assistant',
-          role: (m.role as Role) || (m.role === 'user' ? 'user' : 'assistant'),
-          timestamp: toTimestamp(m.createdAt ?? Date.now()),
-          meta: m.meta ?? null,
-          insightArtworksLiked: Boolean(m.meta?.insightArtworksLiked),
-        })) as Message[];
+        const kickoffPrompt =
+          'Сформулируй первый вопрос для обсуждения этого произведения в контексте сна пользователя. ' +
+          'Тон: тёплый, поддерживающий, без преамбулы, без списков. Коротко (1–2 предложения). ' +
+          'Используй детали описания произведения и сна.';
 
-        if (
-          msgs.length === 0 &&
-          kickoffDoneRef.current !== blockId &&
-          !kickoffInProgressRef.current
-        ) {
-          await runKickoff();
-        } else {
-          setMessages(msgs);
+        const blockText = JSON.stringify(artwork, null, 2);
+
+        const ai = await analyzeDream(
+          blockText,
+          [],
+          kickoffPrompt,
+          dreamId,
+          blockId,
+          dream?.dreamSummary ?? null,
+          dream?.autoSummary ?? null,
+          artworkId, // ✅ передаём artworkId
+        );
+
+        const assistantText =
+          ai?.choices?.[0]?.message?.content ||
+          'Что в этом произведении кажется вам наиболее созвучным вашему сну?';
+
+        const saved = await appendArtChat({
+          dreamId,
+          blockId,
+          artworkId,
+          role: 'assistant',
+          content: assistantText,
+        });
+
+        // ✅ снова проверяем актуальность
+        if (latestChatKeyRef.current !== chatKey) {
+          console.log('[CHAT LOAD] stale kickoff response, ignoring', { chatKey });
+          return;
         }
+
+        if (isCancelled) return;
+
+        const finalMsgs: Message[] = [
+          ...msgs,
+          {
+            id: saved.id,
+            text: saved.content,
+            sender: 'assistant',
+            role: 'assistant',
+            timestamp: toTimestamp(saved.createdAt ?? Date.now()),
+            meta: saved.meta ?? null,
+            insightArtworksLiked: Boolean(saved.meta?.insightArtworksLiked),
+          },
+        ];
+
+        setMessages(finalMsgs);
       } catch (e: any) {
-        setError(e?.message || 'Ошибка загрузки чата');
+        if (!isCancelled) {
+          setError(e?.message || 'Не удалось начать диалог');
+        }
       } finally {
+        kickoffInProgressRef.current = false;
+        setSendingReply(false);
+      }
+    } catch (e: any) {
+      if (!isCancelled) {
+        setError(e?.message || 'Ошибка загрузки чата');
+      }
+    } finally {
+      if (!isCancelled) {
         setMessagesLoading(false);
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, blockId, artwork, runKickoff]);
+    }
+  })();
 
+  return () => {
+    isCancelled = true;
+  };
+}, [
+  artDialogId,
+  blockId,
+  artwork,
+  artworkId,
+  dreamId,
+  dream?.dreamSummary,
+  dream?.autoSummary,
+]);
   // messageId из query/state
   const searchParams = useMemo(
     () => new URLSearchParams(location.search),
@@ -392,36 +556,42 @@ export const ArtworkChat: React.FC = () => {
       const total = dream.similarArtworks.length;
       for (let i = 0; i < total; i++) {
         const otherBlockId = `artwork__${i}`;
-        if (otherBlockId === blockId) continue;
-        try {
-          const resp = await getChat(id, otherBlockId);
-          const msgs = resp.messages || [];
-          const found = msgs.find(
-            (m: any) => String(m.id) === String(targetMessageId),
-          );
-          if (found) {
-            const nextArtwork = dream.similarArtworks?.[i];
-            navigate(
-              `/dreams/${id}/artwork-chat/${i}?messageId=${encodeURIComponent(
-                targetMessageId,
-              )}`,
-              {
-                state: {
-                  highlightMessageId: targetMessageId,
-                  artwork: nextArtwork,
-                  artworkIndex: i,
-                  origin: 'insights',
-                },
-              },
-            );
-            enqueueSnackbar('Сообщение найдено — перенаправляю', {
-              variant: 'success',
-            });
-            return;
-          }
-        } catch (err: any) {
-          console.warn('Ошибка при поиске в блоке', otherBlockId, err);
-        }
+if (otherBlockId === blockId) continue;
+
+if (!id) continue;
+
+const otherArtwork = dream.similarArtworks?.[i];
+const otherArtworkId = otherArtwork?.artworkId;
+
+try {
+  const resp = await getArtChat(id, otherBlockId, otherArtworkId);
+  const msgs = resp.messages || [];
+  const found = msgs.find(
+    (m: any) => String(m.id) === String(targetMessageId),
+  );
+  if (found) {
+    navigate(
+      `/dreams/${id}/artwork-chat/${i}?messageId=${encodeURIComponent(
+        targetMessageId,
+      )}`,
+      {
+        state: {
+          highlightMessageId: targetMessageId,
+          artwork: otherArtwork,
+          artworkId: otherArtworkId,  // ✅ передаём artworkId
+          artworkIndex: i,
+          origin: 'insights',
+        },
+      },
+    );
+    enqueueSnackbar('Сообщение найдено — перенаправляю', {
+      variant: 'success',
+    });
+    return;
+  }
+} catch (err: any) {
+  console.warn('Ошибка при поиске в блоке', otherBlockId, err);
+}
       }
 
       enqueueSnackbar('Сообщение не найдено в похожих произведениях', {
@@ -467,216 +637,231 @@ export const ArtworkChat: React.FC = () => {
   }, [pairs, interpretHintShown]);
 
   const runInterpretation = async () => {
-    if (!id || !blockId || !artwork) return;
+  if (!artDialogId || !blockId || !artwork) return;
 
-    if (pairs < TARGET_PAIRS_FOR_INTERPRET) {
-      showInterpretSnackbar(
-        'Луна ещё наполняется — продолжите диалог, чтобы открыть интерпретацию произведения 🌙',
-        'success',
-      );
-      return;
-    }
+  if (pairs < TARGET_PAIRS_FOR_INTERPRET) {
+    showInterpretSnackbar(
+      'Луна ещё наполняется — продолжите диалог, чтобы открыть интерпретацию произведения 🌙',
+      'success',
+    );
+    return;
+  }
 
-    if (sendingReply || generatingInterpretation) return;
+  if (sendingReply || generatingInterpretation) return;
 
-    setGeneratingInterpretation(true);
-    setSendingReply(true);
+  setGeneratingInterpretation(true);
+  setSendingReply(true);
 
-    try {
-      const systemPrompt =
-        'Сформулируй развернутую интерпретацию этого произведения в контексте сна пользователя. ' +
-        'Тон — тёплый и аналитичный, поясняй ассоциации, предлагай вопросы для саморефлексии.';
-      const blockText = JSON.stringify(artwork, null, 2);
-      const ai = await analyzeDream(
-        blockText,
-        [],
-        systemPrompt,
-        id,
-        blockId,
-        dream?.dreamSummary ?? null,
-        dream?.autoSummary ?? null,
-      );
-      const assistantText =
-        ai?.choices?.[0]?.message?.content ||
-        'Вот интерпретация произведения...';
-      const saved = await appendChat({
-        dreamId: id,
-        blockId,
-        role: 'assistant',
-        content: assistantText,
-      });
+  try {
+    if (!artworkId) {
+  enqueueSnackbar('Не удалось определить ID произведения', { variant: 'error' });
+  return;
+}
+
+const result = await interpretBlockArt(
+  dreamId,
+  blockId,
+  artworkId,
+);
+
+    const assistantText = result.interpretation || 'Вот интерпретация произведения...';
+
+    // Получаем обновлённую историю
+    const resp = await getArtChat(dreamId, blockId, artworkId);
+    const lastMsg = resp.messages?.[resp.messages.length - 1];
+
+    if (lastMsg && lastMsg.meta?.kind === 'art_block_interpretation') {
       setMessages((prev) => [
         ...prev,
         {
-          id: saved.id,
-          text: saved.content,
+          id: lastMsg.id,
+          text: lastMsg.content,
           sender: 'assistant',
           role: 'assistant',
-          timestamp: toTimestamp(saved.createdAt),
-          meta: saved.meta ?? { kind: 'art_interpretation' },
-          insightArtworksLiked: Boolean(saved.meta?.insightArtworksLiked),
+          timestamp: toTimestamp(lastMsg.createdAt),
+          meta: lastMsg.meta ?? { kind: 'art_block_interpretation' },
+          insightArtworksLiked: Boolean(lastMsg.meta?.insightArtworksLiked),
         },
       ]);
-    } catch (e: any) {
-      enqueueSnackbar(
-        e?.message ?? 'Не удалось сгенерировать интерпретацию',
-        { variant: 'error' },
-      );
-    } finally {
-      setGeneratingInterpretation(false);
-      setSendingReply(false);
     }
-  };
+  } catch (e: any) {
+    enqueueSnackbar(
+      e?.message ?? 'Не удалось сгенерировать интерпретацию',
+      { variant: 'error' },
+    );
+  } finally {
+    setGeneratingInterpretation(false);
+    setSendingReply(false);
+  }
+};
 
   const handleSend = async (forcedText?: string) => {
-    if ((!input.trim() && !forcedText) || !id || !blockId || !artwork) return;
-    const textToSend = (forcedText ?? input).trim();
-    if (!textToSend) return;
+  if ((!input.trim() && !forcedText) || !artDialogId || !blockId || !artwork) return;
+  const textToSend = (forcedText ?? input).trim();
+  if (!textToSend) return;
 
-    setSendingReply(true);
-    setError(null);
-    try {
-      const savedUser = await appendChat({
-        dreamId: id,
-        blockId,
-        role: 'user',
-        content: textToSend,
-      });
-      const userMsg: Message = {
-        id: savedUser.id,
-        text: savedUser.content,
-        sender: 'user',
-        role: 'user',
-        timestamp: toTimestamp(savedUser.createdAt),
-      };
-      setMessages((prev) => [...prev, userMsg]);
-      if (!forcedText) setInput('');
+  setSendingReply(true);
+  setError(null);
 
-      const lastTurns = [...messages, userMsg]
-        .slice(-MAX_TURNS)
-        .map((m) => ({
-          role: m.role ?? (m.sender === 'user' ? 'user' : 'assistant'),
-          content: m.text,
-        }));
-      const blockText = JSON.stringify(artwork, null, 2);
-      const ai = await analyzeDream(
-        blockText,
-        lastTurns,
-        'Ты — ассистент, помогающий осмыслить произведение искусства в контексте сна. Будь внимателен к деталям.',
-        id,
-        blockId,
-        dream?.dreamSummary ?? null,
-        dream?.autoSummary ?? null,
-      );
-      const assistantText =
-        ai?.choices?.[0]?.message?.content || 'Спасибо — продолжим.';
-      const savedAssistant = await appendChat({
-        dreamId: id,
-        blockId,
+  try {
+    // 1. Сохраняем сообщение пользователя на бэке
+    const savedUser = await appendArtChat({
+  dreamId,
+  blockId,
+  artworkId,
+  role: 'user',
+  content: textToSend,
+});
+
+    const userMsg: Message = {
+      id: savedUser.id,
+      text: savedUser.content,
+      sender: 'user',
+      role: 'user',
+      timestamp: toTimestamp(savedUser.createdAt),
+    };
+
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    if (!forcedText) setInput('');
+
+    // 3. Контекст для LLM
+    const lastTurns = updatedMessages
+      .slice(-MAX_TURNS)
+      .map((m) => ({
+        role: m.role ?? (m.sender === 'user' ? 'user' : 'assistant'),
+        content: m.text,
+      }));
+
+    const blockText = JSON.stringify(artwork, null, 2);
+
+    const ai = await analyzeDream(
+  blockText,
+  lastTurns,
+      'Ты — ассистент, помогающий осмыслить произведение искусства в контексте сна. Будь внимателен к деталям.',
+  dreamId,
+  blockId,
+  dream?.dreamSummary ?? null,
+  dream?.autoSummary ?? null,
+);
+
+    const assistantText =
+      ai?.choices?.[0]?.message?.content || 'Спасибо — продолжим.';
+
+    // 4. Сохраняем ответ ассистента
+    const savedAssistant = await appendArtChat({
+  dreamId,
+  blockId,
+  artworkId,
+  role: 'assistant',
+  content: assistantText,
+});
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: savedAssistant.id,
+        text: savedAssistant.content,
+        sender: 'assistant',
         role: 'assistant',
-        content: assistantText,
-      });
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: savedAssistant.id,
-          text: savedAssistant.content,
-          sender: 'assistant',
-          role: 'assistant',
-          timestamp: toTimestamp(savedAssistant.createdAt),
-          meta: savedAssistant.meta ?? null,
-          insightArtworksLiked: Boolean(
-            savedAssistant.meta?.insightArtworksLiked,
-          ),
-        },
-      ]);
-    } catch (e: any) {
-      setError(e?.message || 'Ошибка отправки сообщения');
-    } finally {
-      setSendingReply(false);
-    }
-  };
+        timestamp: toTimestamp(savedAssistant.createdAt),
+        meta: savedAssistant.meta ?? null,
+        insightArtworksLiked: Boolean(
+          savedAssistant.meta?.insightArtworksLiked,
+        ),
+      },
+    ]);
+  } catch (e: any) {
+    setError(e?.message || 'Ошибка отправки сообщения');
+  } finally {
+    setSendingReply(false);
+  }
+};
 
   const handleClear = async () => {
-    if (!id || !blockId) return;
-    setSendingReply(true);
-    setError(null);
-    try {
-      await clearChat(id, blockId);
-      setMessages([]);
-      kickoffDoneRef.current = null;
-      await runKickoff();
-    } catch (e: any) {
-      enqueueSnackbar(e?.message ?? 'Не удалось очистить чат', {
-        variant: 'error',
-      });
-    } finally {
-      setSendingReply(false);
-    }
-  };
+  if (!artDialogId || !blockId) return;
+  setSendingReply(true);
+  setError(null);
+  try {
+    await clearArtChat(dreamId, blockId, artworkId);
+
+    // Просто сбрасываем состояние — и все.
+    setMessages([]);
+    kickoffDoneRef.current = null;
+    kickoffInProgressRef.current = false;
+    // НЕ вызываем getArtChat руками — useEffect сам всё сделает
+  } catch (e: any) {
+    enqueueSnackbar(e?.message ?? 'Не удалось очистить чат', {
+      variant: 'error',
+    });
+  } finally {
+    setSendingReply(false);
+  }
+};
 
   const handleToggleArtworkInsight = useCallback(
-    async (message: Message) => {
-      if (!dream?.id || message.role !== 'assistant') return;
-      const nextLiked = !message.insightArtworksLiked;
+  async (message: Message) => {
+    if (!dream?.id || message.role !== 'assistant') return;
+    const nextLiked = !message.insightArtworksLiked;
 
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === message.id
+          ? {
+              ...m,
+              insightArtworksLiked: nextLiked,
+              meta: m.meta
+                ? { ...m.meta, insightArtworksLiked: nextLiked }
+                : { insightArtworksLiked: nextLiked },
+            }
+          : m,
+      ),
+    );
+
+    try {
+      const updated = await toggleArtworkInsight(
+        dreamId,
+        message.id,
+        nextLiked,
+        blockId,
+        artworkId,
+      );
+      if (updated && updated.id) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === updated.id
+              ? {
+                  ...m,
+                  insightArtworksLiked: Boolean(
+                    updated.meta?.insightArtworksLiked,
+                  ),
+                  meta: updated.meta ?? m.meta ?? null,
+                }
+              : m,
+          ),
+        );
+      }
+    } catch (err: any) {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === message.id
             ? {
                 ...m,
-                insightArtworksLiked: nextLiked,
+                insightArtworksLiked: !nextLiked,
                 meta: m.meta
-                  ? { ...m.meta, insightArtworksLiked: nextLiked }
-                  : { insightArtworksLiked: nextLiked },
+                  ? { ...m.meta, insightArtworksLiked: !nextLiked }
+                  : { insightArtworksLiked: !nextLiked },
               }
             : m,
         ),
       );
-
-      try {
-        const updated = await toggleArtworkInsight(
-          dream.id,
-          message.id,
-          nextLiked,
-          blockId,
-        );
-        if (updated && updated.id) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === updated.id
-                ? {
-                    ...m,
-                    insightArtworksLiked: Boolean(
-                      updated.meta?.insightArtworksLiked,
-                    ),
-                    meta: updated.meta ?? m.meta ?? null,
-                  }
-                : m,
-            ),
-          );
-        }
-      } catch (err: any) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === message.id
-              ? {
-                  ...m,
-                  insightArtworksLiked: !nextLiked,
-                  meta: m.meta
-                    ? { ...m.meta, insightArtworksLiked: !nextLiked }
-                    : { insightArtworksLiked: !nextLiked },
-                }
-              : m,
-          ),
-        );
-        enqueueSnackbar(err?.message ?? 'Не удалось сохранить инсайт', {
-          variant: 'error',
-        });
-      }
-    },
-    [dream?.id, blockId, enqueueSnackbar],
-  );
+      enqueueSnackbar(err?.message ?? 'Не удалось сохранить инсайт', {
+        variant: 'error',
+      });
+    }
+  },
+  [dream?.id, dreamId, artworkId, blockId, enqueueSnackbar], // ✅ dreamId вместо artDialogId
+);
 
   const artworksList = useMemo(
     () =>
@@ -726,13 +911,24 @@ export const ArtworkChat: React.FC = () => {
 
   const goToArtwork = (idx: number) => {
   if (!id) return;
+  const nextArtwork = artworksList[idx];
+
   navigate(`/dreams/${id}/artwork-chat/${idx}`, {
-    replace: true,
+    state: {
+      artwork: nextArtwork,
+      artworkIndex: idx,
+      artworkId: nextArtwork?.artworkId || nextArtwork?.artwork_id || nextArtwork?.id || nextArtwork?.uniqueId,  // ✅ добавили uniqueId
+      origin: 'prev_next_nav',
+    },
   });
 };
 
-  const handleBack = () => {
-  navigate(-1);
+const handleBack = () => {
+  if (!id) {
+    navigate(-1);
+    return;
+  }
+  navigate(`/dreams/${id}/artworks`, { replace: true });
 };
 
   if (loading) {
@@ -856,12 +1052,12 @@ export const ArtworkChat: React.FC = () => {
               }}
             >
               <IconButton
-  onClick={handleBack}
-  sx={{ color: '#fff', mr: 1 }}
-  aria-label="Назад"
->
-  <ArrowBackIosNewIcon />
-</IconButton>
+                onClick={handleBack}
+                sx={{ color: '#fff', mr: 1 }}
+                aria-label="Назад"
+              >
+                <ArrowBackIosNewIcon />
+              </IconButton>
 
               <Box sx={{ minWidth: 0 }}>
                 <Typography
@@ -899,15 +1095,17 @@ export const ArtworkChat: React.FC = () => {
                 ml: 2,
               }}
             >
-              <Tooltip title="Показать итоговое толкование">
-                <IconButton
-                  onClick={() => handleFinalInterpret(false)}
-                  sx={{ color: '#fff' }}
-                  aria-label="Показать итоговое толкование"
-                >
-                  <FeedIcon />
-                </IconButton>
-              </Tooltip>
+              {/* Кнопка итогового толкования временно скрыта
+  <Tooltip title="Показать итоговое толкование">
+    <IconButton
+      onClick={() => handleFinalInterpret(false)}
+      sx={{ color: '#fff' }}
+      aria-label="Показать итоговое толкование"
+    >
+      <FeedIcon />
+    </IconButton>
+  </Tooltip>
+  */}
               <Tooltip title="Очистить чат">
                 <span>
                   <IconButton
@@ -950,260 +1148,261 @@ export const ArtworkChat: React.FC = () => {
         }}
       >
         {/* Блок с описанием произведения и prev/next */}
-        <Collapse in={headerExpanded}>
-          <Paper
-            elevation={0}
-            sx={{
-              mt: 1,
-              p: 1.25,
-              background: 'rgba(255, 255, 255, 0.15)',
-              backdropFilter: 'blur(10px)',
-              border: `1px solid ${glassBorder}`,
-              borderRadius: 2,
-              mb: 2,
-            }}
+<Collapse in={headerExpanded}>
+  <Paper
+    elevation={0}
+    sx={{
+      mt: 1,
+      p: 1.25,
+      background: 'rgba(255, 255, 255, 0.15)',
+      backdropFilter: 'blur(10px)',
+      border: `1px solid ${glassBorder}`,
+      borderRadius: 2,
+      mb: 2,
+    }}
+  >
+    <Typography
+      variant="caption"
+      sx={{ color: 'rgba(255, 255, 255, 0.7)' }}
+    >
+      Описание произведения:
+    </Typography>
+    <Typography
+      variant="body2"
+      sx={{
+        color: '#fff',
+        mt: 0.5,
+        whiteSpace: 'pre-wrap',
+        lineHeight: 1.35,
+      }}
+    >
+      {artwork.desc ?? 'Описание отсутствует.'}
+    </Typography>
+
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: {
+          xs: '1fr',
+          sm: prevArtwork && nextArtwork ? '1fr 1fr' : '1fr',
+        },
+        gap: 1,
+        mt: 1.25,
+      }}
+    >
+      {prevArtwork && (
+        <Card
+          key={`prev-${currentIdx - 1}`}   // 👈 добавлен key
+          elevation={0}
+          sx={{
+            background: 'rgba(255, 255, 255, 0.1)',
+            border: `1px solid ${glassBorder}`,
+            borderRadius: 2,
+            color: '#fff',
+          }}
+        >
+          <CardActionArea
+            onClick={() => goToArtwork(currentIdx - 1)}
           >
-            <Typography
-              variant="caption"
-              sx={{ color: 'rgba(255, 255, 255, 0.7)' }}
-            >
-              Описание произведения:
-            </Typography>
-            <Typography
-              variant="body2"
+            <CardContent
               sx={{
-                color: '#fff',
-                mt: 0.5,
-                whiteSpace: 'pre-wrap',
-                lineHeight: 1.35,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 0.75,
+                py: 0.6,
+                px: 1,
               }}
             >
-              {artwork.desc ?? 'Описание отсутствует.'}
-            </Typography>
+              <Tooltip title="Предыдущее произведение">
+                <ArrowBackIcon
+                  sx={{
+                    opacity: 0.9,
+                    fontSize: 18,
+                    mt: '2px',
+                  }}
+                />
+              </Tooltip>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: '#fff',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                  lineHeight: 1.35,
+                  fontSize: 13,
+                }}
+              >
+                {prevArtwork.title}
+              </Typography>
+            </CardContent>
+          </CardActionArea>
+        </Card>
+      )}
 
-            <Box
+      {nextArtwork && (
+        <Card
+          key={`next-${currentIdx + 1}`}   // 👈 добавлен key
+          elevation={0}
+          sx={{
+            background: 'rgba(255, 255, 255, 0.1)',
+            border: `1px solid ${glassBorder}`,
+            borderRadius: 2,
+            color: '#fff',
+          }}
+        >
+          <CardActionArea
+            onClick={() => goToArtwork(currentIdx + 1)}
+          >
+            <CardContent
               sx={{
-                display: 'grid',
-                gridTemplateColumns: {
-                  xs: '1fr',
-                  sm:
-                    prevArtwork && nextArtwork ? '1fr 1fr' : '1fr',
-                },
-                gap: 1,
-                mt: 1.25,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 0.75,
+                py: 0.6,
+                px: 1,
               }}
             >
-              {prevArtwork && (
-                <Card
-                  elevation={0}
+              <Tooltip title="Следующее произведение">
+                <ArrowForwardIcon
                   sx={{
-                    background: 'rgba(255, 255, 255, 0.1)',
-                    border: `1px solid ${glassBorder}`,
-                    borderRadius: 2,
-                    color: '#fff',
+                    opacity: 0.9,
+                    fontSize: 18,
+                    mt: '2px',
                   }}
-                >
-                  <CardActionArea
-                    onClick={() => goToArtwork(currentIdx - 1)}
-                  >
-                    <CardContent
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 0.75,
-                        py: 0.6,
-                        px: 1,
-                      }}
-                    >
-                      <Tooltip title="Предыдущее произведение">
-                        <ArrowBackIcon
-                          sx={{
-                            opacity: 0.9,
-                            fontSize: 18,
-                            mt: '2px',
-                          }}
-                        />
-                      </Tooltip>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          color: '#fff',
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          lineHeight: 1.35,
-                          fontSize: 13,
-                        }}
-                      >
-                        {prevArtwork.title}
-                      </Typography>
-                    </CardContent>
-                  </CardActionArea>
-                </Card>
-              )}
+                />
+              </Tooltip>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: '#fff',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                  lineHeight: 1.35,
+                  fontSize: 13,
+                }}
+              >
+                {nextArtwork.title}
+              </Typography>
+            </CardContent>
+          </CardActionArea>
+        </Card>
+      )}
+    </Box>
+  </Paper>
+</Collapse>
 
-              {nextArtwork && (
-                <Card
-                  elevation={0}
-                  sx={{
-                    background: 'rgba(255, 255, 255, 0.1)',
-                    border: `1px solid ${glassBorder}`,
-                    borderRadius: 2,
-                    color: '#fff',
-                  }}
-                >
-                  <CardActionArea
-                    onClick={() => goToArtwork(currentIdx + 1)}
-                  >
-                    <CardContent
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 0.75,
-                        py: 0.6,
-                        px: 1,
-                      }}
-                    >
-                      <Tooltip title="Следующее произведение">
-                        <ArrowForwardIcon
-                          sx={{
-                            opacity: 0.9,
-                            fontSize: 18,
-                            mt: '2px',
-                          }}
-                        />
-                      </Tooltip>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          color: '#fff',
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden',
-                          lineHeight: 1.35,
-                          fontSize: 13,
-                        }}
-                      >
-                        {nextArtwork.title}
-                      </Typography>
-                    </CardContent>
-                  </CardActionArea>
-                </Card>
-              )}
-            </Box>
-          </Paper>
-        </Collapse>
+{/* СООБЩЕНИЯ */}
+{messages.length === 0 ? (
+  <Box
+    sx={{
+      textAlign: 'center',
+      mt: 6,
+      color: 'rgba(255,255,255,0.9)',
+    }}
+  >
+    {isKickoffActive ? (
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 1,
+        }}
+        role="status"
+        aria-live="polite"
+      >
+        <Avatar
+          src={assistantAvatarUrl}
+          alt="Assistant"
+          sx={{
+            width: 56,
+            height: 56,
+            border: `1px solid ${glassBorder}`,
+          }}
+        >
+          {!assistantAvatarUrl && <SmartToyIcon />}
+        </Avatar>
 
-        {/* СООБЩЕНИЯ */}
-        {messages.length === 0 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            mt: 1.25,
+            p: 1,
+            borderRadius: 2,
+            background: 'rgba(255,255,255,0.06)',
+            border: `1px solid ${glassBorder}`,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
+          <CircularProgress
+            size={18}
+            sx={{ color: '#fff' }}
+          />
+          <Typography
+            variant="body2"
+            sx={{ color: '#fff', fontSize: 14 }}
+          >
+            Ассистент формулирует первый вопрос…
+          </Typography>
+        </Paper>
+
+        <Typography
+          variant="caption"
+          sx={{
+            mt: 0.5,
+            color: 'rgba(255,255,255,0.75)',
+          }}
+        >
+          Подождите, пожалуйста
+        </Typography>
+      </Box>
+    ) : (
+      <>
+        <SmartToyIcon
+          sx={{ fontSize: 64, mb: 2, opacity: 0.5 }}
+        />
+        <Typography variant="h6" sx={{ color: '#fff' }}>
+          Начинаем диалог…
+        </Typography>
+        <Typography
+          variant="body2"
+          sx={{
+            mt: 1,
+            color: 'rgba(255,255,255,0.8)',
+          }}
+        >
+          Ассистент задаст первый вопрос по произведению
+        </Typography>
+        {messagesLoading && (
           <Box
             sx={{
-              textAlign: 'center',
-              mt: 6,
-              color: 'rgba(255,255,255,0.9)',
+              display: 'flex',
+              justifyContent: 'center',
+              mt: 2,
             }}
           >
-            {isKickoffActive ? (
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 1,
-                }}
-                role="status"
-                aria-live="polite"
-              >
-                <Avatar
-                  src={assistantAvatarUrl}
-                  alt="Assistant"
-                  sx={{
-                    width: 56,
-                    height: 56,
-                    border: `1px solid ${glassBorder}`,
-                  }}
-                >
-                  {!assistantAvatarUrl && <SmartToyIcon />}
-                </Avatar>
-
-                <Paper
-                  elevation={0}
-                  sx={{
-                    mt: 1.25,
-                    p: 1,
-                    borderRadius: 2,
-                    background: 'rgba(255,255,255,0.06)',
-                    border: `1px solid ${glassBorder}`,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 1,
-                  }}
-                >
-                  <CircularProgress
-                    size={18}
-                    sx={{ color: '#fff' }}
-                  />
-                  <Typography
-                    variant="body2"
-                    sx={{ color: '#fff', fontSize: 14 }}
-                  >
-                    Ассистент формулирует первый вопрос…
-                  </Typography>
-                </Paper>
-
-                <Typography
-                  variant="caption"
-                  sx={{
-                    mt: 0.5,
-                    color: 'rgba(255,255,255,0.75)',
-                  }}
-                >
-                  Подождите, пожалуйста
-                </Typography>
-              </Box>
-            ) : (
-              <>
-                <SmartToyIcon
-                  sx={{ fontSize: 64, mb: 2, opacity: 0.5 }}
-                />
-                <Typography variant="h6" sx={{ color: '#fff' }}>
-                  Начинаем диалог…
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    mt: 1,
-                    color: 'rgba(255,255,255,0.8)',
-                  }}
-                >
-                  Ассистент задаст первый вопрос по произведению
-                </Typography>
-                {messagesLoading && (
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      mt: 2,
-                    }}
-                  >
-                    <CircularProgress
-                      size={20}
-                      sx={{ color: '#fff' }}
-                    />
-                  </Box>
-                )}
-              </>
-            )}
+            <CircularProgress
+              size={20}
+              sx={{ color: '#fff' }}
+            />
           </Box>
-        ) : (
-          messages.map((msg) => {
-            const isInterpretation =
-              msg.sender === 'assistant' &&
-              msg.meta?.kind === 'art_interpretation';
-            const isAssistant = msg.role === 'assistant';
-            const isHighlighted = highlightedMessageId === msg.id;
+        )}
+      </>
+    )}
+  </Box>
+) : (
+  messages.map((msg) => {
+    const isInterpretation =
+      msg.sender === 'assistant' &&
+      msg.meta?.kind === 'art_interpretation';
+    const isAssistant = msg.role === 'assistant';
+    const isHighlighted = highlightedMessageId === msg.id;
 
             return (
               <Box

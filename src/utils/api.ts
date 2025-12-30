@@ -4,11 +4,16 @@ const API_URL = import.meta.env.VITE_API_URL as string;
 // === ТИПЫ ===
 
 export interface SimilarArtwork {
+  artworkId: string;        // ✅ глобальный ID из таблицы artworks
   title: string;
   author: string;
   desc: string;
-  value?: string; // url картинки, если есть
-  type?: string;  // тип блока
+  value?: string;           // URL картинки
+  type?: string;
+  imageUrl?: string;        // ✅ альтернативное название для value
+  rank?: number;            // ✅ позиция в списке похожих (из dream_similar_artworks)
+  score?: number;           // ✅ скор похожести (опционально)
+  uniqueId?: string;
 }
 
 export type FindSimilarArtworksResponse =
@@ -342,7 +347,8 @@ export const analyzeDream = (
   dreamId?: string,
   blockId?: string,
   dreamSummary?: string | null,
-  autoSummary?: string | null
+  autoSummary?: string | null,
+  artworkId?: string | null  // 👈 добавили
 ) =>
   request<any>('/analyze', {
     method: 'POST',
@@ -354,11 +360,13 @@ export const analyzeDream = (
       blockId,
       dreamSummary,
       autoSummary,
+      artworkId: artworkId ?? null,  // 👈 пробросили
     }),
   }, true);
 
 export const findSimilarArtworks = (
   dreamText: string,
+  dreamId: string,                      // ✅ обязательный параметр
   globalFinalInterpretation?: string,
   blockInterpretations?: string
 ) =>
@@ -366,6 +374,7 @@ export const findSimilarArtworks = (
     method: 'POST',
     body: JSON.stringify({
       dreamText,
+      dreamId,                           // ✅ передаём dreamId
       globalFinalInterpretation,
       blockInterpretations,
     }),
@@ -479,19 +488,26 @@ export const getDreamArtworksInsights = (dreamId: string) =>
   getDreamInsights(dreamId, { metaKey: 'insightArtworksLiked' });
 
 export const toggleArtworkInsight = (
-  dreamId: string,
+  artDialogId: string,
   messageId: string,
   liked: boolean,
-  blockId?: string
+  artworkId?: string,  // ✅ опционально
+  blockId: string = 'main'
 ) =>
-  request<any>(
-    `/dreams/${encodeURIComponent(dreamId)}/messages/${encodeURIComponent(messageId)}/artwork_like`,
+  request<{ id: string; meta?: any }>(
+    '/toggle_artwork_insight',
     {
-      method: 'PUT',
-      body: JSON.stringify({ liked, blockId }),
+      method: 'POST',
+      body: JSON.stringify({
+        artDialogId,
+        messageId,
+        liked,
+        ...(artworkId && { artworkId }),
+        blockId,
+      }),
     },
     true
-  ).then(mapChatMessage);
+  );
 
 // === MOOD API ===
 
@@ -644,33 +660,36 @@ export const analyzeDailyConvo = (
     }),
   }, true);
 
+/**
+ * POST /interpret_block_daily_convo_context - интерпретация блока daily с контекстом
+ */
 export const interpretBlockDailyConvo = (
   notesText: string,
-  dailyConvoId?: string,
-  blockType?: 'dialog' | 'art', // Добавлен blockType
-  autoSummary?: string | null,
-  context?: string | null
+  dailyConvoId: string,
+  blockId: string = 'main'
 ) =>
-  request<{ interpretation: string }>(
-    '/interpret_block_daily_convo',
+  request<{ interpretation: string; isBlockInterpretation?: boolean }>(
+    '/interpret_block_daily_convo_context',
     {
       method: 'POST',
-      body: JSON.stringify({ notesText, dailyConvoId, blockType, autoSummary, context }),
+      body: JSON.stringify({ notesText, dailyConvoId, blockId }),
     },
     true
   );
 
+/**
+ * POST /interpret_final_daily_convo - итоговое толкование daily с контекстом
+ */
 export const interpretFinalDailyConvo = (
   notesText: string,
-  dailyConvoId?: string,
-  autoSummary?: string | null,
-  context?: string | null
+  dailyConvoId: string,
+  blockId: string = 'main'
 ) =>
   request<{ interpretation: string }>(
     '/interpret_final_daily_convo',
     {
       method: 'POST',
-      body: JSON.stringify({ notesText, dailyConvoId, autoSummary, context }),
+      body: JSON.stringify({ notesText, dailyConvoId, blockId }),
     },
     true
   );
@@ -721,6 +740,83 @@ export const toggleDailyConvoArtworkInsight = (
     },
     true
   ).then(mapChatMessage);
+
+  // === ART CHAT API ===
+
+export const getArtChat = (
+  dreamId: string,        // ✅ чистый UUID сна
+  blockId: string,
+  artworkId?: string
+) =>
+  request<{ messages: any[] }>(
+    `/art_chat?dreamId=${encodeURIComponent(dreamId)}&blockId=${encodeURIComponent(blockId)}${artworkId ? `&artworkId=${encodeURIComponent(artworkId)}` : ''}`,
+    { method: 'GET' },
+    true
+  );
+
+export const appendArtChat = ({
+  dreamId,
+  blockId,
+  artworkId,
+  role,
+  content,
+}: {
+  dreamId: string;        // ✅ чистый UUID сна
+  blockId: string;
+  artworkId?: string;
+  role: 'user' | 'assistant';
+  content: string;
+}) =>
+  request<{ id: string; content: string; createdAt: number; meta?: any }>(
+    '/art_chat',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        dreamId,
+        blockId,
+        ...(artworkId && { artworkId }),
+        role,
+        content,
+      }),
+    },
+    true
+  );
+
+export const clearArtChat = (
+  dreamId: string,
+  blockId: string,
+  artworkId?: string
+) =>
+  request<{ success: boolean }>(
+    '/art_chat',
+    {
+      method: 'DELETE',
+      body: JSON.stringify({
+        dreamId,
+        blockId,
+        ...(artworkId && { artworkId }),
+      }),
+    },
+    true
+  );
+
+export const interpretBlockArt = (
+  dreamId: string,
+  blockId: string,
+  artworkId?: string
+) =>
+  request<{ interpretation: string; isBlockInterpretation?: boolean }>(
+    '/interpret_block_art',
+    {
+      method: 'POST',
+      body: JSON.stringify({ 
+        dreamId,
+        blockId,
+        ...(artworkId && { artworkId }),
+      }),
+    },
+    true
+  );
 
   // ===== GOALS API =====
 
@@ -943,3 +1039,5 @@ export const postSubscriptionModalOpen = (body: { choice_id?: string | null } = 
 export const getSubscriptionChoices = (limit = 50) =>
   request<{ choices: any[] }>(`/subscription/choices?limit=${encodeURIComponent(String(limit))}`, {}, true)
     .then(res => res.choices || []);
+
+    
