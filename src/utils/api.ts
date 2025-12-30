@@ -1041,3 +1041,16 @@ export const getSubscriptionChoices = (limit = 50) =>
     .then(res => res.choices || []);
 
     
+    // === ROLLING SUMMARY ===
+
+export interface RollingSummaryResponse {
+  summary: string;
+  lastMessageCount: number;
+}
+
+export const getRollingSummary = (dreamId: string, blockId: string, artworkId?: string) =>
+  request<RollingSummaryResponse>(
+    `/api/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&blockId=${encodeURIComponent(blockId)}${artworkId ? `&artworkId=${encodeURIComponent(artworkId)}` : ''}`,
+    {},
+    true
+  );

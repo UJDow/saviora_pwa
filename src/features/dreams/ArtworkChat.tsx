@@ -116,6 +116,7 @@ export const ArtworkChat: React.FC = () => {
   const [dream, setDream] = useState<any | null>(null);
   const [artwork, setArtwork] = useState<any | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [rollingSummary, setRollingSummary] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -216,6 +217,35 @@ const kickoffKey = useMemo(
   [dreamId, artworkId]
 );
 
+// ✅ Загрузка rolling summary для текущего artwork
+useEffect(() => {
+  let isCancelled = false;
+
+  (async () => {
+    if (!dreamId || !artworkId) return;
+
+    try {
+      const url = `/api/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&artworkId=${encodeURIComponent(artworkId)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+      const data = await resp.json();
+
+      if (isCancelled) return;
+
+      console.log(`[SUMMARY LOAD] for artworkId=${artworkId}`, data.summary);
+      setRollingSummary(data.summary ?? null);
+    } catch (e: any) {
+      if (!isCancelled) {
+        console.error('[SUMMARY LOAD] Ошибка загрузки summary:', e);
+      }
+    }
+  })();
+
+  return () => {
+    isCancelled = true;
+  };
+}, [dreamId, artworkId]);
+
 // сбрасываем состояние kickoff при смене произведения / artworkId
 useEffect(() => {
   kickoffDoneRef.current = null;
@@ -293,14 +323,26 @@ useEffect(() => {
       console.log("📦 [DREAM LOAD] state", { stateArtwork: !!stateArtwork, stateIdx, currentIdx });
 
       if (
-        stateArtwork &&
-        (stateIdx === undefined ||
-          stateIdx === currentIdx ||
-          Number(stateIdx) === currentIdx)
-      ) {
-        console.log("📦 [DREAM LOAD] setting artwork from state");
-        setArtwork(stateArtwork);
-      }
+  stateArtwork &&
+  (stateIdx === undefined ||
+    stateIdx === currentIdx ||
+    Number(stateIdx) === currentIdx)
+) {
+  console.log("📦 [DREAM LOAD] setting artwork from state");
+
+  // ✅ Убедимся, что artworkId — это UUID
+  const resolvedArtworkId = 
+    stateArtwork.artworkId ?? 
+    stateArtwork.artwork_id ?? 
+    stateArtwork.id ?? 
+    stateArtwork._id ?? 
+    stateArtwork.uniqueId;
+
+  setArtwork({
+    ...stateArtwork,
+    artworkId: resolvedArtworkId,
+  });
+}
 
       // 2. Затем уже грузим сон и, если нужно, доуточняем artwork из similarArtworks
       const d = await getDream(id);
@@ -312,22 +354,34 @@ useEffect(() => {
       setDream(d);
 
       if (
-        !stateArtwork && // если из state не поставили,
-        d?.similarArtworks &&
-        Array.isArray(d.similarArtworks)
-      ) {
-        const candidate = d.similarArtworks[currentIdx];
-        console.log("🖼️ [ARTWORK CANDIDATE]", { 
-          currentIdx, 
-          candidate,
-          keys: candidate ? Object.keys(candidate) : [],
-          artworkId: candidate?.artworkId ?? candidate?.artwork_id ?? candidate?.id ?? candidate?.uniqueId
-        });
-        setArtwork(candidate ?? null);
-      } else if (!stateArtwork) {
-        console.log("📦 [DREAM LOAD] no artwork available");
-        setArtwork(null);
-      }
+  !stateArtwork && // если из state не поставили,
+  d?.similarArtworks &&
+  Array.isArray(d.similarArtworks)
+) {
+  const candidate = d.similarArtworks[currentIdx];
+  console.log("🖼️ [ARTWORK CANDIDATE]", { 
+    currentIdx, 
+    candidate,
+    keys: candidate ? Object.keys(candidate) : [],
+  });
+
+  // ✅ Исправляем artworkId на реальный UUID
+  if (candidate) {
+    const resolvedArtworkId = 
+      candidate.artworkId ?? 
+      candidate.artwork_id ?? 
+      candidate.id ?? 
+      candidate._id ?? 
+      candidate.uniqueId;
+    
+    setArtwork({
+      ...candidate,
+      artworkId: resolvedArtworkId,
+    });
+  } else {
+    setArtwork(null);
+  }
+}
 
       if (d?.globalFinalInterpretation) {
         setFinalInterpretationText(d.globalFinalInterpretation);
@@ -393,6 +447,23 @@ useEffect(() => {
     setError(null);
 
     try {
+      // ✅ ЗАГРУЖАЕМ ROLLING SUMMARY
+      try {
+        const summaryUrl = `/api/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&blockId=${encodeURIComponent(blockId)}&artworkId=${encodeURIComponent(artworkId)}`;
+        const summaryResp = await fetch(summaryUrl);
+        if (summaryResp.ok) {
+          const summaryData = await summaryResp.json();
+          if (!isCancelled) {
+            setRollingSummary(summaryData.summary ?? null);
+          }
+        } else if (summaryResp.status !== 404) {
+          console.warn('[SUMMARY LOAD] Unexpected status:', summaryResp.status);
+        }
+      } catch (e) {
+        console.warn('[SUMMARY LOAD] Non-critical error:', e);
+      }
+
+      // ✅ ЗАГРУЖАЕМ СООБЩЕНИЯ
       const resp = await getArtChat(dreamId, blockId, artworkId);
       const rawMsgs = resp?.messages ?? [];
 
@@ -442,7 +513,7 @@ useEffect(() => {
           blockId,
           dream?.dreamSummary ?? null,
           dream?.autoSummary ?? null,
-          artworkId, // ✅ передаём artworkId
+          artworkId,
         );
 
         const assistantText =
@@ -456,6 +527,9 @@ useEffect(() => {
           role: 'assistant',
           content: assistantText,
         });
+
+        // ✅ Логируем результат
+        console.log('[kickoff] Kickoff message saved:', saved);
 
         // ✅ снова проверяем актуальность
         if (latestChatKeyRef.current !== chatKey) {
@@ -1178,6 +1252,14 @@ const handleBack = () => {
     >
       {artwork.desc ?? 'Описание отсутствует.'}
     </Typography>
+
+    {rollingSummary && (
+  <Box sx={{ mt: 2, p: 1.5, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2 }}>
+    <Typography variant="body2" sx={{ color: '#fff', fontStyle: 'italic' }}>
+      {rollingSummary}
+    </Typography>
+  </Box>
+)}
 
     <Box
       sx={{

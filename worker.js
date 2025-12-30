@@ -3303,6 +3303,36 @@ if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'd
   }
 }
 
+// === ДОБАВИТЬ В worker.js ===
+// Найти место, где обрабатываются другие маршруты (например, if (url.pathname === '/dreams'))
+
+// 👇 ВСТАВИТЬ СЮДА:
+
+if (url.pathname === '/api/rolling_summary' && method === 'GET') {
+  const user = await getUserFromRequest(request, env);
+  if (!user) return unauthorizedResponse();
+
+  const { searchParams } = new URL(request.url);
+  const dreamId = searchParams.get('dreamId');
+  const blockId = searchParams.get('blockId');
+  const artworkId = searchParams.get('artworkId') || null;
+
+  if (!dreamId || !blockId) {
+    return jsonResponse({ error: 'dreamId and blockId are required' }, 400);
+  }
+
+  try {
+    const summaryData = await getRollingSummary(env, user, dreamId, blockId, artworkId);
+    if (!summaryData) {
+      return jsonResponse({ error: 'Summary not found' }, 404);
+    }
+    return jsonResponse(summaryData);
+  } catch (e) {
+    console.error('[ROLLING SUMMARY API ERROR]', e);
+    return jsonResponse({ error: 'Internal server error' }, 500);
+  }
+}
+
 // --- CHAT: get history ---
 if (url.pathname === '/chat' && request.method === 'GET') {
   const userEmail = await getUserEmail(request);
@@ -4248,7 +4278,8 @@ ${contextText}
 
         const works = Array.isArray(parsed.works) ? parsed.works : [];
 // После генерации similarArtworks:
-const similarArtworks = works.slice(0, 5).map(w => ({
+// После генерации similarArtworks:
+const similarArtworksRaw = works.slice(0, 5).map(w => ({
   title: w.title || '',
   author: w.author || '',
   desc: w.desc || '',
@@ -4256,8 +4287,9 @@ const similarArtworks = works.slice(0, 5).map(w => ({
   type: w.type || 'default'
 }));
 
-// 🆕 СОХРАНЯЕМ В НОВЫЕ ТАБЛИЦЫ
 const { dreamId } = body;
+
+let similarArtworks = [];
 
 if (dreamId) {
   const d1 = env.DB;
@@ -4267,8 +4299,8 @@ if (dreamId) {
     `DELETE FROM dream_similar_artworks WHERE dream_id = ?`
   ).bind(dreamId).run();
 
-  for (let i = 0; i < similarArtworks.length; i++) {
-    const art = similarArtworks[i];
+  for (let i = 0; i < similarArtworksRaw.length; i++) {
+    const art = similarArtworksRaw[i];
 
     // 1) Ищем или создаём artwork
     let artworkRow = await d1.prepare(
@@ -4291,6 +4323,12 @@ if (dreamId) {
       `INSERT INTO dream_similar_artworks (id, dream_id, artwork_id, position, score)
        VALUES (?, ?, ?, ?, ?)`
     ).bind(crypto.randomUUID(), dreamId, artworkId, i, null).run();
+
+    // ✅ Добавляем artworkId в объект для клиента
+    similarArtworks.push({
+      ...art,
+      artworkId, // ✅ вот это важно!
+    });
   }
 
   // 3) Опционально: обновляем dreams.similarArtworks для кэша

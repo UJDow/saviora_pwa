@@ -288,89 +288,105 @@ export function SimilarArtworksScreen(): React.ReactElement {
   const moodGradient = (color: string) => `linear-gradient(135deg, ${color} 0%, rgba(18,22,30,0.06) 100%)`;
 
   const fetchArtworks = async (force = false) => {
-    setLoading(true);
-    setError(null);
-    setSaved(false);
-    try {
-      if (!id) {
-        setError('ID сна не указан');
-        setLoading(false);
-        return;
-      }
-
-      const d = await getDream(id);
-      setDream(d);
-
-      if (d.date) {
-        const dateYmd = new Date(d.date).toISOString().split('T')[0];
-        try {
-          const moodId = await getMoodForDate(dateYmd);
-          setDayMood(moodId);
-          setSelectedMood(moodId);
-        } catch (err) {
-          console.warn('Failed to load mood for date:', err);
-          setDayMood(null);
-          setSelectedMood(null);
-        }
-      }
-
-      if (!force && d.similarArtworks && d.similarArtworks.length > 0) {
-        const arts = (d.similarArtworks as SimilarArtwork[]).map((art, i) =>
-          attachUniqueId(art, i),
-        );
-        setArtworks(arts);
-        setSaved(true);
-      } else {
-        let blockInterpretations = '';
-        if (Array.isArray(d.blocks)) {
-          blockInterpretations = d.blocks
-            .filter((b: any) => b?.meta?.kind === 'block_interpretation')
-            .map((b: any) => b.interpretation || b.text || '')
-            .join('\n\n');
-        }
-
-        const res = await findSimilarArtworks(
-          d.dreamText,
-          d.id,
-          d.globalFinalInterpretation ?? undefined,
-          blockInterpretations
-        );
-
-        if ('error' in res) {
-          setError(
-            res.error === 'unauthorized'
-              ? 'Требуется авторизация для поиска схожих произведений.'
-              : res.error === 'Trial expired'
-              ? 'Пробный период завершён. Продлите подписку для доступа к поиску.'
-              : res.message || 'Ошибка поиска'
-          );
-          setArtworks([]);
-        } else {
-          const withId = (res.similarArtworks || []).map((art, i) => attachUniqueId(art, i));
-          setArtworks(withId);
-          await updateDream(
-            d.id,
-            d.dreamText,
-            d.title,
-            d.blocks,
-            d.globalFinalInterpretation,
-            d.dreamSummary,
-            withId,
-            d.category,
-            d.date
-          );
-          setSaved(true);
-        }
-      }
-
-      await loadInsightsForDream(id);
-    } catch (e: any) {
-      setError(e?.message || 'Ошибка поиска');
-      setArtworks([]);
-    } finally {
+  setLoading(true);
+  setError(null);
+  setSaved(false);
+  try {
+    if (!id) {
+      setError('ID сна не указан');
       setLoading(false);
+      return;
     }
-  };
+
+    const d = await getDream(id);
+    setDream(d);
+
+    if (d.date) {
+      const dateYmd = new Date(d.date).toISOString().split('T')[0];
+      try {
+        const moodId = await getMoodForDate(dateYmd);
+        setDayMood(moodId);
+        setSelectedMood(moodId);
+      } catch (err) {
+        console.warn('Failed to load mood for date:', err);
+        setDayMood(null);
+        setSelectedMood(null);
+      }
+    }
+
+    if (!force && d.similarArtworks && d.similarArtworks.length > 0) {
+      // ✅ Загружаем существующие арты и сортируем по position
+      const arts = (d.similarArtworks as SimilarArtwork[]).map((art, i) =>
+        attachUniqueId(art, i),
+      );
+
+      const sortedArts = arts.slice().sort((a, b) => {
+        const posA = (a as any).position ?? 0;
+        const posB = (b as any).position ?? 0;
+        return posA - posB;
+      });
+
+      setArtworks(sortedArts);
+      setSaved(true);
+    } else {
+      let blockInterpretations = '';
+      if (Array.isArray(d.blocks)) {
+        blockInterpretations = d.blocks
+          .filter((b: any) => b?.meta?.kind === 'block_interpretation')
+          .map((b: any) => b.interpretation || b.text || '')
+          .join('\n\n');
+      }
+
+      const res = await findSimilarArtworks(
+        d.dreamText,
+        d.id,
+        d.globalFinalInterpretation ?? undefined,
+        blockInterpretations
+      );
+
+      if ('error' in res) {
+        setError(
+          res.error === 'unauthorized'
+            ? 'Требуется авторизация для поиска схожих произведений.'
+            : res.error === 'Trial expired'
+            ? 'Пробный период завершён. Продлите подписку для доступа к поиску.'
+            : res.message || 'Ошибка поиска'
+        );
+        setArtworks([]);
+      } else {
+        // ✅ Сортируем новые арты по position
+        const withId = (res.similarArtworks || []).map((art, i) => attachUniqueId(art, i));
+
+        const sortedNewArts = withId.slice().sort((a, b) => {
+          const posA = (a as any).position ?? 0;
+          const posB = (b as any).position ?? 0;
+          return posA - posB;
+        });
+
+        setArtworks(sortedNewArts);
+        await updateDream(
+          d.id,
+          d.dreamText,
+          d.title,
+          d.blocks,
+          d.globalFinalInterpretation,
+          d.dreamSummary,
+          sortedNewArts, // ✅ Передаём отсортированный массив
+          d.category,
+          d.date
+        );
+        setSaved(true);
+      }
+    }
+
+    await loadInsightsForDream(id);
+  } catch (e: any) {
+    setError(e?.message || 'Ошибка поиска');
+    setArtworks([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const loadInsightsForDream = async (dreamId: string) => {
     setInsightsLoading(true);
