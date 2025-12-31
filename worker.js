@@ -1688,6 +1688,7 @@ async function getGoalsTimeline(env, userEmail, range) {
   return rows;
 }
 
+
 // ===== end Personal goals helpers =====
 
 export default {
@@ -3302,37 +3303,6 @@ if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'd
     return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   }
 }
-
-// === ДОБАВИТЬ В worker.js ===
-// Найти место, где обрабатываются другие маршруты (например, if (url.pathname === '/dreams'))
-
-// 👇 ВСТАВИТЬ СЮДА:
-
-if (url.pathname === '/api/rolling_summary' && method === 'GET') {
-  const user = await getUserFromRequest(request, env);
-  if (!user) return unauthorizedResponse();
-
-  const { searchParams } = new URL(request.url);
-  const dreamId = searchParams.get('dreamId');
-  const blockId = searchParams.get('blockId');
-  const artworkId = searchParams.get('artworkId') || null;
-
-  if (!dreamId || !blockId) {
-    return jsonResponse({ error: 'dreamId and blockId are required' }, 400);
-  }
-
-  try {
-    const summaryData = await getRollingSummary(env, user, dreamId, blockId, artworkId);
-    if (!summaryData) {
-      return jsonResponse({ error: 'Summary not found' }, 404);
-    }
-    return jsonResponse(summaryData);
-  } catch (e) {
-    console.error('[ROLLING SUMMARY API ERROR]', e);
-    return jsonResponse({ error: 'Internal server error' }, 500);
-  }
-}
-
 // --- CHAT: get history ---
 if (url.pathname === '/chat' && request.method === 'GET') {
   const userEmail = await getUserEmail(request);
@@ -6339,6 +6309,53 @@ if (url.pathname === '/set-current-goal' && request.method === 'POST') {
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+}
+
+// GET rolling_summary
+if (url.pathname === '/rolling_summary' && request.method === 'GET') {
+    const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  const dreamId = url.searchParams.get('dreamId');
+  const blockId = url.searchParams.get('blockId');
+  const artworkId = url.searchParams.get('artworkId') || null;
+
+  if (!dreamId || !blockId) {
+    return new Response(JSON.stringify({ error: 'dreamId and blockId required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  try {
+    const summaryData = await getRollingSummary(env, userEmail, dreamId, blockId, artworkId);
+    
+    if (!summaryData) {
+      return new Response(JSON.stringify({ summary: null, lastMessageCount: 0 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      summary: summaryData.summary,
+      lastMessageCount: summaryData.lastMessageCount
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  } catch (e) {
+    console.error('[GET /api/rolling_summary] error:', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
     });
   }
 }

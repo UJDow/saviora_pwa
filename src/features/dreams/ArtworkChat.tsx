@@ -52,6 +52,8 @@ import {
   toggleArtworkInsight,
   interpretFinal,
   interpretBlockArt,
+  API_URL,
+  getRollingSummary,
 } from '../../utils/api';
 
 import { GlassInputBox } from '../profile/GlassInputBox';
@@ -209,42 +211,6 @@ const dreamId = id ?? '';
   console.log("🔑 [ARTWORK_ID] undefined (no artwork)");
   return undefined;
 }, [artworkIdFromState, artwork]);
-
-  // ✅ ключ для kickoff, чтобы не гонять его лишний раз
-  // Вместо artDialogId/blockId в ключе
-const kickoffKey = useMemo(
-  () => (dreamId && artworkId ? `${dreamId}::${artworkId}` : ''),
-  [dreamId, artworkId]
-);
-
-// ✅ Загрузка rolling summary для текущего artwork
-useEffect(() => {
-  let isCancelled = false;
-
-  (async () => {
-    if (!dreamId || !artworkId) return;
-
-    try {
-      const url = `/api/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&artworkId=${encodeURIComponent(artworkId)}`;
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
-      const data = await resp.json();
-
-      if (isCancelled) return;
-
-      console.log(`[SUMMARY LOAD] for artworkId=${artworkId}`, data.summary);
-      setRollingSummary(data.summary ?? null);
-    } catch (e: any) {
-      if (!isCancelled) {
-        console.error('[SUMMARY LOAD] Ошибка загрузки summary:', e);
-      }
-    }
-  })();
-
-  return () => {
-    isCancelled = true;
-  };
-}, [dreamId, artworkId]);
 
 // сбрасываем состояние kickoff при смене произведения / artworkId
 useEffect(() => {
@@ -448,20 +414,15 @@ useEffect(() => {
 
     try {
       // ✅ ЗАГРУЖАЕМ ROLLING SUMMARY
-      try {
-        const summaryUrl = `/api/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&blockId=${encodeURIComponent(blockId)}&artworkId=${encodeURIComponent(artworkId)}`;
-        const summaryResp = await fetch(summaryUrl);
-        if (summaryResp.ok) {
-          const summaryData = await summaryResp.json();
-          if (!isCancelled) {
-            setRollingSummary(summaryData.summary ?? null);
-          }
-        } else if (summaryResp.status !== 404) {
-          console.warn('[SUMMARY LOAD] Unexpected status:', summaryResp.status);
-        }
-      } catch (e) {
-        console.warn('[SUMMARY LOAD] Non-critical error:', e);
-      }
+// ✅ ЗАГРУЖАЕМ ROLLING SUMMARY
+try {
+  const summaryData = await getRollingSummary(dreamId, blockId, artworkId);
+  if (!isCancelled && summaryData) {
+    setRollingSummary(summaryData.summary ?? null);
+  }
+} catch (e) {
+  console.warn('[SUMMARY LOAD] Non-critical error:', e);
+}
 
       // ✅ ЗАГРУЖАЕМ СООБЩЕНИЯ
       const resp = await getArtChat(dreamId, blockId, artworkId);

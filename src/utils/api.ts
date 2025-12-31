@@ -1,5 +1,5 @@
 // src/utils/api.ts
-const API_URL = import.meta.env.VITE_API_URL as string;
+export const API_URL = import.meta.env.VITE_API_URL as string;
 
 // === ТИПЫ ===
 
@@ -1050,7 +1050,7 @@ export interface RollingSummaryResponse {
 
 export const getRollingSummary = (dreamId: string, blockId: string, artworkId?: string) =>
   request<RollingSummaryResponse>(
-    `/api/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&blockId=${encodeURIComponent(blockId)}${artworkId ? `&artworkId=${encodeURIComponent(artworkId)}` : ''}`,
+    `/rolling_summary?dreamId=${encodeURIComponent(dreamId)}&blockId=${encodeURIComponent(blockId)}${artworkId ? `&artworkId=${encodeURIComponent(artworkId)}` : ''}`,
     {},
     true
   );
