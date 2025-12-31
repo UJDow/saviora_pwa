@@ -1460,195 +1460,184 @@ const handleBack = () => {
     const isHighlighted = highlightedMessageId === msg.id;
 
             return (
+  <Box
+    key={msg.id}
+    ref={(el: HTMLDivElement | null) => {
+      messageRefs.current[msg.id] = el;
+    }}
+    sx={{
+      display: 'flex',
+      justifyContent:
+        msg.sender === 'user' ? 'flex-end' : 'flex-start',
+      mb: 2,
+      animation: 'fadeIn 0.25s ease-in',
+      '@keyframes fadeIn': {
+        from: {
+          opacity: 0,
+          transform: 'translateY(8px)',
+        },
+        to: {
+          opacity: 1,
+          transform: 'translateY(0)',
+        },
+      },
+    }}
+  >
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 1,
+        maxWidth: '75%',
+        flexDirection:
+          msg.sender === 'user' ? 'row-reverse' : 'row',
+      }}
+    >
+      {msg.sender === 'user' ? (
+        <Avatar
+          src={userAvatarSrc}
+          sx={{
+            width: 36,
+            height: 36,
+            bgcolor: userAvatarSrc
+              ? undefined
+              : userAvatarBgColor,
+            color: '#fff',
+            boxShadow: '0 4px 16px rgba(24,32,80,0.35)',
+            border: `1px solid ${glassBorder}`,
+          }}
+        >
+          {!userAvatarSrc && UserAvatarIcon && (
+            <UserAvatarIcon sx={{ fontSize: 20 }} />
+          )}
+        </Avatar>
+      ) : (
+        renderAssistantAvatar(
+          isInterpretation ? 'interpretation' : 'default',
+        )
+      )}
+
+      <Box
+        sx={{
+          position: 'relative',
+        }}
+        onDoubleClick={() => {
+          if (isAssistant) handleToggleArtworkInsight(msg);
+        }}
+      >
+        <Paper
+          elevation={0}
+          sx={{
+            p: 1.25,
+            borderRadius: 2,
+            background:
+              msg.sender === 'user'
+                ? accentColor
+                : isInterpretation
+                ? 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(139,92,246,0.08))'
+                : 'rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(8px)',
+            border: isInterpretation
+              ? '1px solid rgba(139,92,246,0.35)'
+              : `1px solid ${glassBorder}`,
+            color: '#fff',
+            boxShadow: isHighlighted
+              ? '0 0 14px rgba(255,255,255,0.35)'
+              : 'none',
+            outline: isHighlighted
+              ? '2px solid rgba(255,255,255,0.85)'
+              : 'none',
+            transition: 'box-shadow 0.2s, outline 0.2s',
+            cursor: isAssistant ? 'pointer' : 'default',
+          }}
+        >
+          {isInterpretation && (
+            <Box
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.5,
+                mb: 0.75,
+                px: 1,
+                py: 0.25,
+                borderRadius: 1,
+                background: 'rgba(139,92,246,0.22)',
+                border: '1px solid rgba(139,92,246,0.35)',
+              }}
+            >
               <Box
-                key={msg.id}
-                ref={(el: HTMLDivElement | null) => {
-                  messageRefs.current[msg.id] = el;
-                }}
                 sx={{
-                  display: 'flex',
-                  justifyContent:
-                    msg.sender === 'user'
-                      ? 'flex-end'
-                      : 'flex-start',
-                  mb: 2,
-                  animation: 'fadeIn 0.25s ease-in',
-                  '@keyframes fadeIn': {
-                    from: {
-                      opacity: 0,
-                      transform: 'translateY(8px)',
-                    },
-                    to: {
-                      opacity: 1,
-                      transform: 'translateY(0)',
-                    },
-                  },
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'rgba(139,92,246,0.9)',
+                  boxShadow: '0 0 8px rgba(139,92,246,0.6)',
+                }}
+              />
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 600,
+                  color: 'rgba(255,255,255,0.95)',
+                  textTransform: 'uppercase',
+                  fontSize: '0.7rem',
                 }}
               >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 1,
-                    maxWidth: '75%',
-                    flexDirection:
-                      msg.sender === 'user' ? 'row-reverse' : 'row',
-                  }}
-                >
-                  {msg.sender === 'user' ? (
-                    <Avatar
-                      src={userAvatarSrc}
-                      sx={{
-                        width: 36,
-                        height: 36,
-                        bgcolor: userAvatarSrc
-                          ? undefined
-                          : userAvatarBgColor,
-                        color: '#fff',
-                        boxShadow:
-                          '0 4px 16px rgba(24,32,80,0.35)',
-                        border: `1px solid ${glassBorder}`,
-                      }}
-                    >
-                      {!userAvatarSrc && UserAvatarIcon && (
-                        <UserAvatarIcon sx={{ fontSize: 20 }} />
-                      )}
-                    </Avatar>
-                  ) : (
-                    renderAssistantAvatar(
-                      isInterpretation
-                        ? 'interpretation'
-                        : 'default',
-                    )
-                  )}
+                Толкование произведения
+              </Typography>
+            </Box>
+          )}
 
-                  <Box
-                    sx={{
-                      position: 'relative',
-                      cursor: isAssistant ? 'pointer' : 'default',
-                    }}
-                    onDoubleClick={() => {
-                      if (isAssistant)
-                        handleToggleArtworkInsight(msg);
-                    }}
-                  >
-                    <Paper
-                      elevation={0}
-                      sx={{
-                        p: 1.25,
-                        borderRadius: 2,
-                        background:
-                          msg.sender === 'user'
-                            ? accentColor
-                            : isInterpretation
-                            ? 'linear-gradient(135deg, rgba(139,92,246,0.15), rgba(139,92,246,0.08))'
-                            : 'rgba(255,255,255,0.08)',
-                        backdropFilter: 'blur(8px)',
-                        border: isInterpretation
-                          ? '1px solid rgba(139,92,246,0.35)'
-                          : `1px solid ${glassBorder}`,
-                        color: '#fff',
-                        boxShadow: isHighlighted
-                          ? '0 0 14px rgba(255,255,255,0.35)'
-                          : 'none',
-                        outline: isHighlighted
-                          ? '2px solid rgba(255,255,255,0.85)'
-                          : 'none',
-                        transition: 'box-shadow 0.2s, outline 0.2s',
-                      }}
-                    >
-                      {isInterpretation && (
-                        <Box
-                          sx={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 0.5,
-                            mb: 0.75,
-                            px: 1,
-                            py: 0.25,
-                            borderRadius: 1,
-                            background: 'rgba(139,92,246,0.22)',
-                            border:
-                              '1px solid rgba(139,92,246,0.35)',
-                          }}
-                        >
-                          <Box
-                            sx={{
-                              width: 6,
-                              height: 6,
-                              borderRadius: '50%',
-                              background:
-                                'rgba(139,92,246,0.9)',
-                              boxShadow:
-                                '0 0 8px rgba(139,92,246,0.6)',
-                            }}
-                          />
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              fontWeight: 600,
-                              color:
-                                'rgba(255,255,255,0.95)',
-                              textTransform: 'uppercase',
-                              fontSize: '0.7rem',
-                            }}
-                          >
-                            Толкование произведения
-                          </Typography>
-                        </Box>
-                      )}
+          <Typography
+            variant="body1"
+            sx={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              lineHeight: 1.45,
+            }}
+          >
+            {msg.text}
+          </Typography>
+        </Paper>
 
-                      <Typography
-                        variant="body1"
-                        sx={{
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {msg.text}
-                      </Typography>
-                    </Paper>
-
-                    {isAssistant && (
-                      <Tooltip
-                        title={
-                          msg.insightArtworksLiked
-                            ? 'Убрать из инсайтов'
-                            : 'Сохранить инсайт'
-                        }
-                      >
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleArtworkInsight(msg);
-                          }}
-                          sx={{
-                            position: 'absolute',
-                            top: 8,
-                            right: -12,
-                            color: msg.insightArtworksLiked
-                              ? 'rgba(255,100,150,0.95)'
-                              : 'rgba(255,255,255,0.7)',
-                            '&:hover': {
-                              backgroundColor:
-                                'rgba(255,255,255,0.06)',
-                            },
-                          }}
-                        >
-                          {msg.insightArtworksLiked ? (
-                            <FavoriteIcon fontSize="small" />
-                          ) : (
-                            <FavoriteBorderIcon fontSize="small" />
-                          )}
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                  </Box>
-                </Box>
-              </Box>
-            );
+        {isAssistant && (
+          <Tooltip
+            title={
+              msg.insightArtworksLiked
+                ? 'Убрать из инсайтов'
+                : 'Сохранить инсайт'
+            }
+          >
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleToggleArtworkInsight(msg);
+              }}
+              sx={{
+                position: 'absolute',
+                top: 8,
+                right: -12,
+                color: msg.insightArtworksLiked
+                  ? 'rgba(255,100,150,0.95)'
+                  : 'rgba(255,255,255,0.7)',
+                '&:hover': {
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                },
+              }}
+            >
+              {msg.insightArtworksLiked ? (
+                <FavoriteIcon fontSize="small" />
+              ) : (
+                <FavoriteBorderIcon fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
+    </Box>
+  </Box>
+);
           })
         )}
 
