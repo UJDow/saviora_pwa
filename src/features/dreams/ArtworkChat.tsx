@@ -862,20 +862,30 @@ const result = await interpretBlockArt(
         artworkId,
       );
       if (updated && updated.id) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === updated.id
-              ? {
-                  ...m,
-                  insightArtworksLiked: Boolean(
-                    updated.meta?.insightArtworksLiked,
-                  ),
-                  meta: updated.meta ?? m.meta ?? null,
-                }
-              : m,
-          ),
-        );
-      }
+  setMessages((prev) =>
+    prev.map((m) =>
+      m.id === updated.id
+        ? {
+            ...m,
+            // если с бэка пришло определённое значение — используем его,
+            // иначе оставляем то, что уже было (nextLiked)
+            insightArtworksLiked:
+              typeof updated.meta?.insightArtworksLiked === 'boolean'
+                ? updated.meta.insightArtworksLiked
+                : m.insightArtworksLiked,
+            meta: {
+              ...(m.meta ?? null),
+              ...(updated.meta ?? null),
+              insightArtworksLiked:
+                typeof updated.meta?.insightArtworksLiked === 'boolean'
+                  ? updated.meta.insightArtworksLiked
+                  : m.meta?.insightArtworksLiked ?? m.insightArtworksLiked,
+            },
+          }
+        : m,
+    ),
+  );
+}
     } catch (err: any) {
       setMessages((prev) =>
         prev.map((m) =>
@@ -1214,13 +1224,15 @@ const handleBack = () => {
       {artwork.desc ?? 'Описание отсутствует.'}
     </Typography>
 
-    {rollingSummary && (
+    {/* rollingSummary скрыт из UI
+{rollingSummary && (
   <Box sx={{ mt: 2, p: 1.5, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2 }}>
     <Typography variant="body2" sx={{ color: '#fff', fontStyle: 'italic' }}>
       {rollingSummary}
     </Typography>
   </Box>
 )}
+*/}
 
     <Box
       sx={{

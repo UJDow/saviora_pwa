@@ -488,26 +488,26 @@ export const getDreamArtworksInsights = (dreamId: string) =>
   getDreamInsights(dreamId, { metaKey: 'insightArtworksLiked' });
 
 export const toggleArtworkInsight = (
-  artDialogId: string,
+  dreamId: string,          // ✅ UUID сна
   messageId: string,
   liked: boolean,
-  artworkId?: string,  // ✅ опционально
-  blockId: string = 'main'
+  blockId: string,          // ✅ "artwork__0"
+  artworkId?: string,       // ✅ UUID произведения (опционально)
 ) =>
-  request<{ id: string; meta?: any }>(
+  request<{ message: any }>(
     '/toggle_artwork_insight',
     {
       method: 'POST',
       body: JSON.stringify({
-        artDialogId,
+        dreamId,       // ✅ передаём dreamId
         messageId,
         liked,
-        ...(artworkId && { artworkId }),
         blockId,
+        artworkId: artworkId ?? null,
       }),
     },
     true
-  );
+  ).then((res) => res.message);
 
 // === MOOD API ===
 

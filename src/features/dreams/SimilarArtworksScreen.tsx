@@ -733,41 +733,6 @@ export function SimilarArtworksScreen(): React.ReactElement {
       overflow: 'hidden' as const,
     };
 
-    if (art.value) {
-      return (
-        <Box sx={{ width: 64, height: 64, mr: 2, position: 'relative', flexShrink: 0 }}>
-          <Avatar
-            src={art.value}
-            alt={art.title || 'art'}
-            variant="rounded"
-            sx={{
-              width: 64,
-              height: 64,
-              borderRadius: 2,
-              boxShadow: 2,
-              flexShrink: 0,
-              border: `1px solid rgba(255,255,255,0.06)`,
-              backgroundColor: 'rgba(0,0,0,0.04)',
-              objectFit: 'cover',
-            }}
-          />
-          <Box sx={overlaySx} aria-hidden>
-            <img
-              src="/logo.png"
-              alt="S"
-              style={{
-                width: 14,
-                height: 14,
-                objectFit: 'contain',
-                opacity: 0.7,
-                filter: 'drop-shadow(0 1px 0 rgba(0,0,0,0.2))',
-              }}
-            />
-          </Box>
-        </Box>
-      );
-    }
-
     return (
       <Box sx={{ width: 64, height: 64, mr: 2, position: 'relative', flexShrink: 0 }}>
         <Avatar

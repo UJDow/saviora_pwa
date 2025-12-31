@@ -4181,7 +4181,7 @@ function calculateImprovementScore(data) {
 
         const contextText = contextParts.join('\n\n');
 
-        const prompt = `Ты — эксперт по искусству и психоанализу. На основе сна и его толкования подбери 5 произведений искусства, которые резонируют с образами и мотивами сна.
+        const prompt = `Ты — эксперт по искусству и психоанализу. Всегда отвечай на ЧИСТОМ РУССКОМ ЯЗЫКЕ. На основе сна и его толкования подбери 5 произведений искусства, которые резонируют с образами и мотивами сна.
 
 ${contextText}
 
@@ -4248,12 +4248,11 @@ ${contextText}
 
         const works = Array.isArray(parsed.works) ? parsed.works : [];
 // После генерации similarArtworks:
-// После генерации similarArtworks:
 const similarArtworksRaw = works.slice(0, 5).map(w => ({
   title: w.title || '',
   author: w.author || '',
   desc: w.desc || '',
-  value: w.value || '',
+  value: '',             
   type: w.type || 'default'
 }));
 
@@ -6356,6 +6355,46 @@ if (url.pathname === '/rolling_summary' && request.method === 'GET') {
     return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+}
+
+if (url.pathname === '/toggle_artwork_insight' && request.method === 'POST') {
+  const userEmail = await getUserEmail(request);
+  if (!userEmail) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    const body = await request.json();
+    const { dreamId, messageId, liked } = body;
+
+    if (!dreamId || !messageId || typeof liked !== 'boolean') {
+      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    const updatedMessage = await toggleMessageArtworkInsight(env, {
+      dreamId,
+      messageId,
+      liked,
+      userEmail,
+    });
+
+    return new Response(JSON.stringify({ message: updatedMessage }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('Error in /toggle_artwork_insight:', e);
+    return new Response(JSON.stringify({ error: e.message || 'internal_error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 }
