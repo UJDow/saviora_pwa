@@ -13,6 +13,7 @@ interface MoonButtonProps {
   direction?: 'waxing' | 'waning';
   size?: number;
   totalBlocks?: number;
+  finalInterpretDisabled?: boolean; // ← добавь это
 }
 
 interface MoonPhaseIconProps {
@@ -25,6 +26,7 @@ const MoonPhaseIcon: React.FC<MoonPhaseIconProps> = ({
   illumination,
   size = 32,
   direction = 'waxing',
+  
 }) => {
   const s = size;
   const r = s * 0.47;
@@ -141,6 +143,7 @@ export const MoonButton: React.FC<MoonButtonProps> = ({
   direction = 'waxing',
   size = 32,
   totalBlocks = 0,
+  finalInterpretDisabled,
 }) => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
@@ -279,32 +282,34 @@ export const MoonButton: React.FC<MoonButtonProps> = ({
                   },
                 }}
               >
-                Толкование блока
+                Толкование
               </MenuItem>
 
               <MenuItem
-                onClick={() => {
-                  handleClose();
-                  onFinalInterpret();
-                }}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  color: '#fff',
-                  bgcolor: 'transparent',
-                  borderRadius: 1,
-                  px: 1.25,
-                  py: 0.75,
-                  fontSize: 14,
-                  '&:hover': {
-                    bgcolor:
-                      'linear-gradient(135deg, rgba(255,255,255,0.14), rgba(200,220,255,0.10))',
-                  },
-                }}
-              >
-                Итоговое толкование
-              </MenuItem>
+  onClick={() => {
+    handleClose();
+    if (!finalInterpretDisabled) onFinalInterpret();
+  }}
+  disabled={finalInterpretDisabled}
+  sx={{
+    display: 'flex',
+    alignItems: 'center',
+    gap: 1,
+    color: '#fff',
+    bgcolor: 'transparent',
+    borderRadius: 1,
+    px: 1.25,
+    py: 0.75,
+    fontSize: 14,
+    opacity: finalInterpretDisabled ? 0.5 : 1,
+    '&:hover': {
+      bgcolor:
+        'linear-gradient(135deg, rgba(255,255,255,0.14), rgba(200,220,255,0.10))',
+    },
+  }}
+>
+  Итоговое толкование
+</MenuItem>
             </>
           )}
         </Box>

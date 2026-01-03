@@ -1377,7 +1377,7 @@ export function SimilarArtworksScreen(): React.ReactElement {
                     background: 'rgba(255,255,255,0.04)',
                     border: `1px solid ${glassBorder}`,
                     minHeight: 84,
-                    transition: 'all 0.2s ease',
+                    transition: 'all 0.18s ease',
                     '&:hover': {
                       background: 'rgba(255,255,255,0.07)',
                       transform: 'translateY(-2px)',

@@ -365,22 +365,19 @@ useEffect(() => {
 
 
 // 🔄 МГНОВЕННЫЙ СБРОС ЧАТА ПРИ СМЕНЕ ПРОИЗВЕДЕНИЯ
-  useEffect(() => {
-    if (!artDialogId || !blockId) return;
+useEffect(() => {
+  if (!artDialogId || !blockId) return;
 
-    console.log('[CHAT RESET] switching artwork, clearing local messages', {
-      artDialogId,
-      blockId,
-      artworkId,
-    });
+  console.log('[CHAT RESET] switching artwork', {
+    artDialogId,
+    blockId,
+    artworkId,
+  });
 
-    // Убираем старые сообщения, чтобы не мигали в новом арте
-    setMessages([]);
-    setError(null);
-    setHighlightedMessageId(null);
-    // messagesLoading и sendingReply трогать не обязательно —
-    // их выставит useEffect загрузки/отправки
-  }, [artDialogId, blockId, artworkId]);
+  // НЕ трогаем setMessages([])
+  setError(null);
+  setHighlightedMessageId(null);
+}, [artDialogId, blockId, artworkId]);
 
 
 
@@ -555,26 +552,32 @@ try {
   const requestedMessageId = messageIdFromQuery ?? messageIdFromState;
 
   useEffect(() => {
-    const run = async () => {
-      const targetMessageId = requestedMessageId;
-      if (!targetMessageId) return;
-      if (messages.length === 0) return;
+  const run = async () => {
+    const targetMessageId = requestedMessageId;
+    if (!targetMessageId) return;
+    if (messages.length === 0) return;
 
-      const messageElement = messageRefs.current[targetMessageId];
-      if (messageElement) {
+    // ВАЖНО: всегда приводим к строке!
+    const refId = String(targetMessageId);
+    const messageElement = messageRefs.current[refId];
+
+    if (messageElement) {
+      // Иногда нужен setTimeout, чтобы DOM успел обновиться
+      setTimeout(() => {
         messageElement.scrollIntoView({
           behavior: 'smooth',
           block: 'center',
         });
-        setHighlightedMessageId(targetMessageId);
+        setHighlightedMessageId(refId);
         if (highlightTimeoutRef.current)
           window.clearTimeout(highlightTimeoutRef.current);
         highlightTimeoutRef.current = window.setTimeout(() => {
           setHighlightedMessageId(null);
           highlightTimeoutRef.current = null;
         }, 4000);
-        return;
-      }
+      }, 0);
+      return;
+    }
 
       // ищем в других произведениях
       if (!dream?.similarArtworks || !Array.isArray(dream.similarArtworks) || !id) {
@@ -636,12 +639,12 @@ try {
 
     run();
 
-    return () => {
-      if (highlightTimeoutRef.current) {
-        window.clearTimeout(highlightTimeoutRef.current);
-      }
-    };
-  }, [messages, requestedMessageId, dream, blockId, id, navigate, enqueueSnackbar]);
+  return () => {
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+  };
+}, [messages, requestedMessageId, dream, blockId, id, navigate, enqueueSnackbar]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -953,24 +956,35 @@ const result = await interpretBlockArt(
       setLoadingFinalInterpretation(false);
     }
   };
-
-  const goToArtwork = (idx: number) => {
+const goToArtwork = (idx: number) => {
   if (!id) return;
   const nextArtwork = artworksList[idx];
+  // Берём origin из актуального location.state на момент вызова!
+  const origin = (location.state as any)?.origin;
 
   navigate(`/dreams/${id}/artwork-chat/${idx}`, {
     state: {
       artwork: nextArtwork,
       artworkIndex: idx,
-      artworkId: nextArtwork?.artworkId || nextArtwork?.artwork_id || nextArtwork?.id || nextArtwork?.uniqueId,  // ✅ добавили uniqueId
-      origin: 'prev_next_nav',
+      artworkId: nextArtwork?.artworkId || nextArtwork?.artwork_id || nextArtwork?.id || nextArtwork?.uniqueId,
+      origin,
     },
   });
 };
 
 const handleBack = () => {
+  // Берём origin из актуального location.state на момент вызова!
+  const origin = (location.state as any)?.origin;
   if (!id) {
     navigate(-1);
+    return;
+  }
+  if (
+    origin === 'art_list' ||
+    origin === 'insight' ||
+    origin === 'similar'
+  ) {
+    navigate(`/dreams/${id}/similar`, { replace: true });
     return;
   }
   navigate(`/dreams/${id}/artworks`, { replace: true });
@@ -1807,13 +1821,14 @@ const handleBack = () => {
           }}
         >
           <MoonButton
-            illumination={illumination}
-            onInterpret={runInterpretation}
-            onFinalInterpret={() => handleFinalInterpret(false)}
-            disabled={sendingReply || messagesLoading || !canBlockInterpret}
-            direction="waxing"
-            size={36}
-          />
+  illumination={illumination}
+  onInterpret={runInterpretation}
+  onFinalInterpret={() => handleFinalInterpret(false)}
+  disabled={sendingReply || messagesLoading || !canBlockInterpret}
+  finalInterpretDisabled={true} // ← вот это добавь!
+  direction="waxing"
+  size={36}
+/>
           <Box sx={{ flex: 1 }}>
             <GlassInputBox
               value={input}

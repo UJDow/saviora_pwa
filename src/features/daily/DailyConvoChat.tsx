@@ -457,8 +457,6 @@ export default function DailyConvoChat({
         const res = await api.interpretFinalDailyConvo(
           notesText,
           convo.id,
-          convo.autoSummary ?? null,
-          convo.context ?? null,
         );
         const text = res?.interpretation ?? '';
         setFinalInterpretationText(text);
@@ -505,8 +503,6 @@ export default function DailyConvoChat({
         fullDialogText,
         convo.id,
         'dialog',
-        convo.autoSummary ?? null,
-        convo.context ?? null,
       );
 
       const interpretationText =
@@ -915,18 +911,6 @@ export default function DailyConvoChat({
           ml: 2,
         }}
       >
-        <Tooltip title="Показать итоговое толкование дня">
-          <span>
-            <IconButton
-              onClick={() => handleFinalInterpret(false)}
-              sx={{ color: '#fff' }}
-              aria-label="Показать итоговое толкование дня"
-              disabled={!convo}
-            >
-              <FeedIcon />
-            </IconButton>
-          </span>
-        </Tooltip>
 
         <Tooltip title="Очистить диалог">
           <span>
@@ -1000,7 +984,6 @@ export default function DailyConvoChat({
               }}
             >
               {convo.context ||
-                convo.autoSummary ||
                 convo.notes ||
                 'Краткое описание дня пока отсутствует.'}
             </Typography>
@@ -1434,17 +1417,14 @@ export default function DailyConvoChat({
         >
           <Box sx={{ mr: 1.5, flexShrink: 0 }}>
             <MoonButton
-              illumination={illumination}
-              onInterpret={handleInterpretBlock}
-              onFinalInterpret={() => handleFinalInterpret(false)}
-              disabled={
-                sending ||
-                generatingBlockInterpretation ||
-                !canBlockInterpret
-              }
-              direction="waxing"
-              size={32}
-            />
+  illumination={illumination}
+  onInterpret={handleInterpretBlock}
+  onFinalInterpret={() => handleFinalInterpret(false)}
+  disabled={sending || generatingBlockInterpretation || clearing}
+  finalInterpretDisabled={true} // ← только здесь!
+  direction="waxing"
+  size={32}
+/>
           </Box>
 
           <Box

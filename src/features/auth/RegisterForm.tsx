@@ -62,8 +62,8 @@ export const RegisterForm: React.FC<{ onSwitch: () => void }> = ({
     e.preventDefault();
     const ok = await register(email, password);
     if (ok) {
-      navigate('/dreams');
-    }
+  navigate('/', { replace: true });
+}
   };
 
   return (
