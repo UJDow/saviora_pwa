@@ -22,6 +22,7 @@
     "@mui/x-date-pickers": "^8.21.0",
     "@mui/x-date-pickers-pro": "^8.21.0",
     "dayjs": "^1.11.19",
+    "dompurify": "^3.3.1",
     "framer-motion": "^12.23.24",
     "notistack": "^3.0.2",
     "react": "^19.1.1",

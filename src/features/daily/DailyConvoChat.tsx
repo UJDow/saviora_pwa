@@ -1,5 +1,5 @@
 // src/features/daily/DailyConvoChat.tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -19,7 +19,6 @@ import {
 } from '@mui/material';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import FeedIcon from '@mui/icons-material/Feed';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
@@ -648,15 +647,6 @@ export default function DailyConvoChat({
     }
   }, [loadingMessages, messages.length, convo, runKickoff]);
 
-  const formattedDate = useMemo(() => {
-    if (!convo) return '';
-    const rawDate = convo.date ?? convo.createdAt ?? null;
-    const d = rawDate
-      ? new Date(toTimestamp(rawDate as string | number))
-      : null;
-    return d ? d.toLocaleString('ru-RU') : '';
-  }, [convo, toTimestamp]);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -696,7 +686,6 @@ export default function DailyConvoChat({
 
   const pairs = messages.filter((m) => m.sender === 'user').length;
   const illumination = Math.max(0, Math.min(pairs / 7, 1));
-  const canBlockInterpret = messages.length > 0;
 
   const handleBack = () => {
   navigate(-1);

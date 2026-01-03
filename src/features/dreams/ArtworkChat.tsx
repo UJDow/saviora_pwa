@@ -40,7 +40,6 @@ import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import FeedIcon from '@mui/icons-material/Feed';
 import { useSnackbar as useNotistackSnackbar } from 'notistack';
 
 import {
@@ -52,7 +51,6 @@ import {
   toggleArtworkInsight,
   interpretFinal,
   interpretBlockArt,
-  API_URL,
   getRollingSummary,
 } from '../../utils/api';
 

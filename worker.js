@@ -1688,6 +1688,153 @@ async function getGoalsTimeline(env, userEmail, range) {
   return rows;
 }
 
+// =============================
+// ✅ AUTHENTICATION HELPER
+// =============================
+
+/**
+ * Извлекает email пользователя из Bearer-токена и проверяет tokenVersion
+ * @param {Request} request
+ * @param {Object} env - Cloudflare env (с USERS_KV)
+ * @returns {Promise<string|null>} - email или null
+ */
+async function getUserEmail(request, env) {
+  const auth = request.headers.get('authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+
+  const token = auth.slice(7);
+  let payload;
+  try {
+    payload = await verifyToken(token, env.JWT_SECRET);
+  } catch (e) {
+    console.error('[getUserEmail] verifyToken error:', e);
+    return null;
+  }
+
+  if (!payload?.email) return null;
+
+  // Проверяем tokenVersion
+  const userRaw = await env.USERS_KV.get(`user:${payload.email}`);
+  if (!userRaw) return null;
+
+  let user;
+  try {
+    user = JSON.parse(userRaw);
+  } catch {
+    return null;
+  }
+
+  const currentTv = user.tokenVersion ?? 0;
+  if (typeof payload.tv !== 'number' || payload.tv !== currentTv) {
+    return null; // токен устарел
+  }
+
+  return payload.email;
+}
+
+// =============================
+// ✅ RATE LIMITING
+// =============================
+
+/**
+ * Проверяет rate limit для пользователя
+ * @param {Object} env - Cloudflare env (с RATE_LIMIT_KV)
+ * @param {string} userEmail - Email пользователя
+ * @param {number} maxRequests - Максимум запросов (по умолчанию 100)
+ * @param {number} windowMs - Окно времени в миллисекундах (по умолчанию 60000 = 1 минута)
+ * @returns {Promise<{allowed: boolean, remaining: number, resetAt: number}>}
+ */
+async function checkRateLimit(env, userEmail, maxRequests = 100, windowMs = 60000) {
+  const key = `ratelimit:${userEmail}`;
+  const now = Date.now();
+
+  try {
+    // Получаем текущее состояние из KV
+    const dataRaw = await env.RATE_LIMIT_KV.get(key);
+    let data = dataRaw ? JSON.parse(dataRaw) : null;
+
+    // Если данных нет или окно истекло — создаём новое окно
+    if (!data || now > data.resetAt) {
+      data = {
+        count: 1,
+        resetAt: now + windowMs,
+      };
+      await env.RATE_LIMIT_KV.put(key, JSON.stringify(data), { expirationTtl: Math.ceil(windowMs / 1000) });
+      return { allowed: true, remaining: maxRequests - 1, resetAt: data.resetAt };
+    }
+
+    // Проверяем лимит
+    if (data.count >= maxRequests) {
+      return { allowed: false, remaining: 0, resetAt: data.resetAt };
+    }
+
+    // Увеличиваем счётчик
+    data.count += 1;
+    await env.RATE_LIMIT_KV.put(key, JSON.stringify(data), { expirationTtl: Math.ceil((data.resetAt - now) / 1000) });
+
+    return { allowed: true, remaining: maxRequests - data.count, resetAt: data.resetAt };
+  } catch (e) {
+    console.error('[checkRateLimit] error:', e);
+    // В случае ошибки — разрешаем запрос (fail-open)
+    return { allowed: true, remaining: maxRequests, resetAt: now + windowMs };
+  }
+}
+
+/**
+ * Middleware для проверки авторизации, trial и rate limit
+ * @param {Request} request
+ * @param {Object} env
+ * @param {Object} corsHeaders
+ * @param {Object} options - { skipTrial: boolean, maxRequests: number, windowMs: number }
+ * @returns {Promise<{userEmail: string} | Response>} - Возвращает userEmail или Response с ошибкой
+ */
+async function withAuthAndRateLimit(request, env, corsHeaders, options = {}) {
+  const { skipTrial = false, maxRequests = 100, windowMs = 60000 } = options;
+
+  // 1. Проверка авторизации
+  const userEmail = await getUserEmail(request, env);
+  if (!userEmail) {
+    return new Response(JSON.stringify({
+      error: 'unauthorized',
+      message: 'Invalid or missing authorization token'
+    }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  // 2. Проверка trial (если не skipTrial)
+  if (!skipTrial && !(await isTrialActive(userEmail, env))) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    });
+  }
+
+  // 3. Проверка rate limit
+  const rateLimitResult = await checkRateLimit(env, userEmail, maxRequests, windowMs);
+  if (!rateLimitResult.allowed) {
+    return new Response(JSON.stringify({
+      error: 'rate_limit_exceeded',
+      message: 'Too many requests',
+      resetAt: rateLimitResult.resetAt
+    }), {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(maxRequests),
+        'X-RateLimit-Remaining': '0',
+        'X-RateLimit-Reset': String(rateLimitResult.resetAt),
+        'Retry-After': String(Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000)),
+        ...corsHeaders
+      }
+    });
+  }
+
+  // ✅ Всё ОК — возвращаем userEmail
+  return { userEmail };
+}
+
 
 // ===== end Personal goals helpers =====
 
@@ -1728,7 +1875,7 @@ export default {
 
     // GET /goals - список целей с прогрессом
     if (url.pathname === '/goals' && request.method === 'GET') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401,
@@ -1753,7 +1900,7 @@ export default {
 
     // POST /goals - создать цель
     if (url.pathname === '/goals' && request.method === 'POST') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401,
@@ -1804,7 +1951,7 @@ export default {
 
     // POST /goals/:id/event - добавить событие (Сделать)
     if (request.method === 'POST' && pathParts.length === 3 && pathParts[0] === 'goals' && pathParts[2] === 'event') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401,
@@ -1838,7 +1985,7 @@ export default {
 
     // PUT /goals/:id - обновить цель (включая target_count)
 if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goals') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -1908,7 +2055,7 @@ if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goal
 
 // DELETE /goals/:id - удалить цель
 if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'goals') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -1954,7 +2101,7 @@ if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'g
 
     // GET /goals/timeline?range=7d
     if (url.pathname === '/goals/timeline' && request.method === 'GET') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401,
@@ -2086,28 +2233,9 @@ if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'g
       });
     }
 
-    async function getUserEmail(request) {
-      const auth = request.headers.get('authorization');
-      if (!auth || !auth.startsWith('Bearer ')) return null;
-      const token = auth.slice(7);
-      const payload = await verifyToken(token, JWT_SECRET);
-      if (!payload?.email) return null;
-      const userRaw = await env.USERS_KV.get(`user:${payload.email}`);
-      if (!userRaw) return null;
-      let user;
-      try {
-        user = JSON.parse(userRaw);
-      } catch {
-        return null;
-      }
-      const currentTv = user.tokenVersion ?? 0;
-      if (typeof payload.tv !== 'number' || payload.tv !== currentTv) return null;
-      return payload.email;
-    }
-
     // --- GET /me (заменить существующий блок) ---
 if (url.pathname === '/me' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2206,7 +2334,7 @@ if (url.pathname === '/plans' && request.method === 'GET') {
 
 // POST /subscription/choice
 if (url.pathname === '/subscription/choice' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2248,7 +2376,7 @@ if (url.pathname === '/subscription/choice' && request.method === 'POST') {
 
 // POST /subscription/modal-open
 if (url.pathname === '/subscription/modal-open' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2276,7 +2404,7 @@ if (url.pathname === '/subscription/modal-open' && request.method === 'POST') {
 
 // POST /subscription/confirm
 if (url.pathname === '/subscription/confirm' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2314,7 +2442,7 @@ if (url.pathname === '/subscription/confirm' && request.method === 'POST') {
 
 // GET /subscription/choices
 if (url.pathname === '/subscription/choices' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2341,7 +2469,7 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
 
     // Получить настроение за день
     if (url.pathname.endsWith('/moods') && request.method === 'GET') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -2370,7 +2498,7 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
 
     // Установить/обновить настроение за день
     if (url.pathname.endsWith('/moods') && request.method === 'PUT') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -2407,7 +2535,7 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
 
     // Получить все настроения за месяц
     if (url.pathname.endsWith('/moods/month') && request.method === 'GET') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -2439,7 +2567,7 @@ if (url.pathname === '/subscription/choices' && request.method === 'GET') {
     // --- DREAMS API with D1 integration ---
 
 if (url.pathname === '/dreams' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2518,7 +2646,7 @@ if (url.pathname === '/dreams' && request.method === 'GET') {
 }
 
 if (url.pathname === '/dreams' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2601,7 +2729,7 @@ if (url.pathname === '/dreams' && request.method === 'POST') {
 }
 
 if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'dreams') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2693,7 +2821,7 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
 }
 
     if (url.pathname.startsWith('/dreams/') && request.method === 'DELETE') {
-      const userEmail = await getUserEmail(request);
+      const userEmail = await getUserEmail(request, env);
       if (!userEmail) {
         return new Response(JSON.stringify({ error: 'unauthorized' }), {
           status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -2732,7 +2860,7 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
     // PUT /dreams/:dreamId/messages/:messageId/artwork_like
 // pathParts example: ['dreams', '<dreamId>', 'messages', '<messageId>', 'artwork_like'] -> length === 5
 if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'dreams' && pathParts[2] === 'messages' && pathParts[4] === 'artwork_like') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   }
@@ -2779,7 +2907,7 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'drea
 
 // PUT /dreams/:dreamId/messages/:messageId/like
 if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'dreams' && pathParts[2] === 'messages' && pathParts[4] === 'like') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2847,7 +2975,7 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'drea
 
 // PUT /daily_convos/:dailyConvoId/messages/:messageId/artwork_like
 if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'daily_convos' && pathParts[2] === 'messages' && pathParts[4] === 'artwork_like') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   const dailyConvoId = pathParts[1];
   const messageId = pathParts[3];
@@ -2867,7 +2995,7 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'dail
 
 // PUT /daily_convos/:dailyConvoId/messages/:messageId/like
 if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'daily_convos' && pathParts[2] === 'messages' && pathParts[4] === 'like') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   const dailyConvoId = pathParts[1];
   const messageId = pathParts[3];
@@ -2892,7 +3020,7 @@ if (
   pathParts[0] === 'dreams' &&
   pathParts[2] === 'insights'
 ) {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -2975,7 +3103,7 @@ if (
 
 // GET /daily_convos/:id/insights
 if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'daily_convos' && pathParts[2] === 'insights') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   const dailyId = pathParts[1];
   const urlObj = new URL(request.url);
@@ -3026,7 +3154,7 @@ if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'dail
 
 // worker.js — добавить в конце fetch handler
 if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -3078,7 +3206,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
 }
 
     if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -3194,7 +3322,7 @@ const similarArtworks = existing.similarArtworks || '[]';
 
 // GET /daily_convos (list)
 if (url.pathname === '/daily_convos' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   try {
     const res = await env.DB.prepare('SELECT * FROM daily_convos WHERE user = ? ORDER BY date DESC').bind(userEmail).all();
@@ -3213,7 +3341,7 @@ if (url.pathname === '/daily_convos' && request.method === 'GET') {
 
 // POST /daily_convos (create)
 if (url.pathname === '/daily_convos' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   let body;
   try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
@@ -3237,7 +3365,7 @@ if (url.pathname === '/daily_convos' && request.method === 'POST') {
 
 // GET /daily_convos/:id
 if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   const id = pathParts[1];
   try {
@@ -3255,7 +3383,7 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'dail
 
 // PUT /daily_convos/:id
 if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   const id = pathParts[1];
   let body;
@@ -3291,7 +3419,7 @@ if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'dail
 
 // DELETE /daily_convos/:id
 if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   const id = pathParts[1];
   try {
@@ -3305,7 +3433,7 @@ if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'd
 }
 // --- CHAT: get history ---
 if (url.pathname === '/chat' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -3348,7 +3476,7 @@ if (url.pathname === '/chat' && request.method === 'GET') {
 
 // --- CHAT: append message ---
 if (url.pathname === '/chat' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -3395,7 +3523,7 @@ if (url.pathname === '/chat' && request.method === 'POST') {
 
 // --- CHAT: clear history for block ---
 if (url.pathname === '/chat' && request.method === 'DELETE') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -3431,7 +3559,7 @@ if (url.pathname === '/chat' && request.method === 'DELETE') {
 
 // --- DAILY CHAT: GET /daily_chat?dailyConvoId=... ---
 if (url.pathname === '/daily_chat' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -3482,7 +3610,7 @@ if (url.pathname === '/daily_chat' && request.method === 'GET') {
 
 // --- POST /daily_chat ---
 if (url.pathname === '/daily_chat' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -3585,7 +3713,7 @@ if (role === 'assistant') {
 
 // --- DELETE /daily_chat?dailyConvoId=... ---
 if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -3633,7 +3761,7 @@ if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
 
     // --- Generate Auto Summary endpoint (асинхронный) ---
 if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -3720,22 +3848,9 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
 
 // --- Analyze endpoint (с rolling summary) ---
 if (url.pathname === '/analyze' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({
-      error: 'unauthorized',
-      message: 'Invalid or missing authorization token'
-    }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  if (!(await isTrialActive(userEmail, env))) {
-    return new Response(JSON.stringify({ error: 'Trial expired' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 100, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult; // Если ошибка — возвращаем Response
+  const { userEmail } = authResult;
 
   try {
     const contentType = request.headers.get('content-type') || '';
@@ -3905,13 +4020,9 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
 
 // --- Analyze daily convo (clone of /analyze, for daily_convos) ---
 if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 100, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const contentType = request.headers.get('content-type') || '';
@@ -4012,7 +4123,7 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
 
 // --- Generate Auto Summary for Daily Convo ---
 if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
@@ -4150,18 +4261,11 @@ function calculateImprovementScore(data) {
 
     // --- Find similar artworks endpoint ---
     if (url.pathname === '/find_similar' && request.method === 'POST') {
-      const userEmail = await getUserEmail(request);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      if (!(await isTrialActive(userEmail, env))) {
-        return new Response(JSON.stringify({ error: 'Trial expired' }), {
-          status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
+
+  try {
         const body = await request.json();
         const { dreamText, globalFinalInterpretation, blockInterpretations } = body;
         if (!dreamText) {
@@ -4322,17 +4426,9 @@ return new Response(JSON.stringify({ similarArtworks }), {
 
  // --- Interpret block endpoint (ИСПРАВЛЕННЫЙ) ---
 if (url.pathname === '/interpret_block' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  if (!(await isTrialActive(userEmail, env))) {
-    return new Response(JSON.stringify({ error: 'Trial expired' }), {
-      status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const body = await request.json();
@@ -4477,17 +4573,9 @@ ${unprocessedContext}
 
 // --- Interpret final endpoint (с rolling summary + необработанные сообщения по всем блокам) ---
 if (url.pathname === '/interpret_final' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  if (!(await isTrialActive(userEmail, env))) {
-    return new Response(JSON.stringify({ error: 'Trial expired' }), {
-      status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const body = await request.json();
@@ -4607,7 +4695,7 @@ ${blocksContext}
 
 // --- Interpret final for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -4711,7 +4799,7 @@ ${unprocessedContext}
 
 // --- Interpret block for daily convo ---
 if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -4754,7 +4842,7 @@ if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST'
 
 // --- Interpret block for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_block_daily_convo_context' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -4871,7 +4959,7 @@ ${unprocessedContext}
 
 // --- Interpret final for daily convo (NEW) ---
 if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -4914,13 +5002,9 @@ if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'P
 
 // --- ART CHAT: GET /art_chat?artDialogId=...&artworkId=...&blockId=... ---
 if (url.pathname === '/art_chat' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 200, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   const dreamId = url.searchParams.get('dreamId');    // ✅ чистый UUID
   const artworkId = url.searchParams.get('artworkId');
@@ -4974,13 +5058,9 @@ if (url.pathname === '/art_chat' && request.method === 'GET') {
 
 // --- POST /art_chat ---
 if (url.pathname === '/art_chat' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 100, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   let body;
   try {
@@ -5074,7 +5154,7 @@ if (url.pathname === '/art_chat' && request.method === 'POST') {
 
 // --- GET /dreams/:dreamId/similar_artworks ---
 if (url.pathname.match(/^\/dreams\/[^/]+\/similar_artworks$/) && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -5127,7 +5207,7 @@ if (url.pathname.match(/^\/dreams\/[^/]+\/similar_artworks$/) && request.method 
 
 // --- Interpret block for art WITH CONTEXT ---
 if (url.pathname === '/interpret_block_art' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+ const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -5323,7 +5403,7 @@ ${unprocessedContext}
 
 // --- DELETE /art_chat ---
 if (url.pathname === '/art_chat' && request.method === 'DELETE') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -5381,22 +5461,11 @@ if (url.pathname === '/art_chat' && request.method === 'DELETE') {
 
 // --- Dashboard metrics endpoint (нормальный range) ---
 if (url.pathname === '/dashboard' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
-  if (!(await isTrialActive(userEmail, env))) {
-    return new Response(JSON.stringify({ error: 'Trial expired' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-
-try {
+  try {
     const d1 = env.DB;
 
     // ✅ ОПРЕДЕЛЯЕМ ФУНКЦИЮ СРАЗУ
@@ -6037,7 +6106,7 @@ const levelWithNew = {
 // =============================
 
 if (url.pathname === '/mark-badges-seen' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -6091,7 +6160,7 @@ if (url.pathname === '/api/gamification/mark-level-seen' && request.method === '
     }
 
     const token = authHeader.substring(7);
-    const payload = await verifyToken(token, JWT_SECRET);
+    const payload = await verifyToken(token, env.JWT_SECRET);
     const userEmail = payload.email;
 
     const body = await request.json();
@@ -6122,7 +6191,7 @@ if (url.pathname === '/api/gamification/mark-level-seen' && request.method === '
 
 // --- PUT /me (заменить существующий блок) ---
 if ((url.pathname === '/me' || url.pathname === '/api/me') && request.method === 'PUT') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -6249,7 +6318,7 @@ if ((url.pathname === '/me' || url.pathname === '/api/me') && request.method ===
 
 if (url.pathname === '/set-current-goal' && request.method === 'POST') {
   try {
-    const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
     if (!userEmail) {
       return new Response(JSON.stringify({ error: 'unauthorized' }), {
         status: 401,
@@ -6314,7 +6383,7 @@ if (url.pathname === '/set-current-goal' && request.method === 'POST') {
 
 // GET rolling_summary
 if (url.pathname === '/rolling_summary' && request.method === 'GET') {
-    const userEmail = await getUserEmail(request);
+    const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
@@ -6360,7 +6429,7 @@ if (url.pathname === '/rolling_summary' && request.method === 'GET') {
 }
 
 if (url.pathname === '/toggle_artwork_insight' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request);
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
