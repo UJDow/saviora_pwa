@@ -1,3 +1,7 @@
+import { RateLimitDO } from './RateLimitDO.js';
+
+export { RateLimitDO };
+
 // --- CORS настройка ---
 const allowedOrigins = [
   'https://sakovvolfsnitko-e6deet01q-alexandr-snitkos-projects.vercel.app',
@@ -1732,67 +1736,46 @@ async function getUserEmail(request, env) {
   return payload.email;
 }
 
-// =============================
-// ✅ RATE LIMITING
-// =============================
+// Функция для обращения к Durable Object
+async function checkRateLimitDO(env, userEmail, maxRequests = 50, windowMs = 30000) {
+  if (!userEmail) {
+    return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowMs };
+  }
 
-/**
- * Проверяет rate limit для пользователя
- * @param {Object} env - Cloudflare env (с RATE_LIMIT_KV)
- * @param {string} userEmail - Email пользователя
- * @param {number} maxRequests - Максимум запросов (по умолчанию 100)
- * @param {number} windowMs - Окно времени в миллисекундах (по умолчанию 60000 = 1 минута)
- * @returns {Promise<{allowed: boolean, remaining: number, resetAt: number}>}
- */
-async function checkRateLimit(env, userEmail, maxRequests = 100, windowMs = 60000) {
-  const key = `ratelimit:${userEmail}`;
-  const now = Date.now();
+  const normalized = String(userEmail).trim().toLowerCase();
+  const id = env.RATE_LIMIT_DO.idFromName(normalized);
+  const obj = env.RATE_LIMIT_DO.get(id);
 
+  // Отправляем запрос в DO
   try {
-    // Получаем текущее состояние из KV
-    const dataRaw = await env.RATE_LIMIT_KV.get(key);
-    let data = dataRaw ? JSON.parse(dataRaw) : null;
+    const res = await obj.fetch('https://rate/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'hit', maxRequests, windowMs })
+    });
 
-    // Если данных нет или окно истекло — создаём новое окно
-    if (!data || now > data.resetAt) {
-      data = {
-        count: 1,
-        resetAt: now + windowMs,
-      };
-      await env.RATE_LIMIT_KV.put(key, JSON.stringify(data), { expirationTtl: Math.ceil(windowMs / 1000) });
-      return { allowed: true, remaining: maxRequests - 1, resetAt: data.resetAt };
+    if (!res.ok) {
+      // Если DO вернул ошибку — fail-open или можно трактовать как fail-closed; здесь мы prefer fail-open
+      console.error('[checkRateLimitDO] DO returned non-ok status', res.status);
+      return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowMs };
     }
 
-    // Проверяем лимит
-    if (data.count >= maxRequests) {
-      return { allowed: false, remaining: 0, resetAt: data.resetAt };
-    }
-
-    // Увеличиваем счётчик
-    data.count += 1;
-    await env.RATE_LIMIT_KV.put(key, JSON.stringify(data), { expirationTtl: Math.ceil((data.resetAt - now) / 1000) });
-
-    return { allowed: true, remaining: maxRequests - data.count, resetAt: data.resetAt };
+    const data = await res.json();
+    // data: { allowed, count, remaining, resetAt }
+    return data;
   } catch (e) {
-    console.error('[checkRateLimit] error:', e);
-    // В случае ошибки — разрешаем запрос (fail-open)
-    return { allowed: true, remaining: maxRequests, resetAt: now + windowMs };
+    console.error('[checkRateLimitDO] error contacting DO:', e);
+    // В случае ошибки связи — fail-open чтобы не ломать UX; если предпочитаешь блокировать — поменяй на allowed:false
+    return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowMs };
   }
 }
 
-/**
- * Middleware для проверки авторизации, trial и rate limit
- * @param {Request} request
- * @param {Object} env
- * @param {Object} corsHeaders
- * @param {Object} options - { skipTrial: boolean, maxRequests: number, windowMs: number }
- * @returns {Promise<{userEmail: string} | Response>} - Возвращает userEmail или Response с ошибкой
- */
+// Обновлённая middleware — использует Durable Object
 async function withAuthAndRateLimit(request, env, corsHeaders, options = {}) {
-  const { skipTrial = false, maxRequests = 100, windowMs = 60000 } = options;
+  const { skipTrial = false, maxRequests = 50, windowMs = 30000 } = options;
 
   // 1. Проверка авторизации
-  const userEmail = await getUserEmail(request, env);
+  const userEmail = await getUserEmail(request, env); // предполагается, что функция определена
   if (!userEmail) {
     return new Response(JSON.stringify({
       error: 'unauthorized',
@@ -1811,8 +1794,8 @@ async function withAuthAndRateLimit(request, env, corsHeaders, options = {}) {
     });
   }
 
-  // 3. Проверка rate limit
-  const rateLimitResult = await checkRateLimit(env, userEmail, maxRequests, windowMs);
+  // 3. Проверка rate limit (через DO)
+  const rateLimitResult = await checkRateLimitDO(env, userEmail, maxRequests, windowMs);
   if (!rateLimitResult.allowed) {
     return new Response(JSON.stringify({
       error: 'rate_limit_exceeded',
@@ -1823,18 +1806,17 @@ async function withAuthAndRateLimit(request, env, corsHeaders, options = {}) {
       headers: {
         'Content-Type': 'application/json',
         'X-RateLimit-Limit': String(maxRequests),
-        'X-RateLimit-Remaining': '0',
+        'X-RateLimit-Remaining': String(0),
         'X-RateLimit-Reset': String(rateLimitResult.resetAt),
-        'Retry-After': String(Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000)),
+        'Retry-After': String(Math.max(0, Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000))),
         ...corsHeaders
       }
     });
   }
 
-  // ✅ Всё ОК — возвращаем userEmail
+  // Всё ОК — возвращаем userEmail
   return { userEmail };
 }
-
 
 // ===== end Personal goals helpers =====
 
@@ -3610,13 +3592,9 @@ if (url.pathname === '/daily_chat' && request.method === 'GET') {
 
 // --- POST /daily_chat ---
 if (url.pathname === '/daily_chat' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   let body;
   try {
@@ -3761,12 +3739,9 @@ if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
 
     // --- Generate Auto Summary endpoint (асинхронный) ---
 if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   let body;
   try {
@@ -3848,8 +3823,12 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
 
 // --- Analyze endpoint (с rolling summary) ---
 if (url.pathname === '/analyze' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 100, windowMs: 60000 });
-  if (authResult instanceof Response) return authResult; // Если ошибка — возвращаем Response
+  // Вызов updated withAuthAndRateLimit, который внутри вызывает checkRateLimitDO
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) {
+    // Если лимит превышен или ошибка авторизации — возвращаем Response с ошибкой
+    return authResult;
+  }
   const { userEmail } = authResult;
 
   try {
@@ -4020,7 +3999,7 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
 
 // --- Analyze daily convo (clone of /analyze, for daily_convos) ---
 if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 100, windowMs: 60000 });
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 50, windowMs: 30000 });
   if (authResult instanceof Response) return authResult;
   const { userEmail } = authResult;
 
@@ -4123,12 +4102,9 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
 
 // --- Generate Auto Summary for Daily Convo ---
 if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   let body;
   try {
@@ -4695,13 +4671,9 @@ ${blocksContext}
 
 // --- Interpret final for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const body = await request.json();
@@ -4799,13 +4771,9 @@ ${unprocessedContext}
 
 // --- Interpret block for daily convo ---
 if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const ct = request.headers.get('content-type') || '';
@@ -4842,13 +4810,9 @@ if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST'
 
 // --- Interpret block for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_block_daily_convo_context' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const body = await request.json();
@@ -4959,13 +4923,9 @@ ${unprocessedContext}
 
 // --- Interpret final for daily convo (NEW) ---
 if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const ct = request.headers.get('content-type') || '';
@@ -5002,7 +4962,7 @@ if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'P
 
 // --- ART CHAT: GET /art_chat?artDialogId=...&artworkId=...&blockId=... ---
 if (url.pathname === '/art_chat' && request.method === 'GET') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 200, windowMs: 60000 });
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 50, windowMs: 30000 });
   if (authResult instanceof Response) return authResult;
   const { userEmail } = authResult;
 
@@ -5058,7 +5018,7 @@ if (url.pathname === '/art_chat' && request.method === 'GET') {
 
 // --- POST /art_chat ---
 if (url.pathname === '/art_chat' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 100, windowMs: 60000 });
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 50, windowMs: 30000 });
   if (authResult instanceof Response) return authResult;
   const { userEmail } = authResult;
 
@@ -5154,13 +5114,9 @@ if (url.pathname === '/art_chat' && request.method === 'POST') {
 
 // --- GET /dreams/:dreamId/similar_artworks ---
 if (url.pathname.match(/^\/dreams\/[^/]+\/similar_artworks$/) && request.method === 'GET') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   const dreamId = url.pathname.split('/')[2];
 
@@ -5207,13 +5163,9 @@ if (url.pathname.match(/^\/dreams\/[^/]+\/similar_artworks$/) && request.method 
 
 // --- Interpret block for art WITH CONTEXT ---
 if (url.pathname === '/interpret_block_art' && request.method === 'POST') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   try {
     const body = await request.json();
@@ -6383,13 +6335,9 @@ if (url.pathname === '/set-current-goal' && request.method === 'POST') {
 
 // GET rolling_summary
 if (url.pathname === '/rolling_summary' && request.method === 'GET') {
-    const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail } = authResult;
 
   const dreamId = url.searchParams.get('dreamId');
   const blockId = url.searchParams.get('blockId');

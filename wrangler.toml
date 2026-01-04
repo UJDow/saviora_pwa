@@ -10,10 +10,6 @@ id = "633f61558d924751b0cc535edb74192f"
 binding = "DREAMS_KV"
 id = "805353c9b2d74903a7c73da3a63eef4d"
 
-[[kv_namespaces]]
-binding = "RATE_LIMIT_KV"
-id = "3544f1bdc36a497a86a8d3458f86d882"
-
 [[d1_databases]]
 binding = "DB"
 database_name = "saviora_dreams_database"
@@ -23,3 +19,12 @@ database_id = "7de5946b-5bb2-4da2-9956-b4a9276a090a"
 binding = "AVATARS"
 bucket_name = "avatars-bucket"
 preview_bucket_name = "avatars-bucket-preview"
+
+[durable_objects]
+bindings = [
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimitDO"]
