@@ -742,34 +742,31 @@ export const MoodSlider: React.FC<MoodSliderProps> = ({
                   </Box>
 
                   <Box sx={{ textAlign: 'left', flex: 1, minWidth: 120 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.25, color: 'rgba(255,255,255,0.95)' }}>
-                      {selectedMood?.label ?? (loading ? 'Загружается...' : 'Настроение не выбрано')}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)', fontSize: '0.75rem' }}>
-                      {saving || loading ? 'Сохраняем...' : 'Нажмите, чтобы изменить'}
-                    </Typography>
-                  </Box>
+  <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.25, color: 'rgba(255,255,255,0.95)' }}>
+    {selectedMood?.label ?? (loading ? 'Загружается...' : 'Настроение не выбрано')}
+  </Typography>
+  <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)', fontSize: '0.75rem' }}>
+    Нажмите, чтобы изменить
+  </Typography>
+</Box>
 
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {(saving || loading) && (
-                      <CircularProgress size={16} thickness={4} sx={{ color: selectedMood?.color ?? theme.palette.primary.main }} />
-                    )}
-                    <IconButton
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpen();
-                      }}
-                      aria-label="Редактировать настроение"
-                      disabled={isDisabled}
-                      sx={{
-                        bgcolor: alpha(theme.palette.primary.main, 0.08),
-                        '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.15) },
-                      }}
-                    >
-                      <EditIcon fontSize="small" sx={{ color: 'rgba(255,255,255,0.95)' }} />
-                    </IconButton>
-                  </Box>
+  <IconButton
+    size="small"
+    onClick={(e) => {
+      e.stopPropagation();
+      handleOpen();
+    }}
+    aria-label="Редактировать настроение"
+    disabled={isDisabled}
+    sx={{
+      bgcolor: alpha(theme.palette.primary.main, 0.08),
+      '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.15) },
+    }}
+  >
+    <EditIcon fontSize="small" sx={{ color: 'rgba(255,255,255,0.95)' }} />
+  </IconButton>
+</Box>
                 </Box>
               </motion.div>
             )}

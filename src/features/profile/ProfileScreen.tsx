@@ -610,49 +610,31 @@ export function ProfileScreen() {
                 </Typography>
 
                 <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    height: 84,
-                  }}
-                >
-                  {moodSaving ? (
-                    <CircularProgress size={28} sx={{ color: accentColor }} />
-                  ) : (
-                    <Box
-                      sx={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <MoodSlider
-                        value={profile?.todayMood ?? null}
-                        onChange={handleMoodSelect}
-                        loading={moodSaving}
-                        transferToProfileOnSelect={false}
-                        profileRoute="/profile/user"
-                        ready={!profile?.loading}
-                      />
-                    </Box>
-                  )}
-                </Box>
-
-                {moodSaving && (
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      display: 'block',
-                      mt: 1,
-                      color: 'primary.main',
-                      fontWeight: 500,
-                    }}
-                  >
-                    Сохраняем...
-                  </Typography>
-                )}
+  sx={{
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 84,
+  }}
+>
+  <Box
+    sx={{
+      width: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}
+  >
+    <MoodSlider
+      value={profile?.todayMood ?? null}
+      onChange={handleMoodSelect}
+      loading={moodSaving} // можно оставить, чтобы блокировать выбор во время сохранения
+      transferToProfileOnSelect={false}
+      profileRoute="/profile/user"
+      ready={!profile?.loading}
+    />
+  </Box>
+</Box>
               </Box>
             </Box>
           </motion.div>
