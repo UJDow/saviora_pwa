@@ -773,12 +773,6 @@ export const MoodSlider: React.FC<MoodSliderProps> = ({
           </AnimatePresence>
         </Box>
       </ClickAwayListener>
-
-      <Snackbar open={snackOpen} autoHideDuration={2400} onClose={() => setSnackOpen(false)} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
-        <Alert onClose={() => setSnackOpen(false)} severity={snackSeverity} sx={{ bgcolor: 'rgba(0,0,0,0.36)', color: '#fff', border: `1px solid ${GLASS_BORDER}` }}>
-          {snackMsg}
-        </Alert>
-      </Snackbar>
     </>
   );
 };

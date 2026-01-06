@@ -8,8 +8,6 @@ import {
   Menu,
   MenuItem,
   Snackbar,
-  Alert,
-  CircularProgress,
 } from '@mui/material';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -325,19 +323,16 @@ export function UserProfileScreen() {
               maxWidth: '48vw',
             }}
           >
-            {moodSaving ? (
-              <CircularProgress size={24} sx={{ color: 'rgba(255,255,255,0.7)' }} />
-            ) : (
-              <MoodSlider
-                value={profile.todayMood ?? null}
-                onChange={handleSaveMood}
-                closeOnSelect="confirmed"
-                transferToProfileOnSelect={false}
-                startCollapsed={Boolean(profile.todayMood)}
-                disabled={profile.loading || moodSaving}
-                ready={!profile.loading}
-              />
-            )}
+            <MoodSlider
+  value={profile.todayMood ?? null}
+  onChange={handleSaveMood}
+  closeOnSelect="confirmed"
+  transferToProfileOnSelect={false}
+  startCollapsed={Boolean(profile.todayMood)}
+  loading={moodSaving} // Передаем состояние загрузки сюда
+  disabled={profile.loading || moodSaving}
+  ready={!profile.loading}
+/>
           </Box>
         </Box>
 
@@ -353,25 +348,51 @@ export function UserProfileScreen() {
       </Box>
 
       {/* Snackbar */}
+      {/* Стеклянный снекбар */}
       <Snackbar
         open={snackbarOpen}
-        autoHideDuration={4000}
+        autoHideDuration={3000}
         onClose={() => setSnackbarOpen(false)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          bottom: '15vh', // чуть выше футера
+        }}
+        ContentProps={{
+          sx: {
+            backgroundColor: 'transparent',
+            boxShadow: 'none',
+            padding: 0,
+          },
+        }}
       >
-        <Alert
-          onClose={() => setSnackbarOpen(false)}
-          severity={snackbarSeverity}
+        <Box
           sx={{
-            width: '100%',
+            px: 2.4,
+            py: 1.4,
+            borderRadius: 2.5,
+            display: 'flex',
             alignItems: 'center',
-            bgcolor: 'rgba(0,0,0,0.35)',
-            color: '#fff',
+            gap: 1,
+            background: 'rgba(255,255,255,0.10)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
             border: `1px solid ${glassBorder}`,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+            color: '#fff',
+            maxWidth: 520,
           }}
         >
-          {snackbarMessage}
-        </Alert>
+          <Typography
+            sx={{
+              fontSize: '1.0rem',
+              whiteSpace: 'pre-wrap',
+              textAlign: 'center',
+              width: '100%'
+            }}
+          >
+            {snackbarMessage}
+          </Typography>
+        </Box>
       </Snackbar>
     </Box>
   );
