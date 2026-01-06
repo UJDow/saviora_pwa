@@ -647,17 +647,17 @@ export const MoodSlider: React.FC<MoodSliderProps> = ({
                       }}
                     >
                       <Typography
-                        variant="body1"
-                        sx={{
-                          color: 'rgba(255,255,255,0.88)',
-                          textAlign: 'center',
-                          fontWeight: 600,
-                          fontSize: { xs: '0.95rem', sm: '1rem' },
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {saving || loading ? 'Сохраняем...' : moodToShow ? moodToShow.fullLabel : ''}
-                      </Typography>
+  variant="body1"
+  sx={{
+    color: 'rgba(255,255,255,0.88)',
+    textAlign: 'center',
+    fontWeight: 600,
+    fontSize: { xs: '0.95rem', sm: '1rem' },
+    lineHeight: 1.45,
+  }}
+>
+  {moodToShow ? moodToShow.fullLabel : ''}
+</Typography>
                     </Box>
                   </Box>
                 </Box>
