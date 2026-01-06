@@ -31,6 +31,20 @@ function normalizeOrigin(o) {
   return o.endsWith('/') ? o.slice(0, -1) : o;
 }
 
+function buildRateHeaders(rateLimitResult, corsHeaders, fallbackLimit, fallbackWindowMs) {
+  const limit = rateLimitResult?.limit ?? fallbackLimit;
+  const resetAt = rateLimitResult?.resetAt ?? (Date.now() + (fallbackWindowMs ?? 60000));
+  const remaining = Math.max(0, rateLimitResult?.remaining ?? 0);
+
+  return {
+    'Content-Type': 'application/json',
+    'X-RateLimit-Limit': String(limit),
+    'X-RateLimit-Remaining': String(remaining),
+    'X-RateLimit-Reset': String(resetAt),
+    ...corsHeaders,
+  };
+}
+
 function buildCorsHeaders(origin) {
   const norm = normalizeOrigin(origin || '');
   const base = {
@@ -1736,86 +1750,158 @@ async function getUserEmail(request, env) {
   return payload.email;
 }
 
-// Функция для обращения к Durable Object
-async function checkRateLimitDO(env, userEmail, maxRequests = 50, windowMs = 30000) {
-  if (!userEmail) {
-    return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowMs };
+// robust DO client
+async function checkRateLimitDO(env, key, maxRequests, windowMs) {
+  const fallback = () => ({
+    error: true,
+    allowed: true, // чтобы старый код не ломался, если где-то не учитывается error
+    count: 0,
+    remaining: maxRequests,
+    resetAt: Date.now() + windowMs,
+  });
+
+  if (!key) {
+    // без ключа — как раньше, но без error
+    return {
+      allowed: true,
+      count: 0,
+      remaining: maxRequests,
+      resetAt: Date.now() + windowMs,
+    };
   }
 
-  const normalized = String(userEmail).trim().toLowerCase();
+  const normalized = String(key).trim().toLowerCase();
   const id = env.RATE_LIMIT_DO.idFromName(normalized);
   const obj = env.RATE_LIMIT_DO.get(id);
 
-  // Отправляем запрос в DO
   try {
     const res = await obj.fetch('https://rate/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'hit', maxRequests, windowMs })
+      body: JSON.stringify({ action: 'hit', maxRequests, windowMs }),
     });
 
     if (!res.ok) {
-      // Если DO вернул ошибку — fail-open или можно трактовать как fail-closed; здесь мы prefer fail-open
       console.error('[checkRateLimitDO] DO returned non-ok status', res.status);
-      return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowMs };
+      return fallback();
     }
 
-    const data = await res.json();
-    // data: { allowed, count, remaining, resetAt }
-    return data;
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      console.error('[checkRateLimitDO] failed to parse DO response JSON', e);
+      return fallback();
+    }
+
+    return {
+      allowed: Boolean(data.allowed),
+      count: Number.isFinite(data.count) ? data.count : 0,
+      remaining: Number.isFinite(data.remaining)
+        ? data.remaining
+        : Math.max(0, maxRequests - (data.count || 0)),
+      resetAt: Number.isFinite(data.resetAt) ? data.resetAt : Date.now() + windowMs,
+    };
   } catch (e) {
     console.error('[checkRateLimitDO] error contacting DO:', e);
-    // В случае ошибки связи — fail-open чтобы не ломать UX; если предпочитаешь блокировать — поменяй на allowed:false
-    return { allowed: true, remaining: maxRequests, resetAt: Date.now() + windowMs };
+    return fallback();
   }
 }
 
-// Обновлённая middleware — использует Durable Object
-async function withAuthAndRateLimit(request, env, corsHeaders, options = {}) {
-  const { skipTrial = false, maxRequests = 50, windowMs = 30000 } = options;
+// middleware
+async function withAuthAndRateLimit(request, env, corsHeaders = {}, options = {}) {
+  const {
+    skipTrial = false,
+    maxRequests = 50,
+    windowMs = 30000,
+    requireRateLimit = false,
+    rateKey,            // кастомный ключ, если нужно
+    scope = 'endpoint', // 'endpoint' | 'user' | 'custom'
+  } = options;
 
-  // 1. Проверка авторизации
-  const userEmail = await getUserEmail(request, env); // предполагается, что функция определена
+  // 1. Авторизация
+  const userEmail = await getUserEmail(request, env);
   if (!userEmail) {
-    return new Response(JSON.stringify({
-      error: 'unauthorized',
-      message: 'Invalid or missing authorization token'
-    }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'unauthorized',
+        message: 'Invalid or missing authorization token',
+      }),
+      {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 
-  // 2. Проверка trial (если не skipTrial)
+  // 2. Trial
   if (!skipTrial && !(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
-  // 3. Проверка rate limit (через DO)
-  const rateLimitResult = await checkRateLimitDO(env, userEmail, maxRequests, windowMs);
-  if (!rateLimitResult.allowed) {
-    return new Response(JSON.stringify({
-      error: 'rate_limit_exceeded',
-      message: 'Too many requests',
-      resetAt: rateLimitResult.resetAt
-    }), {
-      status: 429,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-RateLimit-Limit': String(maxRequests),
-        'X-RateLimit-Remaining': String(0),
-        'X-RateLimit-Reset': String(rateLimitResult.resetAt),
-        'Retry-After': String(Math.max(0, Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000))),
-        ...corsHeaders
+  // 3. Формируем ключ для rate limit
+  let key;
+  if (rateKey) {
+    key = rateKey;
+  } else if (scope === 'user') {
+    key = `user:${userEmail}`;
+  } else {
+    // scope === 'endpoint' по умолчанию: лимит на (user + endpoint)
+    const url = new URL(request.url);
+    key = `user:${userEmail}:${request.method}:${url.pathname}`;
+  }
+
+  // 4. Rate limit via DO
+  const rateLimitResult = await checkRateLimitDO(env, key, maxRequests, windowMs);
+
+  // 4a. DO сломался, а для эндпоинта требуем рабочий лимитер → fail-close, не зовём DeepSeek
+  if (rateLimitResult.error && requireRateLimit) {
+    return new Response(
+      JSON.stringify({
+        error: 'rate_limiter_unavailable',
+        message: 'Rate limiter is temporarily unavailable, please try again later',
+      }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       }
-    });
+    );
   }
 
-  // Всё ОК — возвращаем userEmail
-  return { userEmail };
+  // 4b. Превышен лимит
+  if (!rateLimitResult.allowed) {
+    return new Response(
+      JSON.stringify({
+        error: 'rate_limit_exceeded',
+        message: 'Too many requests',
+        resetAt: rateLimitResult.resetAt,
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(maxRequests),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult.remaining || 0)
+          ),
+          'X-RateLimit-Reset': String(rateLimitResult.resetAt),
+          'Retry-After': String(
+            Math.max(
+              0,
+              Math.ceil((rateLimitResult.resetAt - Date.now()) / 1000)
+            )
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  // Всё ОК — возвращаем userEmail и rateLimitResult
+  return { userEmail, rateLimitResult };
 }
 
 // ===== end Personal goals helpers =====
@@ -1856,124 +1942,259 @@ export default {
     // === PERSONAL GOALS API ===
 
     // GET /goals - список целей с прогрессом
-    if (url.pathname === '/goals' && request.method === 'GET') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+if (url.pathname === '/goals' && request.method === 'GET') {
+  // Мягкий лимит: 60 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
 
-      try {
-        const goals = await getGoalsWithProgress(env, userEmail);
-        return new Response(JSON.stringify({ goals }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('GET /goals error', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const goals = await getGoalsWithProgress(env, userEmail);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ goals }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('GET /goals error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       }
-    }
+    );
+  }
+}
 
     // POST /goals - создать цель
-    if (url.pathname === '/goals' && request.method === 'POST') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+if (url.pathname === '/goals' && request.method === 'POST') {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
 
-      const ct = request.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
-        return new Response(JSON.stringify({ error: 'Invalid content type' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+  const { userEmail, rateLimitResult } = authResult;
 
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-
-      const { title, goalType, startDate } = body || {};
-      if (!title || !goalType || !startDate) {
-        return new Response(JSON.stringify({ error: 'title, goalType and startDate are required' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-
-      try {
-        const resCreate = await createGoal(env, userEmail, body);
-        return new Response(JSON.stringify({ id: resCreate.id }), {
-          status: 201,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('POST /goals error', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
-
-    // POST /goals/:id/event - добавить событие (Сделать)
-    if (request.method === 'POST' && pathParts.length === 3 && pathParts[0] === 'goals' && pathParts[2] === 'event') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-
-      const goalId = pathParts[1];
-
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        body = {};
-      }
-
-      try {
-        const resAdd = await addGoalEvent(env, userEmail, goalId, body || {});
-        return new Response(JSON.stringify(resAdd), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('POST /goals/:id/event error', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
-
-    // PUT /goals/:id - обновить цель (включая target_count)
-if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goals') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+  const ct = request.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const { title, goalType, startDate } = body || {};
+  if (!title || !goalType || !startDate) {
+    return new Response(
+      JSON.stringify({
+        error: 'title, goalType and startDate are required',
+      }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  try {
+    const resCreate = await createGoal(env, userEmail, body);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ id: resCreate.id }), {
+      status: 201,
+      headers,
+    });
+  } catch (e) {
+    console.error('POST /goals error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+}
+
+    // POST /goals/:id/event - добавить событие (Сделать)
+if (
+  request.method === 'POST' &&
+  pathParts.length === 3 &&
+  pathParts[0] === 'goals' &&
+  pathParts[2] === 'event'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  const goalId = pathParts[1];
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+
+  try {
+    const resAdd = await addGoalEvent(env, userEmail, goalId, body || {});
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify(resAdd), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('POST /goals/:id/event error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+}
+
+    // PUT /goals/:id - обновить цель (включая target_count)
+if (
+  request.method === 'PUT' &&
+  pathParts.length === 2 &&
+  pathParts[0] === 'goals'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const goalId = pathParts[1];
 
@@ -1983,12 +2204,37 @@ if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goal
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const userId = await getUserIdByEmail(env, userEmail);
-  if (!userId) throw new Error('User not found in DB');
+  if (!userId) {
+    return new Response(JSON.stringify({ error: 'User not found in DB' }), {
+      status: 404,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
 
   const {
     title,
@@ -1998,299 +2244,652 @@ if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'goal
     unit,
     period,
     dueDate,
-    status
-  } = body;
+    status,
+  } = body || {};
 
   try {
     const sets = [];
     const binds = [];
 
-    if (typeof title !== 'undefined') { sets.push('title = ?'); binds.push(title); }
-    if (typeof description !== 'undefined') { sets.push('description = ?'); binds.push(description); }
-    if (typeof category !== 'undefined') { sets.push('category = ?'); binds.push(category); }
-    if (typeof targetCount !== 'undefined') { sets.push('target_count = ?'); binds.push(targetCount); }
-    if (typeof unit !== 'undefined') { sets.push('unit = ?'); binds.push(unit); }
-    if (typeof period !== 'undefined') { sets.push('period = ?'); binds.push(period); }
-    if (typeof dueDate !== 'undefined') { sets.push('due_date = ?'); binds.push(dueDate); }
-    if (typeof status !== 'undefined') { sets.push('status = ?'); binds.push(status); }
+    if (typeof title !== 'undefined') {
+      sets.push('title = ?');
+      binds.push(title);
+    }
+    if (typeof description !== 'undefined') {
+      sets.push('description = ?');
+      binds.push(description);
+    }
+    if (typeof category !== 'undefined') {
+      sets.push('category = ?');
+      binds.push(category);
+    }
+    if (typeof targetCount !== 'undefined') {
+      sets.push('target_count = ?');
+      binds.push(targetCount);
+    }
+    if (typeof unit !== 'undefined') {
+      sets.push('unit = ?');
+      binds.push(unit);
+    }
+    if (typeof period !== 'undefined') {
+      sets.push('period = ?');
+      binds.push(period);
+    }
+    if (typeof dueDate !== 'undefined') {
+      sets.push('due_date = ?');
+      binds.push(dueDate);
+    }
+    if (typeof status !== 'undefined') {
+      sets.push('status = ?');
+      binds.push(status);
+    }
 
-    sets.push('updated_at = ?'); // ✅ ИСПРАВЛЕНО
-    binds.push(Date.now());      // ✅ ИСПРАВЛЕНО
+    sets.push('updated_at = ?');
+    binds.push(Date.now());
 
     binds.push(goalId, userId);
 
-    const sql = `UPDATE personal_goals SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`;
+    const sql = `UPDATE personal_goals SET ${sets.join(
+      ', '
+    )} WHERE id = ? AND user_id = ?`;
     await env.DB.prepare(sql).bind(...binds).run();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
 
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('PUT /goals/:id error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('PUT /goals/:id error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // DELETE /goals/:id - удалить цель
-if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'goals') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+if (
+  request.method === 'DELETE' &&
+  pathParts.length === 2 &&
+  pathParts[0] === 'goals'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const goalId = pathParts[1];
 
   try {
     const userId = await getUserIdByEmail(env, userEmail);
-    if (!userId) throw new Error('User not found in DB');
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'User not found in DB' }), {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      });
+    }
 
     // Удаляем все события цели
     await env.DB.prepare(
       'DELETE FROM personal_goal_events WHERE goal_id = ? AND user_id = ?'
-    ).bind(goalId, userId).run();
+    )
+      .bind(goalId, userId)
+      .run();
 
     // Удаляем саму цель
     const res = await env.DB.prepare(
       'DELETE FROM personal_goals WHERE id = ? AND user_id = ?'
-    ).bind(goalId, userId).run();
+    )
+      .bind(goalId, userId)
+      .run();
 
     if (res.changes === 0) {
       return new Response(JSON.stringify({ error: 'Goal not found' }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       });
     }
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('DELETE /goals/:id error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('DELETE /goals/:id error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
     // GET /goals/timeline?range=7d
-    if (url.pathname === '/goals/timeline' && request.method === 'GET') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+if (url.pathname === '/goals/timeline' && request.method === 'GET') {
+  // Мягкий лимит: 60 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
 
-      const range = url.searchParams.get('range') || '30d';
+  const { userEmail, rateLimitResult } = authResult;
 
-      try {
-        const points = await getGoalsTimeline(env, userEmail, range);
-        return new Response(JSON.stringify({ points }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('GET /goals/timeline error', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+  const range = url.searchParams.get('range') || '30d';
 
-    if (url.pathname === '/register' && request.method === 'POST') {
-      const ct = request.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
-        return new Response(JSON.stringify({ error: 'Invalid content type' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      const { email, password } = body;
-      if (!email || !password) {
-        return new Response(JSON.stringify({ error: 'Missing email or password' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      const userKey = `user:${email}`;
-      const existing = await env.USERS_KV.get(userKey);
-      if (existing) {
-        return new Response(JSON.stringify({ error: 'User already exists' }), {
-          status: 409, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
-        const hash = await hashPassword(password);
-        const user = { email, password: hash, created: Date.now(), tokenVersion: 0 };
-        await env.USERS_KV.put(userKey, JSON.stringify(user));
-        return new Response(JSON.stringify({ success: true }), {
-          status: 201, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('Error during registration:', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+  try {
+    const points = await getGoalsTimeline(env, userEmail, range);
 
-    if (url.pathname === '/login' && request.method === 'POST') {
-      const ct = request.headers.get('content-type') || '';
-      if (!ct.includes('application/json')) {
-        return new Response(JSON.stringify({ error: 'Invalid content type' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ points }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('GET /goals/timeline error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       }
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+    );
+  }
+}
+    // --- AUTH: REGISTER ---
+if (url.pathname === '/register' && request.method === 'POST') {
+  const ct = request.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const { email, password } = body || {};
+  if (!email || !password) {
+    return new Response(
+      JSON.stringify({ error: 'Missing email or password' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       }
-      const { email, password } = body;
-      if (!email || !password) {
-        return new Response(JSON.stringify({ error: 'Missing email or password' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+    );
+  }
+
+  // Нормализуем email так же, как в checkRateLimitDO
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+  // Лимит регистраций: 5 запросов за 60 секунд на один email
+  let rateLimitResult;
+  try {
+    rateLimitResult = await checkRateLimitDO(env, normalizedEmail, 5, 60000);
+  } catch (e) {
+    console.error('[REGISTER] rate limit error:', e);
+    // fail-open: если DO лёг, не блокируем регистрацию
+    rateLimitResult = {
+      allowed: true,
+      remaining: 5,
+      resetAt: Date.now() + 60000,
+    };
+  }
+
+  if (!rateLimitResult.allowed) {
+    return new Response(
+      JSON.stringify({
+        error: 'rate_limit_exceeded',
+        message: 'Too many registration attempts, please try again later.',
+        resetAt: rateLimitResult.resetAt,
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': '5',
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       }
-      const userKey = `user:${email}`;
-      const userRaw = await env.USERS_KV.get(userKey);
-      if (!userRaw) {
-        return new Response(JSON.stringify({ error: 'User not found' }), {
-          status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+    );
+  }
+
+  const userKey = `user:${normalizedEmail}`;
+  const existing = await env.USERS_KV.get(userKey);
+  if (existing) {
+    return new Response(JSON.stringify({ error: 'User already exists' }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    const hash = await hashPassword(password);
+    const user = {
+      email: normalizedEmail,
+      password: hash,
+      created: Date.now(),
+      tokenVersion: 0,
+    };
+    await env.USERS_KV.put(userKey, JSON.stringify(user));
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': '5',
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 201,
+      headers,
+    });
+  } catch (e) {
+    console.error('Error during registration:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       }
-      let user;
-      try {
-        user = JSON.parse(userRaw);
-      } catch {
-        return new Response(JSON.stringify({ error: 'User data corrupted' }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+    );
+  }
+}
+
+    // --- AUTH: LOGIN ---
+if (url.pathname === '/login' && request.method === 'POST') {
+  const ct = request.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    return new Response(JSON.stringify({ error: 'Invalid content type' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const { email, password } = body || {};
+  if (!email || !password) {
+    return new Response(
+      JSON.stringify({ error: 'Missing email or password' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       }
-      try {
-        const hash = await hashPassword(password);
-        if (user.password !== hash) {
-          return new Response(JSON.stringify({ error: 'Invalid password' }), {
-            status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
-        }
-      } catch (e) {
-        console.error('Error hashing password:', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+    );
+  }
+
+  // Нормализуем email так же, как в /register
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+  // Лимит логинов: 10 попыток за 60 секунд на один email
+  let rateLimitResult;
+  try {
+    rateLimitResult = await checkRateLimitDO(env, normalizedEmail, 5, 60000);
+  } catch (e) {
+    console.error('[LOGIN] rate limit error:', e);
+    // fail-open: не хотим ломать логин, если DO недоступен
+    rateLimitResult = {
+      allowed: true,
+      remaining: 10,
+      resetAt: Date.now() + 60000,
+    };
+  }
+
+  if (!rateLimitResult.allowed) {
+    return new Response(
+      JSON.stringify({
+        error: 'rate_limit_exceeded',
+        message: 'Too many login attempts, please try again later.',
+        resetAt: rateLimitResult.resetAt,
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': '10',
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       }
-      const now = Date.now();
-      const trialPeriod = 365 * 24 * 60 * 60 * 1000;
-      if (now - user.created > trialPeriod) {
-        return new Response(JSON.stringify({ error: 'Trial expired' }), {
-          status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      const tokenVersion = user.tokenVersion ?? 0;
-      const payload = { email, iat: Date.now(), exp: Date.now() + 7 * 24 * 60 * 60 * 1000, tv: tokenVersion };
-      const token = await createToken(payload, JWT_SECRET);
-      return new Response(JSON.stringify({ token }), {
-        status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    );
+  }
+
+  const userKey = `user:${normalizedEmail}`;
+  const userRaw = await env.USERS_KV.get(userKey);
+  if (!userRaw) {
+    return new Response(JSON.stringify({ error: 'User not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  let user;
+  try {
+    user = JSON.parse(userRaw);
+  } catch {
+    return new Response(JSON.stringify({ error: 'User data corrupted' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  try {
+    const hash = await hashPassword(password);
+    if (user.password !== hash) {
+      return new Response(JSON.stringify({ error: 'Invalid password' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
+  } catch (e) {
+    console.error('Error hashing password:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
+  }
+
+  const now = Date.now();
+  const trialPeriod = 365 * 24 * 60 * 60 * 1000;
+  if (now - user.created > trialPeriod) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const tokenVersion = user.tokenVersion ?? 0;
+  const payload = {
+    email: normalizedEmail,
+    iat: Date.now(),
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    tv: tokenVersion,
+  };
+  const token = await createToken(payload, JWT_SECRET);
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-RateLimit-Limit': '10',
+    'X-RateLimit-Remaining': String(
+      Math.max(0, rateLimitResult.remaining ?? 0)
+    ),
+    'X-RateLimit-Reset': String(
+      rateLimitResult.resetAt ?? Date.now() + 60000
+    ),
+    ...corsHeaders,
+  };
+
+  return new Response(JSON.stringify({ token }), {
+    status: 200,
+    headers,
+  });
+}
 
     // --- GET /me (заменить существующий блок) ---
 if (url.pathname === '/me' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   // Берём метаданные из KV (регистрация, password и т.д.)
   const userRaw = await env.USERS_KV.get(`user:${userEmail}`);
   if (!userRaw) {
     return new Response(JSON.stringify({ error: 'User not found' }), {
       status: 404,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   let kvUser = {};
-  try { kvUser = JSON.parse(userRaw); } catch (e) { kvUser = {}; }
+  try {
+    kvUser = JSON.parse(userRaw);
+  } catch (e) {
+    kvUser = {};
+  }
 
   // Берём дополнительные поля из D1 (если есть)
   const userRow = await env.DB.prepare(
     'SELECT name, avatar_icon, avatar_image_url, created_at FROM users WHERE email = ?'
-  ).bind(userEmail).first();
+  )
+    .bind(userEmail)
+    .first();
 
   const name = userRow?.name ?? kvUser.name ?? null;
   const avatar_icon = userRow?.avatar_icon ?? kvUser.avatar_icon ?? null;
-  const avatar_image_url = userRow?.avatar_image_url ?? kvUser.avatar_image_url ?? null;
+  const avatar_image_url =
+    userRow?.avatar_image_url ?? kvUser.avatar_image_url ?? null;
 
   // Нормализуем created timestamp (KV хранит ms number, D1 может хранить ISO)
   const createdSrc = kvUser.created ?? userRow?.created_at ?? Date.now();
-  const created = typeof createdSrc === 'number' ? createdSrc : (new Date(createdSrc).getTime() || Date.now());
+  const created =
+    typeof createdSrc === 'number'
+      ? createdSrc
+      : new Date(createdSrc).getTime() || Date.now();
 
   const now = Date.now();
   const trialPeriod = 365 * 24 * 60 * 60 * 1000;
   const msLeft = (created || now) + trialPeriod - now;
-  const daysLeft = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
+  const daysLeft = Math.ceil(
+    msLeft / (24 * 60 * 60 * 1000)
+  );
 
-  // Получаем последнюю подписку пользователя из user_subscription_choices и subscription_plans
-  const subscriptionChoice = await env.DB.prepare(`
+  // Получаем последнюю подписку пользователя
+  const subscriptionChoice = await env.DB.prepare(
+    `
     SELECT usc.plan_id, sp.title, sp.emoji, sp.price
     FROM user_subscription_choices usc
     LEFT JOIN subscription_plans sp ON sp.id = usc.plan_id
     WHERE usc.user_id = ?
     ORDER BY usc.created_at DESC
     LIMIT 1
-  `).bind(userEmail).first();
+  `
+  )
+    .bind(userEmail)
+    .first();
 
   const subscription_plan_id = subscriptionChoice?.plan_id ?? null;
   const subscription_plan_title = subscriptionChoice?.title ?? null;
-  const subscription = subscriptionChoice ? {
-    id: subscriptionChoice.plan_id,
-    title: subscriptionChoice.title,
-    emoji: subscriptionChoice.emoji,
-    price: subscriptionChoice.price,
-  } : null;
+  const subscription = subscriptionChoice
+    ? {
+        id: subscriptionChoice.plan_id,
+        title: subscriptionChoice.title,
+        emoji: subscriptionChoice.emoji,
+        price: subscriptionChoice.price,
+      }
+    : null;
 
-  return new Response(JSON.stringify({
-    email: userEmail,
-    created,
-    trialEndsAt: (created || now) + trialPeriod,
-    trialDaysLeft: daysLeft,
-    name,
-    avatar_icon,
-    avatarIcon: avatar_icon,             // alias для фронтенда
-    avatar_image_url,
-    avatarImageUrl: avatar_image_url,   // alias
-    subscription_plan_id,
-    subscription_plan_title,
-    subscription,
-  }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+    'X-RateLimit-Remaining': String(
+      Math.max(0, rateLimitResult?.remaining ?? 0)
+    ),
+    'X-RateLimit-Reset': String(
+      rateLimitResult?.resetAt ?? Date.now() + 60000
+    ),
+    ...corsHeaders,
+  };
+
+  return new Response(
+    JSON.stringify({
+      email: userEmail,
+      created,
+      trialEndsAt: (created || now) + trialPeriod,
+      trialDaysLeft: daysLeft,
+      name,
+      avatar_icon,
+      avatarIcon: avatar_icon, // alias для фронтенда
+      avatar_image_url,
+      avatarImageUrl: avatar_image_url, // alias
+      subscription_plan_id,
+      subscription_plan_title,
+      subscription,
+    }),
+    {
+      status: 200,
+      headers,
+    }
+  );
 }
 
 // ----------------------------
@@ -2299,267 +2898,654 @@ if (url.pathname === '/me' && request.method === 'GET') {
 
 // GET /plans
 if (url.pathname === '/plans' && request.method === 'GET') {
+  // Мягкий лимит: 60 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { rateLimitResult } = authResult;
+
   try {
     const plans = await getVisiblePlans(env);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ plans }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('GET /plans error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('GET /plans error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // POST /subscription/choice
 if (url.pathname === '/subscription/choice' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const ct = request.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
     return new Response(JSON.stringify({ error: 'Invalid content type' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   let body;
-  try { body = await request.json(); } catch {
+  try {
+    body = await request.json();
+  } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   try {
     // expected body: { plan_id, plan_code, chosen_emoji, chosen_price, is_custom_price, trial_days_left, source, notes }
     const choice = await createSubscriptionChoice(env, userEmail, body || {});
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ ok: true, choice }), {
       status: 201,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('POST /subscription/choice error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error(
+      'POST /subscription/choice error',
+      e && (e.stack || e.message || e)
+    );
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // POST /subscription/modal-open
 if (url.pathname === '/subscription/modal-open' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body = {};
-  try { body = await request.json(); } catch { body = {}; }
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
 
   try {
-    const row = await incrementModalOpenCount(env, userEmail, { choice_id: body?.choice_id || null });
+    const row = await incrementModalOpenCount(env, userEmail, {
+      choice_id: body?.choice_id || null,
+    });
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ ok: true, row }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('POST /subscription/modal-open error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error(
+      'POST /subscription/modal-open error',
+      e && (e.stack || e.message || e)
+    );
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // POST /subscription/confirm
 if (url.pathname === '/subscription/confirm' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body = {};
-  try { body = await request.json(); } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 
   const { choiceId, purchaseAmount } = body || {};
   if (!choiceId) {
     return new Response(JSON.stringify({ error: 'choiceId required' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   try {
-    await confirmPurchaseForChoice(env, userEmail, choiceId, purchaseAmount ?? null);
+    await confirmPurchaseForChoice(
+      env,
+      userEmail,
+      choiceId,
+      purchaseAmount ?? null
+    );
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('POST /subscription/confirm error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error(
+      'POST /subscription/confirm error',
+      e && (e.stack || e.message || e)
+    );
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
-
 // GET /subscription/choices
 if (url.pathname === '/subscription/choices' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Мягкий лимит: 60 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const choices = await getUserSubscriptionChoices(env, userEmail, 50);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ choices }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('GET /subscription/choices error', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error(
+      'GET /subscription/choices error',
+      e && (e.stack || e.message || e)
+    );
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // --- MOODS API (multi-user) ---
 
     // Получить настроение за день
-    if (url.pathname.endsWith('/moods') && request.method === 'GET') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+if (url.pathname.endsWith('/moods') && request.method === 'GET') {
+  // Мягкий лимит: 60 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  const date = url.searchParams.get('date');
+  if (!date) {
+    return new Response(JSON.stringify({ error: 'date required' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  try {
+    const row = await env.DB.prepare(
+      'SELECT context FROM moods WHERE user_email = ? AND date = ?'
+    )
+      .bind(userEmail, date)
+      .first();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(
+      JSON.stringify({ context: row?.context ?? null }),
+      {
+        status: 200,
+        headers,
       }
-      const date = url.searchParams.get('date');
-      if (!date) {
-        return new Response(JSON.stringify({ error: 'date required' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
-        const row = await env.DB.prepare(
-          'SELECT context FROM moods WHERE user_email = ? AND date = ?'
-        ).bind(userEmail, date).first();
-        return new Response(JSON.stringify({ context: row?.context ?? null }), {
-          status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('[MOODS] GET error:', e);
-        return new Response(JSON.stringify({ error: 'database_error' }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+    );
+  } catch (e) {
+    console.error('[MOODS] GET error:', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'database_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+}
 
     // Установить/обновить настроение за день
-    if (url.pathname.endsWith('/moods') && request.method === 'PUT') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
+if (url.pathname.endsWith('/moods') && request.method === 'PUT') {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const { date, context } = body || {};
+  if (!date || !context) {
+    return new Response(
+      JSON.stringify({ error: 'date and context required' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       }
-      let body;
-      try { body = await request.json(); } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      const { date, context } = body;
-      if (!date || !context) {
-        return new Response(JSON.stringify({ error: 'date and context required' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
-        // Используем INSERT OR REPLACE для совместимости с текущей структурой
-        await env.DB.prepare(
-          `INSERT OR REPLACE INTO moods (user_email, date, context, updated_at) 
-           VALUES (?, ?, ?, CURRENT_TIMESTAMP)`
-        ).bind(userEmail, date, context).run();
-        return new Response(JSON.stringify({ success: true }), {
-          status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('[MOODS] PUT error:', e);
-        return new Response(JSON.stringify({ error: 'database_error' }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+    );
+  }
+
+  try {
+    // Используем INSERT OR REPLACE для совместимости с текущей структурой
+    await env.DB.prepare(
+      `INSERT OR REPLACE INTO moods (user_email, date, context, updated_at) 
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`
+    )
+      .bind(userEmail, date, context)
+      .run();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('[MOODS] PUT error:', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'database_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+}
 
     // Получить все настроения за месяц
-    if (url.pathname.endsWith('/moods/month') && request.method === 'GET') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      const year = url.searchParams.get('year');
-      const month = url.searchParams.get('month');
-      if (!year || !month) {
-        return new Response(JSON.stringify({ error: 'year and month required' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
-        const monthStr = String(month).padStart(2, '0');
-        const rows = await env.DB.prepare(
-          'SELECT date, context FROM moods WHERE user_email = ? AND date LIKE ?'
-        ).bind(userEmail, `${year}-${monthStr}-%`).all();
-        return new Response(JSON.stringify({ moods: rows.results }), {
-          status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('[MOODS] GET /month error:', e);
-        return new Response(JSON.stringify({ error: 'database_error' }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-    }
+if (url.pathname.endsWith('/moods/month') && request.method === 'GET') {
+  // Мягкий лимит: 60 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
 
+  const { userEmail, rateLimitResult } = authResult;
+
+  const year = url.searchParams.get('year');
+  const month = url.searchParams.get('month');
+  if (!year || !month) {
+    return new Response(
+      JSON.stringify({ error: 'year and month required' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  try {
+    const monthStr = String(month).padStart(2, '0');
+    const rows = await env.DB.prepare(
+      'SELECT date, context FROM moods WHERE user_email = ? AND date LIKE ?'
+    )
+      .bind(userEmail, `${year}-${monthStr}-%`)
+      .all();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ moods: rows.results }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('[MOODS] GET /month error:', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'database_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+}
     // --- DREAMS API with D1 integration ---
 
 if (url.pathname === '/dreams' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   if (!(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
@@ -2584,7 +3570,9 @@ if (url.pathname === '/dreams' && request.method === 'GET') {
         }
 
         // Загружаем similarArtworks из dream_similar_artworks + artworks
-        const similarRes = await d1.prepare(`
+        const similarRes = await d1
+          .prepare(
+            `
           SELECT
             a.id AS artworkId,
             a.title,
@@ -2597,7 +3585,10 @@ if (url.pathname === '/dreams' && request.method === 'GET') {
           JOIN artworks a ON dsa.artwork_id = a.id
           WHERE dsa.dream_id = ?
           ORDER BY dsa.position ASC
-        `).bind(row.id).all();
+        `
+          )
+          .bind(row.id)
+          .all();
 
         row.similarArtworks = (similarRes.results || []).map((art) => ({
           artworkId: art.artworkId,
@@ -2614,31 +3605,71 @@ if (url.pathname === '/dreams' && request.method === 'GET') {
       })
     );
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify(dreams), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('Error fetching dreams:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('Error fetching dreams:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 if (url.pathname === '/dreams' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   if (!(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
@@ -2648,16 +3679,42 @@ if (url.pathname === '/dreams' && request.method === 'POST') {
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const validation = validateDreamData(body);
   if (!validation.valid) {
-    return new Response(JSON.stringify({ error: 'Invalid dream data', message: validation.error }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'Invalid dream data',
+        message: validation.error,
+      }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   const { dreamText } = body;
@@ -2666,22 +3723,25 @@ if (url.pathname === '/dreams' && request.method === 'POST') {
 
   try {
     const d1 = env.DB;
-    await d1.prepare(
-      `INSERT INTO dreams (id, user, title, dreamText, date, category, dreamSummary, globalFinalInterpretation, blocks, similarArtworks, context)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      id,
-      userEmail,
-      null,
-      dreamText.trim(),
-      date,
-      null,
-      null,
-      null,
-      JSON.stringify([]),
-      JSON.stringify([]), // не используется, но оставляем для совместимости
-      null
-    ).run();
+    await d1
+      .prepare(
+        `INSERT INTO dreams (id, user, title, dreamText, date, category, dreamSummary, globalFinalInterpretation, blocks, similarArtworks, context)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        id,
+        userEmail,
+        null,
+        dreamText.trim(),
+        date,
+        null,
+        null,
+        null,
+        JSON.stringify([]),
+        JSON.stringify([]), // не используется, но оставляем для совместимости
+        null
+      )
+      .run();
 
     const dream = {
       id,
@@ -2694,35 +3754,74 @@ if (url.pathname === '/dreams' && request.method === 'POST') {
       globalFinalInterpretation: null,
       blocks: [],
       similarArtworks: [], // будет заполнено при GET
-      context: null
+      context: null,
+    };
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
     };
 
     return new Response(JSON.stringify(dream), {
       status: 201,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
-    console.error('Error inserting dream:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e instanceof Error ? e.message : String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('Error inserting dream:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e instanceof Error ? e.message : String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'dreams') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   if (!(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
@@ -2730,7 +3829,17 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
   if (!id) {
     return new Response(JSON.stringify({ error: 'Missing dream id' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
@@ -2744,7 +3853,17 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
     if (!row) {
       return new Response(JSON.stringify({ error: 'Dream not found' }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       });
     }
 
@@ -2760,7 +3879,9 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
     }
 
     // Загружаем similarArtworks из dream_similar_artworks + artworks
-    const similarRes = await d1.prepare(`
+    const similarRes = await d1
+      .prepare(
+        `
       SELECT
         a.id AS artworkId,
         a.title,
@@ -2773,7 +3894,10 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
       JOIN artworks a ON dsa.artwork_id = a.id
       WHERE dsa.dream_id = ?
       ORDER BY dsa.position ASC
-    `).bind(id).all();
+    `
+      )
+      .bind(id)
+      .all();
 
     row.similarArtworks = (similarRes.results || []).map((art) => ({
       artworkId: art.artworkId,
@@ -2786,81 +3910,231 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
       imageUrl: art.value, // для совместимости
     }));
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify(normalizeDream(row)), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
-    console.error('Error fetching dream:', e);
+    console.error('Error fetching dream:', e && (e.stack || e.message || e));
     return new Response(
-      JSON.stringify({ error: 'internal_error', message: e.message }),
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
       {
         status: 500,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       }
     );
   }
 }
 
     if (url.pathname.startsWith('/dreams/') && request.method === 'DELETE') {
-      const userEmail = await getUserEmail(request, env);
-      if (!userEmail) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      if (!(await isTrialActive(userEmail, env))) {
-        return new Response(JSON.stringify({ error: 'Trial expired' }), {
-          status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      const id = url.pathname.split('/')[2];
-      if (!id) {
-        return new Response(JSON.stringify({ error: 'Missing dream id' }), {
-          status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
-      try {
-        const d1 = env.DB;
-        const result = await d1.prepare('DELETE FROM dreams WHERE id = ? AND user = ?').bind(id, userEmail).run();
-        if (result.changes === 0) {
-          return new Response(JSON.stringify({ error: 'Dream not found' }), {
-            status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
-        }
-        return new Response(JSON.stringify({ success: true }), {
-          status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      } catch (e) {
-        console.error('Error deleting dream:', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-          status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-        });
-      }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  if (!(await isTrialActive(userEmail, env))) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const id = url.pathname.split('/')[2];
+  if (!id) {
+    return new Response(JSON.stringify({ error: 'Missing dream id' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  try {
+    const d1 = env.DB;
+    const result = await d1
+      .prepare('DELETE FROM dreams WHERE id = ? AND user = ?')
+      .bind(id, userEmail)
+      .run();
+
+    if (result.changes === 0) {
+      return new Response(JSON.stringify({ error: 'Dream not found' }), {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      });
     }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('Error deleting dream:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+}
 
     // PUT /dreams/:dreamId/messages/:messageId/artwork_like
 // pathParts example: ['dreams', '<dreamId>', 'messages', '<messageId>', 'artwork_like'] -> length === 5
-if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'dreams' && pathParts[2] === 'messages' && pathParts[4] === 'artwork_like') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-  }
+if (
+  request.method === 'PUT' &&
+  pathParts.length === 5 &&
+  pathParts[0] === 'dreams' &&
+  pathParts[2] === 'messages' &&
+  pathParts[4] === 'artwork_like'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   if (!(await isTrialActive(userEmail, env))) {
-    return new Response(JSON.stringify({ error: 'Trial expired' }), { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 
   const dreamId = pathParts[1];
   const messageId = pathParts[3];
 
   let body;
-  try { body = await request.json(); } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 
   const { liked } = body || {};
   if (typeof liked !== 'boolean') {
-    return new Response(JSON.stringify({ error: 'liked must be boolean' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    return new Response(
+      JSON.stringify({ error: 'liked must be boolean' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   try {
@@ -2868,38 +4142,104 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'drea
       dreamId,
       messageId,
       liked,
-      userEmail
+      userEmail,
     });
+
     if (!message) {
-      return new Response(JSON.stringify({ error: 'Сообщение не найдено' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+      return new Response(
+        JSON.stringify({ error: 'Сообщение не найдено' }),
+        {
+          status: 404,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+            'X-RateLimit-Remaining': String(
+              Math.max(0, rateLimitResult?.remaining ?? 0)
+            ),
+            'X-RateLimit-Reset': String(
+              rateLimitResult?.resetAt ?? Date.now() + 60000
+            ),
+            ...corsHeaders,
+          },
+        }
+      );
     }
 
-    return new Response(JSON.stringify({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      meta: message.meta ? JSON.parse(message.meta) : {},
-      createdAt: message.created_at
-    }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(
+      JSON.stringify({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        meta: message.meta ? JSON.parse(message.meta) : {},
+        createdAt: message.created_at,
+      }),
+      { status: 200, headers }
+    );
   } catch (err) {
-    console.error('toggle artwork like error', err);
-    return new Response(JSON.stringify({ error: 'Не удалось сохранить инсайт' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error('toggle artwork like error', err && (err.stack || err.message || err));
+    return new Response(
+      JSON.stringify({ error: 'Не удалось сохранить инсайт' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // PUT /dreams/:dreamId/messages/:messageId/like
-if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'dreams' && pathParts[2] === 'messages' && pathParts[4] === 'like') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+if (
+  request.method === 'PUT' &&
+  pathParts.length === 5 &&
+  pathParts[0] === 'dreams' &&
+  pathParts[2] === 'messages' &&
+  pathParts[4] === 'like'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   if (!(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
@@ -2907,19 +4247,44 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'drea
   const messageId = pathParts[3];
 
   let body;
-  try { body = await request.json(); } catch {
+  try {
+    body = await request.json();
+  } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const { liked } = body || {};
   if (typeof liked !== 'boolean') {
-    return new Response(JSON.stringify({ error: 'liked must be boolean' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({ error: 'liked must be boolean' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   try {
@@ -2927,71 +4292,343 @@ if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'drea
       dreamId,
       messageId,
       liked,
-      userEmail
+      userEmail,
     });
+
     if (!message) {
-      return new Response(JSON.stringify({ error: 'Сообщение не найдено' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      return new Response(
+        JSON.stringify({ error: 'Сообщение не найдено' }),
+        {
+          status: 404,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+            'X-RateLimit-Remaining': String(
+              Math.max(0, rateLimitResult?.remaining ?? 0)
+            ),
+            'X-RateLimit-Reset': String(
+              rateLimitResult?.resetAt ?? Date.now() + 60000
+            ),
+            ...corsHeaders,
+          },
+        }
+      );
     }
 
-    return new Response(JSON.stringify({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      meta: message.meta ? JSON.parse(message.meta) : {},
-      createdAt: message.created_at
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(
+      JSON.stringify({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        meta: message.meta ? JSON.parse(message.meta) : {},
+        createdAt: message.created_at,
+      }),
+      {
+        status: 200,
+        headers,
+      }
+    );
   } catch (err) {
-    console.error('toggle like error', err);
-    return new Response(JSON.stringify({ error: 'Не удалось сохранить инсайт' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('toggle like error', err && (err.stack || err.message || err));
+    return new Response(
+      JSON.stringify({ error: 'Не удалось сохранить инсайт' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
-
 // PUT /daily_convos/:dailyConvoId/messages/:messageId/artwork_like
-if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'daily_convos' && pathParts[2] === 'messages' && pathParts[4] === 'artwork_like') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+if (
+  request.method === 'PUT' &&
+  pathParts.length === 5 &&
+  pathParts[0] === 'daily_convos' &&
+  pathParts[2] === 'messages' &&
+  pathParts[4] === 'artwork_like'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const dailyConvoId = pathParts[1];
   const messageId = pathParts[3];
+
   let body;
-  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
-  const { liked } = body || {};
-  if (typeof liked !== 'boolean') return new Response(JSON.stringify({ error: 'liked must be boolean' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   try {
-    const message = await toggleDailyMessageArtworkInsight(env, { dailyConvoId, messageId, liked, userEmail });
-    if (!message) return new Response(JSON.stringify({ error: 'Сообщение не найдено' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-    return new Response(JSON.stringify({ id: message.id, role: message.role, content: message.content, meta: message.meta ? JSON.parse(message.meta) : {}, createdAt: message.created_at }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const { liked } = body || {};
+  if (typeof liked !== 'boolean') {
+    return new Response(
+      JSON.stringify({ error: 'liked must be boolean' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  try {
+    const message = await toggleDailyMessageArtworkInsight(env, {
+      dailyConvoId,
+      messageId,
+      liked,
+      userEmail,
+    });
+
+    if (!message) {
+      return new Response(
+        JSON.stringify({ error: 'Сообщение не найдено' }),
+        {
+          status: 404,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+            'X-RateLimit-Remaining': String(
+              Math.max(0, rateLimitResult?.remaining ?? 0)
+            ),
+            'X-RateLimit-Reset': String(
+              rateLimitResult?.resetAt ?? Date.now() + 60000
+            ),
+            ...corsHeaders,
+          },
+        }
+      );
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(
+      JSON.stringify({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        meta: message.meta ? JSON.parse(message.meta) : {},
+        createdAt: message.created_at,
+      }),
+      { status: 200, headers }
+    );
   } catch (err) {
-    console.error('toggle daily artwork like error', err);
-    return new Response(JSON.stringify({ error: 'Не удалось сохранить инсайт' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error(
+      'toggle daily artwork like error',
+      err && (err.stack || err.message || err)
+    );
+    return new Response(
+      JSON.stringify({ error: 'Не удалось сохранить инсайт' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
-
 // PUT /daily_convos/:dailyConvoId/messages/:messageId/like
-if (request.method === 'PUT' && pathParts.length === 5 && pathParts[0] === 'daily_convos' && pathParts[2] === 'messages' && pathParts[4] === 'like') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+if (
+  request.method === 'PUT' &&
+  pathParts.length === 5 &&
+  pathParts[0] === 'daily_convos' &&
+  pathParts[2] === 'messages' &&
+  pathParts[4] === 'like'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const dailyConvoId = pathParts[1];
   const messageId = pathParts[3];
+
   let body;
-  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
-  const { liked } = body || {};
-  if (typeof liked !== 'boolean') return new Response(JSON.stringify({ error: 'liked must be boolean' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
   try {
-    const message = await toggleDailyMessageInsight(env, { dailyConvoId, messageId, liked, userEmail });
-    if (!message) return new Response(JSON.stringify({ error: 'Сообщение не найдено' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-    return new Response(JSON.stringify({ id: message.id, role: message.role, content: message.content, meta: message.meta ? JSON.parse(message.meta) : {}, createdAt: message.created_at }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const { liked } = body || {};
+  if (typeof liked !== 'boolean') {
+    return new Response(
+      JSON.stringify({ error: 'liked must be boolean' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  try {
+    const message = await toggleDailyMessageInsight(env, {
+      dailyConvoId,
+      messageId,
+      liked,
+      userEmail,
+    });
+
+    if (!message) {
+      return new Response(
+        JSON.stringify({ error: 'Сообщение не найдено' }),
+        {
+          status: 404,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+            'X-RateLimit-Remaining': String(
+              Math.max(0, rateLimitResult?.remaining ?? 0)
+            ),
+            'X-RateLimit-Reset': String(
+              rateLimitResult?.resetAt ?? Date.now() + 60000
+            ),
+            ...corsHeaders,
+          },
+        }
+      );
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(
+      JSON.stringify({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        meta: message.meta ? JSON.parse(message.meta) : {},
+        createdAt: message.created_at,
+      }),
+      { status: 200, headers }
+    );
   } catch (err) {
-    console.error('toggle daily like error', err);
-    return new Response(JSON.stringify({ error: 'Не удалось сохранить инсайт' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error(
+      'toggle daily like error',
+      err && (err.stack || err.message || err)
+    );
+    return new Response(
+      JSON.stringify({ error: 'Не удалось сохранить инсайт' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
@@ -3002,23 +4639,35 @@ if (
   pathParts[0] === 'dreams' &&
   pathParts[2] === 'insights'
 ) {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   if (!(await isTrialActive(userEmail, env))) {
     return new Response(JSON.stringify({ error: 'Trial expired' }), {
       status: 403,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const dreamId = pathParts[1];
-  const url = new URL(request.url);
-  const metaKey = url.searchParams.get('metaKey');
+  const urlObj = new URL(request.url);
+  const metaKey = urlObj.searchParams.get('metaKey');
 
   // Whitelist разрешённых фильтров
   const allowedFilters = {
@@ -3037,14 +4686,18 @@ if (
     `;
 
   try {
-    const { results } = await env.DB.prepare(`
+    const { results } = await env.DB.prepare(
+      `
       SELECT id, content, meta, created_at
       FROM messages
       WHERE dream_id = ?
         AND user = ?
         ${filterClause}
       ORDER BY created_at DESC
-    `).bind(dreamId, userEmail).all();
+    `
+    )
+      .bind(dreamId, userEmail)
+      .all();
 
     const insights = (results ?? []).map((row) => {
       const meta = row.meta ? JSON.parse(row.meta) : {};
@@ -3054,9 +4707,16 @@ if (
           : row.created_at;
 
       // Для совместимости: если metaKey=insightArtworksLiked, то insightLiked = insightArtworksLiked
-      const artworksFlag = Boolean(meta.insightArtworksLiked ?? meta.insight_artworks_liked ?? 0);
+      const artworksFlag = Boolean(
+        meta.insightArtworksLiked ?? meta.insight_artworks_liked ?? 0
+      );
       const likedFlag = Boolean(
-        meta.insightLiked ?? meta.insight_liked ?? meta.liked ?? meta.isFavorite ?? meta.isInsight ?? meta.favorite
+        meta.insightLiked ??
+          meta.insight_liked ??
+          meta.liked ??
+          meta.isFavorite ??
+          meta.isInsight ??
+          meta.favorite
       );
 
       return {
@@ -3070,23 +4730,60 @@ if (
       };
     });
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ insights }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (err) {
-    console.error('fetch insights error', err);
-    return new Response(JSON.stringify({ error: 'Не удалось загрузить инсайты' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    console.error('fetch insights error', err && (err.stack || err.message || err));
+    return new Response(
+      JSON.stringify({ error: 'Не удалось загрузить инсайты' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // GET /daily_convos/:id/insights
-if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'daily_convos' && pathParts[2] === 'insights') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+if (
+  request.method === 'GET' &&
+  pathParts.length === 3 &&
+  pathParts[0] === 'daily_convos' &&
+  pathParts[2] === 'insights'
+) {
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const dailyId = pathParts[1];
   const urlObj = new URL(request.url);
   const metaKey = urlObj.searchParams.get('metaKey');
@@ -3096,7 +4793,9 @@ if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'dail
     insightLiked: `CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1`,
   };
 
-  const filterClause = allowedFilters[metaKey] ? `AND (${allowedFilters[metaKey]})` : `
+  const filterClause = allowedFilters[metaKey]
+    ? `AND (${allowedFilters[metaKey]})`
+    : `
     AND (
       CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1
       OR CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1
@@ -3104,18 +4803,36 @@ if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'dail
   `;
 
   try {
-    const { results } = await env.DB.prepare(`
+    const { results } = await env.DB.prepare(
+      `
       SELECT id, content, meta, created_at
       FROM messages
       WHERE dream_id = ? AND user = ? ${filterClause}
       ORDER BY created_at DESC
-    `).bind(dailyId, userEmail).all();
+    `
+    )
+      .bind(dailyId, userEmail)
+      .all();
 
-    const insights = (results ?? []).map(row => {
+    const insights = (results ?? []).map((row) => {
       const meta = row.meta ? JSON.parse(row.meta) : {};
-      const createdAt = typeof row.created_at === 'number' ? new Date(row.created_at).toISOString() : row.created_at;
-      const artworksFlag = Boolean(meta.insightArtworksLiked ?? meta.insight_artworks_liked ?? 0);
-      const likedFlag = Boolean(meta.insightLiked ?? meta.insight_liked ?? meta.liked ?? meta.isFavorite ?? meta.isInsight ?? meta.favorite);
+      const createdAt =
+        typeof row.created_at === 'number'
+          ? new Date(row.created_at).toISOString()
+          : row.created_at;
+
+      const artworksFlag = Boolean(
+        meta.insightArtworksLiked ?? meta.insight_artworks_liked ?? 0
+      );
+      const likedFlag = Boolean(
+        meta.insightLiked ??
+          meta.insight_liked ??
+          meta.liked ??
+          meta.isFavorite ??
+          meta.isInsight ??
+          meta.favorite
+      );
+
       return {
         messageId: row.id,
         text: row.content,
@@ -3123,80 +4840,94 @@ if (request.method === 'GET' && pathParts.length === 3 && pathParts[0] === 'dail
         blockId: meta.blockId ?? meta.block_id ?? null,
         insightLiked: metaKey === 'insightArtworksLiked' ? artworksFlag : likedFlag,
         insightArtworksLiked: artworksFlag,
-        meta
+        meta,
       };
     });
 
-    return new Response(JSON.stringify({ insights }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ insights }), {
+      status: 200,
+      headers,
+    });
   } catch (err) {
-    console.error('GET /daily_convos/:id/insights error', err);
-    return new Response(JSON.stringify({ error: 'Не удалось загрузить инсайты' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error(
+      'GET /daily_convos/:id/insights error',
+      err && (err.stack || err.message || err)
+    );
+    return new Response(
+      JSON.stringify({ error: 'Не удалось загрузить инсайты' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
-
 // worker.js — добавить в конце fetch handler
 if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const pathParts = url.pathname.split('/').filter(Boolean);
   if (pathParts.length < 3 || pathParts[pathParts.length - 2] !== 'dreams') {
     return new Response(JSON.stringify({ error: 'Invalid path' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const dreamId = pathParts[pathParts.length - 3];
   if (!dreamId) {
     return new Response(JSON.stringify({ error: 'Missing dreamId' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-
-  let body;
-  try { body = await request.json(); } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-
-  const { context } = body;
-  if (!context) {
-    return new Response(JSON.stringify({ error: 'context required' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-
-  try {
-    await env.DB.prepare(
-      `UPDATE dreams SET context = ? WHERE id = ? AND user = ?`
-    ).bind(context, dreamId, userEmail).run();
-
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  } catch (e) {
-    console.error('[MOOD FOR DREAM] PUT error:', e);
-    return new Response(JSON.stringify({ error: 'database_error' }), {
-      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-}
-
-    if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
-  if (!(await isTrialActive(userEmail, env))) {
-    return new Response(JSON.stringify({ error: 'Trial expired' }), {
-      status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
@@ -3205,72 +4936,235 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
     body = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const { context } = body || {};
+  if (!context) {
+    return new Response(JSON.stringify({ error: 'context required' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  try {
+    await env.DB.prepare(
+      `UPDATE dreams SET context = ? WHERE id = ? AND user = ?`
+    )
+      .bind(context, dreamId, userEmail)
+      .run();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('[MOOD FOR DREAM] PUT error:', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'database_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+}
+
+    if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  if (!(await isTrialActive(userEmail, env))) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const validation = validateDreamData(body);
   if (!validation.valid) {
-    return new Response(JSON.stringify({ error: 'Invalid dream data', message: validation.error }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'Invalid dream data',
+        message: validation.error,
+      }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   const id = url.pathname.split('/')[2];
   if (!id) {
     return new Response(JSON.stringify({ error: 'Missing dream id' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   try {
     const d1 = env.DB;
-    const existing = await d1.prepare('SELECT * FROM dreams WHERE id = ? AND user = ?').bind(id, userEmail).first();
+    const existing = await d1
+      .prepare('SELECT * FROM dreams WHERE id = ? AND user = ?')
+      .bind(id, userEmail)
+      .first();
+
     if (!existing) {
       return new Response(JSON.stringify({ error: 'Dream not found' }), {
-        status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       });
     }
 
     const {
-  dreamText = existing.dreamText,
-  title = existing.title,
-  category = existing.category,
-  dreamSummary = existing.dreamSummary,
-  globalFinalInterpretation = existing.globalFinalInterpretation,
-  blocks = existing.blocks ? JSON.parse(existing.blocks) : [],
-  // similarArtworks больше не берём из body
-  context = existing.context
-} = body;
+      dreamText = existing.dreamText,
+      title = existing.title,
+      category = existing.category,
+      dreamSummary = existing.dreamSummary,
+      globalFinalInterpretation = existing.globalFinalInterpretation,
+      blocks = existing.blocks ? JSON.parse(existing.blocks) : [],
+      // similarArtworks больше не берём из body
+      context = existing.context,
+    } = body;
 
-const similarArtworks = existing.similarArtworks || '[]';
+    const similarArtworks = existing.similarArtworks || '[]';
+    const textChanged = existing.dreamText !== dreamText;
 
-    const textChanged = (existing.dreamText !== dreamText);
-
-    await env.DB.prepare(
-      `UPDATE dreams SET 
-        title = ?, 
-        dreamText = ?, 
-        category = ?, 
-        dreamSummary = ?, 
-        globalFinalInterpretation = ?, 
-        blocks = ?, 
-        similarArtworks = ?, 
-        context = ?,
-        autoSummary = ${textChanged ? "NULL" : "autoSummary"}
-      WHERE id = ? AND user = ?`
-    ).bind(
-      title,
-      dreamText,
-      category,
-      dreamSummary,
-      globalFinalInterpretation,
-      JSON.stringify(blocks),
-      similarArtworks, // ✅ Используем из existing
-      context,
-      id,
-      userEmail
-    ).run();
+    await env.DB
+      .prepare(
+        `UPDATE dreams SET 
+          title = ?, 
+          dreamText = ?, 
+          category = ?, 
+          dreamSummary = ?, 
+          globalFinalInterpretation = ?, 
+          blocks = ?, 
+          similarArtworks = ?, 
+          context = ?,
+          autoSummary = ${textChanged ? 'NULL' : 'autoSummary'}
+        WHERE id = ? AND user = ?`
+      )
+      .bind(
+        title,
+        dreamText,
+        category,
+        dreamSummary,
+        globalFinalInterpretation,
+        JSON.stringify(blocks),
+        similarArtworks, // ✅ Используем из existing
+        context,
+        id,
+        userEmail
+      )
+      .run();
 
     const dream = {
       id,
@@ -3284,18 +5178,46 @@ const similarArtworks = existing.similarArtworks || '[]';
       blocks,
       similarArtworks,
       context,
-      autoSummary: textChanged ? null : (existing.autoSummary ?? null)
+      autoSummary: textChanged ? null : existing.autoSummary ?? null,
+    };
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
     };
 
     return new Response(JSON.stringify(dream), {
-      status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 200,
+      headers,
     });
-
   } catch (e) {
-    console.error('Error updating dream:', e);
+    console.error('Error updating dream:', e && (e.stack || e.message || e));
     return new Response(
-      JSON.stringify({ error: 'internal_error', message: e instanceof Error ? e.message : String(e) }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      JSON.stringify({
+        error: 'internal_error',
+        message: e instanceof Error ? e.message : String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
     );
   }
 }
@@ -3304,250 +5226,791 @@ const similarArtworks = existing.similarArtworks || '[]';
 
 // GET /daily_convos (list)
 if (url.pathname === '/daily_convos' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   try {
-    const res = await env.DB.prepare('SELECT * FROM daily_convos WHERE user = ? ORDER BY date DESC').bind(userEmail).all();
-    const items = (res.results || []).map(r => {
+    const res = await env.DB
+      .prepare(
+        'SELECT * FROM daily_convos WHERE user = ? ORDER BY date DESC'
+      )
+      .bind(userEmail)
+      .all();
+
+    const items = (res.results || []).map((r) => {
       if (r.blocks) {
-        try { r.blocks = JSON.parse(r.blocks); } catch { r.blocks = []; }
-      } else r.blocks = [];
+        try {
+          r.blocks = JSON.parse(r.blocks);
+        } catch {
+          r.blocks = [];
+        }
+      } else {
+        r.blocks = [];
+      }
       return r;
     });
-    return new Response(JSON.stringify(items), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify(items), {
+      status: 200,
+      headers,
+    });
   } catch (e) {
-    console.error('GET /daily_convos error', e);
-    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error('GET /daily_convos error', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'internal_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 }
 
 // POST /daily_convos (create)
 if (url.pathname === '/daily_convos' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   let body;
-  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
   const { notes, title } = body || {};
-  if (!notes || typeof notes !== 'string') return new Response(JSON.stringify({ error: 'notes required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+  if (!notes || typeof notes !== 'string') {
+    return new Response(JSON.stringify({ error: 'notes required' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
   const id = crypto.randomUUID();
   const date = Date.now();
+
   try {
-    await env.DB.prepare(`
+    await env.DB.prepare(
+      `
       INSERT INTO daily_convos (id, user, title, notes, date, blocks, globalFinalInterpretation, autoSummary, context)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(id, userEmail, title ?? null, notes.trim(), date, JSON.stringify([]), null, null, null).run();
+    `
+    )
+      .bind(
+        id,
+        userEmail,
+        title ?? null,
+        notes.trim(),
+        date,
+        JSON.stringify([]),
+        null,
+        null,
+        null
+      )
+      .run();
 
-    const created = { id, user: userEmail, title: title ?? null, notes: notes.trim(), date, blocks: [], globalFinalInterpretation: null, autoSummary: null, context: null };
-    return new Response(JSON.stringify(created), { status: 201, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    const created = {
+      id,
+      user: userEmail,
+      title: title ?? null,
+      notes: notes.trim(),
+      date,
+      blocks: [],
+      globalFinalInterpretation: null,
+      autoSummary: null,
+      context: null,
+    };
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify(created), {
+      status: 201,
+      headers,
+    });
   } catch (e) {
-    console.error('POST /daily_convos error', e);
-    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error('POST /daily_convos error', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'internal_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 }
 
 // GET /daily_convos/:id
-if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+if (
+  request.method === 'GET' &&
+  pathParts.length === 2 &&
+  pathParts[0] === 'daily_convos'
+) {
+  // Мягкий лимит: 60 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const id = pathParts[1];
+
   try {
-    const row = await env.DB.prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).first();
-    if (!row) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    const row = await env.DB.prepare(
+      'SELECT * FROM daily_convos WHERE id = ? AND user = ?'
+    )
+      .bind(id, userEmail)
+      .first();
+
+    if (!row) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      });
+    }
+
     if (row.blocks) {
-      try { row.blocks = JSON.parse(row.blocks); } catch { row.blocks = []; }
-    } else row.blocks = [];
-    return new Response(JSON.stringify(row), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+      try {
+        row.blocks = JSON.parse(row.blocks);
+      } catch {
+        row.blocks = [];
+      }
+    } else {
+      row.blocks = [];
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify(row), {
+      status: 200,
+      headers,
+    });
   } catch (e) {
-    console.error('GET /daily_convos/:id error', e);
-    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error('GET /daily_convos/:id error', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'internal_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 }
 
 // PUT /daily_convos/:id
-if (request.method === 'PUT' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+if (
+  request.method === 'PUT' &&
+  pathParts.length === 2 &&
+  pathParts[0] === 'daily_convos'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const id = pathParts[1];
+
   let body;
-  try { body = await request.json(); } catch { return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }); }
-  const { notes, title, blocks, globalFinalInterpretation, autoSummary, context } = body || {};
   try {
-    const existing = await env.DB.prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).first();
-    if (!existing) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
+      status: 400,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+
+  const {
+    notes,
+    title,
+    blocks,
+    globalFinalInterpretation,
+    autoSummary,
+    context,
+  } = body || {};
+
+  try {
+    const existing = await env.DB
+      .prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?')
+      .bind(id, userEmail)
+      .first();
+
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      });
+    }
 
     // Используем старые значения, если новые не переданы
-    const newNotes = typeof notes !== 'undefined' ? notes : existing.notes;
-    const newTitle = typeof title !== 'undefined' ? title : existing.title;
-    const newBlocks = typeof blocks !== 'undefined' ? JSON.stringify(blocks) : existing.blocks;
-    const newGlobalFinalInterpretation = typeof globalFinalInterpretation !== 'undefined' ? globalFinalInterpretation : existing.globalFinalInterpretation;
-    const newAutoSummary = typeof autoSummary !== 'undefined' ? autoSummary : existing.autoSummary;
-    const newContext = typeof context !== 'undefined' ? context : existing.context;
+    const newNotes =
+      typeof notes !== 'undefined' ? notes : existing.notes;
+    const newTitle =
+      typeof title !== 'undefined' ? title : existing.title;
+    const newBlocks =
+      typeof blocks !== 'undefined'
+        ? JSON.stringify(blocks)
+        : existing.blocks;
+    const newGlobalFinalInterpretation =
+      typeof globalFinalInterpretation !== 'undefined'
+        ? globalFinalInterpretation
+        : existing.globalFinalInterpretation;
+    const newAutoSummary =
+      typeof autoSummary !== 'undefined'
+        ? autoSummary
+        : existing.autoSummary;
+    const newContext =
+      typeof context !== 'undefined' ? context : existing.context;
 
-    await env.DB.prepare(`
-      UPDATE daily_convos SET title = ?, notes = ?, blocks = ?, globalFinalInterpretation = ?, autoSummary = ?, context = ?
+    await env.DB
+      .prepare(
+        `
+      UPDATE daily_convos
+      SET title = ?, notes = ?, blocks = ?, globalFinalInterpretation = ?, autoSummary = ?, context = ?
       WHERE id = ? AND user = ?
-    `).bind(newTitle, newNotes, newBlocks, newGlobalFinalInterpretation, newAutoSummary, newContext, id, userEmail).run();
+    `
+      )
+      .bind(
+        newTitle,
+        newNotes,
+        newBlocks,
+        newGlobalFinalInterpretation,
+        newAutoSummary,
+        newContext,
+        id,
+        userEmail
+      )
+      .run();
 
-    const row = await env.DB.prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).first();
+    const row = await env.DB
+      .prepare('SELECT * FROM daily_convos WHERE id = ? AND user = ?')
+      .bind(id, userEmail)
+      .first();
+
     if (row.blocks) {
-      try { row.blocks = JSON.parse(row.blocks); } catch { row.blocks = []; }
-    } else row.blocks = [];
-    return new Response(JSON.stringify(row), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+      try {
+        row.blocks = JSON.parse(row.blocks);
+      } catch {
+        row.blocks = [];
+      }
+    } else {
+      row.blocks = [];
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify(row), {
+      status: 200,
+      headers,
+    });
   } catch (e) {
-    console.error('PUT /daily_convos/:id error', e);
-    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
+    console.error('PUT /daily_convos/:id error', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'internal_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
+  }
+}
+// DELETE /daily_convos/:id
+if (
+  request.method === 'DELETE' &&
+  pathParts.length === 2 &&
+  pathParts[0] === 'daily_convos'
+) {
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+  const id = pathParts[1];
+
+  try {
+    const res = await env.DB
+      .prepare('DELETE FROM daily_convos WHERE id = ? AND user = ?')
+      .bind(id, userEmail)
+      .run();
+
+    if (res.changes === 0) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      });
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('DELETE /daily_convos/:id error', e && (e.stack || e.message || e));
+    return new Response(JSON.stringify({ error: 'internal_error' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
+    });
   }
 }
 
-// DELETE /daily_convos/:id
-if (request.method === 'DELETE' && pathParts.length === 2 && pathParts[0] === 'daily_convos') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-  const id = pathParts[1];
-  try {
-    const res = await env.DB.prepare('DELETE FROM daily_convos WHERE id = ? AND user = ?').bind(id, userEmail).run();
-    if (res.changes === 0) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-    return new Response(JSON.stringify({ success: true }), { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-  } catch (e) {
-    console.error('DELETE /daily_convos/:id error', e);
-    return new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }});
-  }
-}
 // --- CHAT: get history ---
 if (url.pathname === '/chat' && request.method === 'GET') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Мягкий лимит чтения: 50 запросов за 60 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 50,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const dreamId = url.searchParams.get('dreamId');
   const blockId = url.searchParams.get('blockId');
+
   if (!dreamId || !blockId) {
-    return new Response(JSON.stringify({ error: 'Missing dreamId or blockId' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({ error: 'Missing dreamId or blockId' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
+
   try {
-    const d1 = env.DB;
-    const res = await d1.prepare(
+    const res = await env.DB.prepare(
       `SELECT id, role, content, created_at, meta
        FROM messages
        WHERE user = ? AND dream_id = ? AND block_id = ?
        ORDER BY created_at ASC`
-    ).bind(userEmail, dreamId, blockId).all();
+    )
+      .bind(userEmail, dreamId, blockId)
+      .all();
 
-    const messages = (res.results || []).map(r => ({
+    const messages = (res.results || []).map((r) => ({
       id: r.id,
       role: r.role,
       content: r.content,
       created_at: r.created_at,
-      meta: r.meta ? JSON.parse(r.meta) : undefined
+      meta: r.meta ? JSON.parse(r.meta) : undefined,
     }));
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ messages }), {
-      status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 200,
+      headers,
     });
   } catch (e) {
-    console.error('GET /chat error:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('GET /chat error:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
 // --- CHAT: append message ---
 if (url.pathname === '/chat' && request.method === 'POST') {
- const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 25 запросов за 30 секунд, как /daily_chat и /art_chat
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 25,
+    windowMs: 30000,
+    requireRateLimit: true,
+    // skipTrial: false
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   let body;
-  try { body = await request.json(); } catch {
+  try {
+    body = await request.json();
+  } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
+
   const { id, dreamId, blockId, role, content, meta } = body || {};
-  if (!dreamId || !blockId || !role || !content || !['user','assistant'].includes(role)) {
+  if (!dreamId || !blockId || !role || !content || !['user', 'assistant'].includes(role)) {
     return new Response(JSON.stringify({ error: 'Invalid payload' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
+
   const msgId = id || crypto.randomUUID();
   const createdAt = Date.now();
+
   try {
-    const d1 = env.DB;
-    await d1.prepare(
+    await env.DB.prepare(
       `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      msgId, userEmail, dreamId, blockId, role, String(content).slice(0, 12000),
-      createdAt, meta ? JSON.stringify(meta) : null
-    ).run();
+    )
+      .bind(
+        msgId,
+        userEmail,
+        dreamId,
+        blockId,
+        role,
+        String(content).slice(0, 12000),
+        createdAt,
+        meta ? JSON.stringify(meta) : null
+      )
+      .run();
 
-    return new Response(JSON.stringify({
-      id: msgId, role, content, created_at: createdAt, meta: meta ?? null
-    }), {
-      status: 201, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    // >>> rolling summary for dream_chat: обновляем только на ответах ассистента
+    if (role === 'assistant') {
+      try {
+        // Берём текст сна как базовый контекст
+        const dreamRow = await env.DB.prepare(
+          'SELECT dreamText FROM dreams WHERE id = ? AND user = ?'
+        )
+          .bind(dreamId, userEmail)
+          .first();
+
+        const dreamText = dreamRow?.dreamText || '';
+
+        await updateRollingSummary(
+          env,
+          userEmail,
+          dreamId,   // dream_id
+          blockId,   // block_id
+          dreamText, // базовый контекст сна
+          env.DEEPSEEK_API_KEY,
+          null       // artwork_id для обычного dream-чата всегда null
+        );
+      } catch (e) {
+        console.warn('[POST /chat] Failed to update rolling summary:', e);
+        // не ломаем ответ пользователю, просто логируем
+      }
+    }
+    // <<< rolling summary for dream_chat
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 25, 30000);
+
+    return new Response(
+      JSON.stringify({
+        id: msgId,
+        role,
+        content,
+        created_at: createdAt,
+        meta: meta ?? null,
+      }),
+      {
+        status: 201,
+        headers,
+      }
+    );
   } catch (e) {
-    console.error('POST /chat error:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('POST /chat error:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
-
-
 // --- CHAT: clear history for block ---
 if (url.pathname === '/chat' && request.method === 'DELETE') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   const dreamId = url.searchParams.get('dreamId');
   const blockId = url.searchParams.get('blockId');
+
   if (!dreamId || !blockId) {
-    return new Response(JSON.stringify({ error: 'Missing dreamId or blockId' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({ error: 'Missing dreamId or blockId' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
+
   try {
     const d1 = env.DB;
-    await d1.prepare(
-      `DELETE FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`
-    ).bind(userEmail, dreamId, blockId).run();
 
-    await d1.prepare(
-      `DELETE FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id = ?`
-    ).bind(userEmail, dreamId, blockId).run();
+    await d1
+      .prepare(
+        `DELETE FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`
+      )
+      .bind(userEmail, dreamId, blockId)
+      .run();
+
+    await d1
+      .prepare(
+        `DELETE FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id = ?`
+      )
+      .bind(userEmail, dreamId, blockId)
+      .run();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
 
     return new Response(JSON.stringify({ success: true }), {
-      status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 200,
+      headers,
     });
   } catch (e) {
-    console.error('DELETE /chat error:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-      status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('DELETE /chat error:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e instanceof Error ? e.message : String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 // --- DAILY CHAT: GET /daily_chat?dailyConvoId=... ---
 if (url.pathname === '/daily_chat' && request.method === 'GET') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 50,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const dailyConvoId = url.searchParams.get('dailyConvoId');
   if (!dailyConvoId) {
@@ -3559,42 +6022,64 @@ if (url.pathname === '/daily_chat' && request.method === 'GET') {
 
   try {
     const res = await env.DB.prepare(
-      `SELECT id, role, content, created_at, meta
+      `SELECT id, role, content, created_at, meta, artwork_id
        FROM messages
        WHERE user = ? AND dream_id = ?
        ORDER BY created_at ASC`
-    ).bind(userEmail, dailyConvoId).all();
+    )
+      .bind(userEmail, dailyConvoId)
+      .all();
 
     const messages = (res.results || []).map((r) => ({
-  id: r.id,
-  role: r.role,
-  content: r.content,
-  created_at: r.created_at,
-  meta: r.meta ? JSON.parse(r.meta) : undefined,
-  artworkId: r.artwork_id || null, // ← добавляем artworkId
-}));
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      created_at: r.created_at,
+      meta: r.meta ? JSON.parse(r.meta) : undefined,
+      artworkId: r.artwork_id || null,
+    }));
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
 
     return new Response(JSON.stringify({ messages }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
     console.error('GET /daily_chat error', e && (e.stack || e.message || e));
     return new Response(
       JSON.stringify({
         error: 'internal_error',
-        details: e?.message || String(e)
+        details: e?.message || String(e),
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
     );
   }
 }
 
 // --- POST /daily_chat ---
 if (url.pathname === '/daily_chat' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Лимит: 25 запросов за 30 секунд
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 25,
+    windowMs: 30000,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body;
   try {
@@ -3618,7 +6103,8 @@ if (url.pathname === '/daily_chat' && request.method === 'POST') {
   const createdAt = Date.now();
 
   // block_id in schema is NOT NULL — use empty string when not provided
-  const safeBlockId = (typeof blockId === 'string' && blockId.length > 0) ? blockId : '';
+  const safeBlockId =
+    typeof blockId === 'string' && blockId.length > 0 ? blockId : '';
 
   try {
     await env.DB.prepare(
@@ -3637,29 +6123,42 @@ if (url.pathname === '/daily_chat' && request.method === 'POST') {
       )
       .run();
 
-    // 🆕 ДОБАВЬ СЮДА: обновление rolling summary
-if (role === 'assistant') {
-  try {
-    // Получаем текст записи для контекста
-    const dailyRow = await env.DB.prepare(
-      'SELECT notes FROM daily_convos WHERE id = ? AND user = ?'
-    ).bind(dailyConvoId, userEmail).first();
-    
-    const notesText = dailyRow?.notes || '';
-    
-    await updateRollingSummary(
-      env,
-      userEmail,
-      dailyConvoId,        // ← dream_id
-      safeBlockId,         // ← block_id
-      notesText,           // ← текст для контекста
-      env.DEEPSEEK_API_KEY,
-      null                 // ← artwork_id (null для daily_chat)
-    );
-  } catch (e) {
-    console.warn('[POST /daily_chat] Failed to update summary:', e);
-  }
-}
+    // Обновляем rolling summary только для сообщений ассистента
+    if (role === 'assistant') {
+      try {
+        const dailyRow = await env.DB.prepare(
+          'SELECT notes FROM daily_convos WHERE id = ? AND user = ?'
+        )
+          .bind(dailyConvoId, userEmail)
+          .first();
+
+        const notesText = dailyRow?.notes || '';
+
+        await updateRollingSummary(
+          env,
+          userEmail,
+          dailyConvoId, // dream_id
+          safeBlockId,  // block_id
+          notesText,    // контекст
+          env.DEEPSEEK_API_KEY,
+          null          // artwork_id (null для daily_chat)
+        );
+      } catch (e) {
+        console.warn('[POST /daily_chat] Failed to update summary:', e);
+      }
+    }
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': '25',
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 30000
+      ),
+      ...corsHeaders,
+    };
 
     return new Response(
       JSON.stringify({
@@ -3671,15 +6170,18 @@ if (role === 'assistant') {
       }),
       {
         status: 201,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers,
       }
     );
   } catch (e) {
-    console.error('POST /daily_chat DB error', e && (e.stack || e.message || e));
+    console.error(
+      'POST /daily_chat DB error',
+      e && (e.stack || e.message || e)
+    );
     return new Response(
       JSON.stringify({
         error: 'internal_error',
-        details: e?.message || String(e)
+        details: e?.message || String(e),
       }),
       {
         status: 500,
@@ -3691,20 +6193,34 @@ if (role === 'assistant') {
 
 // --- DELETE /daily_chat?dailyConvoId=... ---
 if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const dailyConvoId = url.searchParams.get('dailyConvoId');
   if (!dailyConvoId) {
-    return new Response(JSON.stringify({ error: 'Missing dailyConvoId' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    return new Response(
+      JSON.stringify({ error: 'Missing dailyConvoId' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   try {
@@ -3721,41 +6237,77 @@ if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
       .run()
       .catch(() => {});
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
     console.error('DELETE /daily_chat error', e && (e.stack || e.message || e));
     return new Response(
       JSON.stringify({
         error: 'internal_error',
-        details: e?.message || String(e)
+        details: e?.message || String(e),
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
     );
   }
 }
 
-    // --- Generate Auto Summary endpoint (асинхронный) ---
+   // --- Generate Auto Summary endpoint (асинхронный) ---
 if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
-  if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+  // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
+  if (authResult instanceof Response) {
+    // Ошибка авторизации, trial, лимита или недоступен rate limiter
+    return authResult;
+  }
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body;
   try {
     body = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
   const { dreamId, dreamText } = body;
   if (!dreamId || !dreamText) {
     return new Response(JSON.stringify({ error: 'Missing dreamId or dreamText' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
@@ -3768,13 +6320,18 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
 
     if (!existing) {
       return new Response(JSON.stringify({ error: 'Dream not found' }), {
-        status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
+    // Если уже есть autoSummary и текст сна не менялся — используем кэш,
+    // но всё равно возвращаем актуальные rate-limit заголовки.
     if (existing.autoSummary && existing.dreamText === dreamText) {
+      const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
       return new Response(JSON.stringify({ success: true, autoSummary: existing.autoSummary }), {
-        status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 200,
+        headers,
       });
     }
 
@@ -3783,95 +6340,107 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
     const deepseekRequestBody = {
       model: 'deepseek-chat',
       messages: [
-        { role: 'system', content: 'Ты создаёшь краткие резюме сновидений. Пиши нейтрально, кратко, только факты и ключевые образы.' },
-        { role: 'user', content: prompt }
+        {
+          role: 'system',
+          content:
+            'Ты создаёшь краткие резюме сновидений. Пиши нейтрально, кратко, только факты и ключевые образы.',
+        },
+        { role: 'user', content: prompt },
       ],
       max_tokens: 200,
       temperature: 0.5,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     let responseBody = await deepseekResponse.json();
     let autoSummary = responseBody?.choices?.[0]?.message?.content || '';
-    autoSummary = autoSummary.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+    autoSummary = autoSummary
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
 
-    await d1.prepare('UPDATE dreams SET autoSummary = ? WHERE id = ? AND user = ?')
+    await d1
+      .prepare('UPDATE dreams SET autoSummary = ? WHERE id = ? AND user = ?')
       .bind(autoSummary, dreamId, userEmail)
       .run();
 
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
     return new Response(JSON.stringify({ success: true, autoSummary }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
     console.error('Error generating auto summary:', e);
     return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 }
 
 // --- Analyze endpoint (с rolling summary) ---
 if (url.pathname === '/analyze' && request.method === 'POST') {
-  // Вызов updated withAuthAndRateLimit, который внутри вызывает checkRateLimitDO
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) {
-    // Если лимит превышен или ошибка авторизации — возвращаем Response с ошибкой
+    // Ошибка авторизации, trial, лимита или недоступен rate limiter
     return authResult;
   }
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const contentType = request.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      return new Response(JSON.stringify({
-        error: 'Invalid content type',
-        message: 'Content-Type must be application/json'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid content type',
+          message: 'Content-Type must be application/json',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        }
+      );
     }
 
     const requestData = await request.json();
     const { blockText, lastTurns, extraSystemPrompt, dreamId, blockId, artworkId } = requestData;
 
-    // 1. Получаем rolling summary (✅ ТЕПЕРЬ С artworkId)
+    // Получаем rolling summary (с учетом artworkId)
     let rollingSummary = null;
     if (dreamId && blockId) {
-      const summaryData = await getRollingSummary(
-        env, 
-        userEmail, 
-        dreamId, 
-        blockId, 
-        artworkId ?? null  // ✅ ИСПРАВЛЕНО
-      );
+      const summaryData = await getRollingSummary(env, userEmail, dreamId, blockId, artworkId ?? null);
       rollingSummary = summaryData?.summary || null;
 
-      console.log('[analyze] Summary state:', { 
-        hasSummary: !!summaryData, 
-        dreamId, 
+      console.log('[analyze] Summary state:', {
+        hasSummary: !!summaryData,
+        dreamId,
         blockId,
-        artworkId: artworkId ?? null
+        artworkId: artworkId ?? null,
       });
 
-      // 2. Проверяем, нужно ли обновить summary
+      // Проверяем, нужно ли обновить summary
       const d1 = env.DB;
-      let countQuery = `SELECT COUNT(*) as count FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`;
-      let countParams = [userEmail, dreamId, blockId];
+      let countQuery =
+        'SELECT COUNT(*) as count FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?';
+      const countParams = [userEmail, dreamId, blockId];
 
       if (artworkId) {
-        countQuery += ` AND artwork_id = ?`;
+        countQuery += ' AND artwork_id = ?';
         countParams.push(artworkId);
       }
 
@@ -3880,19 +6449,22 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
 
       console.log('[analyze] Message count:', currentMessageCount);
 
-      // 🆕 Если summary нет, но есть хотя бы 2 сообщения — создаём
       if (!summaryData && currentMessageCount >= 2) {
         console.log('[analyze] Creating initial summary');
         try {
           rollingSummary = await updateRollingSummary(
-            env, userEmail, dreamId, blockId, blockText, env.DEEPSEEK_API_KEY, artworkId ?? null
+            env,
+            userEmail,
+            dreamId,
+            blockId,
+            blockText,
+            env.DEEPSEEK_API_KEY,
+            artworkId ?? null
           );
         } catch (e) {
           console.error('[analyze] Failed to create initial summary:', e);
         }
-      } 
-      // Если summary есть, проверяем порог обновления
-      else if (summaryData) {
+      } else if (summaryData) {
         const newMessageCount = currentMessageCount - summaryData.lastMessageCount;
 
         console.log('[analyze] New messages since last summary:', newMessageCount);
@@ -3901,7 +6473,13 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
           console.log('[analyze] Updating summary');
           try {
             rollingSummary = await updateRollingSummary(
-              env, userEmail, dreamId, blockId, blockText, env.DEEPSEEK_API_KEY, artworkId ?? null
+              env,
+              userEmail,
+              dreamId,
+              blockId,
+              blockText,
+              env.DEEPSEEK_API_KEY,
+              artworkId ?? null
             );
           } catch (e) {
             console.error('[analyze] Failed to update summary:', e);
@@ -3910,10 +6488,10 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
       }
     }
 
-    let messages = [];
     const isArtworkDialog = blockId?.startsWith('artwork__');
     const systemPrompt = isArtworkDialog ? ARTDIALOG_SYSTEM_PROMPT : DIALOG_SYSTEM_PROMPT;
 
+    const messages = [];
     messages.push({ role: 'system', content: systemPrompt });
 
     const d1 = env.DB;
@@ -3921,9 +6499,10 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
     let autoSummary = null;
 
     if (dreamId) {
-      const dreamRow = await d1.prepare(
-        `SELECT dreamSummary, autoSummary FROM dreams WHERE id = ? AND user = ?`
-      ).bind(dreamId, userEmail).first();
+      const dreamRow = await d1
+        .prepare('SELECT dreamSummary, autoSummary FROM dreams WHERE id = ? AND user = ?')
+        .bind(dreamId, userEmail)
+        .first();
 
       if (dreamRow) {
         dreamSummary = dreamRow.dreamSummary || null;
@@ -3931,23 +6510,25 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
       }
     }
 
-    // Добавляем выжимку сна
     if (autoSummary) {
       messages.push({ role: 'system', content: `ВЫЖИМКА СНА:\n${autoSummary}` });
     }
 
-    // Добавляем субъективный контекст от пользователя
     if (dreamSummary) {
-      messages.push({ role: 'system', content: `СУБЪЕКТИВНЫЙ КОНТЕКСТ ОТ ПОЛЬЗОВАТЕЛЯ:\n${dreamSummary}` });
+      messages.push({
+        role: 'system',
+        content: `СУБЪЕКТИВНЫЙ КОНТЕКСТ ОТ ПОЛЬЗОВАТЕЛЯ:\n${dreamSummary}`,
+      });
     }
 
-    // Добавляем rolling summary диалога
     if (rollingSummary) {
       messages.push({ role: 'system', content: `ROLLING SUMMARY ДИАЛОГА:\n${rollingSummary}` });
     }
 
-    // Добавляем текст текущего блока
-    messages.push({ role: 'system', content: `ТЕКУЩИЙ БЛОК:\n${(blockText || '').slice(0, 4000)}` });
+    messages.push({
+      role: 'system',
+      content: `ТЕКУЩИЙ БЛОК:\n${(blockText || '').slice(0, 4000)}`,
+    });
 
     if (Array.isArray(lastTurns) && lastTurns.length) {
       messages.push(...lastTurns);
@@ -3962,16 +6543,16 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
       messages,
       max_tokens: 500,
       temperature: 0.7,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     let responseBody = await deepseekResponse.json();
@@ -3980,45 +6561,73 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
     if (!content) content = responseBody?.choices?.[0]?.message?.content || '';
     responseBody.choices[0].message.content = content;
 
+    // Корректные заголовки rate limit
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+
     return new Response(JSON.stringify(responseBody), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
-
   } catch (error) {
     console.error('Error in analyze endpoint:', error);
-    return new Response(JSON.stringify({
-      error: 'internal_error',
-      message: error.message || 'Unknown error'
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: error.message || 'Unknown error',
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
 // --- Analyze daily convo (clone of /analyze, for daily_convos) ---
 if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 50, windowMs: 30000 });
-  if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+  // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter; trial пропускаем)
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    skipTrial: true,
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
+  if (authResult instanceof Response) {
+    // Ошибка авторизации, лимита или недоступен rate limiter
+    return authResult;
+  }
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const contentType = request.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      return new Response(JSON.stringify({ error: 'Invalid content type', message: 'Content-Type must be application/json' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid content type',
+          message: 'Content-Type must be application/json',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        }
+      );
     }
 
     const body = await request.json();
-    const { notesText, lastTurns = [], extraSystemPrompt, dailyConvoId, blockId, autoSummary } = body || {};
+    const {
+      notesText,
+      lastTurns = [],
+      extraSystemPrompt,
+      dailyConvoId,
+      blockId,
+      autoSummary,
+    } = body || {};
 
     if (!notesText || typeof notesText !== 'string') {
       return new Response(JSON.stringify({ error: 'No notesText' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
@@ -4045,7 +6654,10 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
       try {
         const summaryData = await getRollingSummary(env, userEmail, dailyConvoId, blockId);
         if (summaryData?.summary) {
-          messages.push({ role: 'system', content: `ROLLING SUMMARY ДИАЛОГА:\n${summaryData.summary}` });
+          messages.push({
+            role: 'system',
+            content: `ROLLING SUMMARY ДИАЛОГА:\n${summaryData.summary}`,
+          });
         }
       } catch (e) {
         // non-fatal: log and continue
@@ -4054,7 +6666,10 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
     }
 
     // main text
-    messages.push({ role: 'system', content: `ТЕКСТ:\n${(notesText || '').slice(0, 4000)}` });
+    messages.push({
+      role: 'system',
+      content: `ТЕКСТ:\n${(notesText || '').slice(0, 4000)}`,
+    });
 
     if (Array.isArray(lastTurns) && lastTurns.length) {
       messages.push(...lastTurns);
@@ -4069,16 +6684,16 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
       messages,
       max_tokens: 500,
       temperature: 0.7,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     let responseBody = await deepseekResponse.json();
@@ -4086,39 +6701,58 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
     content = content.replace(/```[\s\S]*?```/g, '').trim();
     responseBody.choices[0].message.content = content;
 
+    // Корректные заголовки rate limit
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+
     return new Response(JSON.stringify(responseBody), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
-
   } catch (err) {
     console.error('Error in /analyze_daily_convo:', err);
-    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: err?.message || String(err),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
 // --- Generate Auto Summary for Daily Convo ---
 if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
-  if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+  // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
+  if (authResult instanceof Response) {
+    // Ошибка авторизации, trial, лимита или недоступен rate limiter
+    return authResult;
+  }
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body;
   try {
     body = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
   const { dailyConvoId, notes } = body;
   if (!dailyConvoId || !notes) {
     return new Response(JSON.stringify({ error: 'Missing dailyConvoId or notes' }), {
-      status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 
@@ -4131,55 +6765,71 @@ if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 
 
     if (!existing) {
       return new Response(JSON.stringify({ error: 'Daily convo not found' }), {
-        status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
+    // Если уже есть autoSummary и текст не менялся — возвращаем кэш, но с актуальными rate-limit заголовками
     if (existing.autoSummary && existing.notes === notes) {
+      const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
       return new Response(JSON.stringify({ success: true, autoSummary: existing.autoSummary }), {
-        status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 200,
+        headers,
       });
     }
 
-    const prompt = `Создай краткое резюме этой записи в 2-3 предложениях. Выдели ключевые элементы: события, эмоции, мысли. Пиши кратко и по существу.\n\nТекст записи:\n${notes.slice(0, 4000)}`;
+    const prompt = `Создай краткое резюме этой записи в 2-3 предложениях. Выдели ключевые элементы: события, эмоции, мысли. Пиши кратко и по существу.\n\nТекст записи:\n${notes.slice(
+      0,
+      4000
+    )}`;
 
     const deepseekRequestBody = {
       model: 'deepseek-chat',
       messages: [
-        { role: 'system', content: 'Ты создаёшь краткие резюме записей. Пиши нейтрально, кратко, только факты и ключевые образы.' },
-        { role: 'user', content: prompt }
+        {
+          role: 'system',
+          content:
+            'Ты создаёшь краткие резюме записей. Пиши нейтрально, кратко, только факты и ключевые образы.',
+        },
+        { role: 'user', content: prompt },
       ],
       max_tokens: 200,
       temperature: 0.5,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     let responseBody = await deepseekResponse.json();
     let autoSummary = responseBody?.choices?.[0]?.message?.content || '';
-    autoSummary = autoSummary.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+    autoSummary = autoSummary
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
 
-    await d1.prepare('UPDATE daily_convos SET autoSummary = ? WHERE id = ? AND user = ?')
+    await d1
+      .prepare('UPDATE daily_convos SET autoSummary = ? WHERE id = ? AND user = ?')
       .bind(autoSummary, dailyConvoId, userEmail)
       .run();
 
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
     return new Response(JSON.stringify({ success: true, autoSummary }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
   } catch (e) {
     console.error('Error generating auto summary for daily convo:', e);
     return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 }
@@ -4236,32 +6886,43 @@ function calculateImprovementScore(data) {
 }
 
     // --- Find similar artworks endpoint ---
-    if (url.pathname === '/find_similar' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
-  if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+if (url.pathname === '/find_similar' && request.method === 'POST') {
+  // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 1,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
+  if (authResult instanceof Response) {
+    // Ошибка авторизации, trial, лимита или недоступен rate limiter
+    return authResult;
+  }
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
-        const body = await request.json();
-        const { dreamText, globalFinalInterpretation, blockInterpretations } = body;
-        if (!dreamText) {
-          return new Response(JSON.stringify({ error: 'No dreamText' }), {
-            status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
-          });
-        }
+    const body = await request.json();
+    const { dreamText, globalFinalInterpretation, blockInterpretations, dreamId } = body;
 
-        let contextParts = [];
-        contextParts.push(`Сюжет сна: """${dreamText}"""`);
-        if (globalFinalInterpretation && globalFinalInterpretation.trim()) {
-          contextParts.push(`Итоговое толкование сна: """${globalFinalInterpretation.trim()}"""`);
-        }
-        if (blockInterpretations && blockInterpretations.trim()) {
-          contextParts.push(`Толкования блоков:\n${blockInterpretations.trim()}"""`);
-        }
+    if (!dreamText) {
+      return new Response(JSON.stringify({ error: 'No dreamText' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
 
-        const contextText = contextParts.join('\n\n');
+    const contextParts = [];
+    contextParts.push(`Сюжет сна: """${dreamText}"`);
+    if (globalFinalInterpretation && globalFinalInterpretation.trim()) {
+      contextParts.push(`Итоговое толкование сна: """${globalFinalInterpretation.trim()}"`);
+    }
+    if (blockInterpretations && blockInterpretations.trim()) {
+      contextParts.push(`Толкования блоков:\n${blockInterpretations.trim()}"`);
+    }
 
-        const prompt = `Ты — эксперт по искусству и психоанализу. Всегда отвечай на ЧИСТОМ РУССКОМ ЯЗЫКЕ. На основе сна и его толкования подбери 5 произведений искусства, которые резонируют с образами и мотивами сна.
+    const contextText = contextParts.join('\n\n');
+
+    const prompt = `Ты — эксперт по искусству и психоанализу. Всегда отвечай на ЧИСТОМ РУССКОМ ЯЗЫКЕ. На основе сна и его толкования подбери 5 произведений искусства, которые резонируют с образами и мотивами сна.
 
 ${contextText}
 
@@ -4295,124 +6956,141 @@ ${contextText}
 
 Верни ответ строго в формате JSON, без комментариев и лишнего текста.`;
 
-        const deepseekRequestBody = {
-          model: 'deepseek-chat',
-          messages: [
-            { role: 'system', content: 'Ты эксперт по искусству. Отвечай только валидным JSON без дополнительного текста.' },
-            { role: 'user', content: prompt }
-          ],
-          max_tokens: 1500,
-          temperature: 0.7,
-          stream: false
-        };
+    const deepseekRequestBody = {
+      model: 'deepseek-chat',
+      messages: [
+        {
+          role: 'system',
+          content: 'Ты эксперт по искусству. Отвечай только валидным JSON без дополнительного текста.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 1500,
+      temperature: 0.7,
+      stream: false,
+    };
 
-        const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
-          },
-          body: JSON.stringify(deepseekRequestBody)
-        });
+    const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify(deepseekRequestBody),
+    });
 
-        const responseBody = await deepseekResponse.json();
-        let content = responseBody?.choices?.[0]?.message?.content || '{}';
-        content = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const responseBody = await deepseekResponse.json();
+    let content = responseBody?.choices?.[0]?.message?.content || '{}';
+    content = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
-        let parsed;
-        try {
-          parsed = JSON.parse(content);
-        } catch {
-          parsed = { works: [] };
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      parsed = { works: [] };
+    }
+
+    const works = Array.isArray(parsed.works) ? parsed.works : [];
+
+    const similarArtworksRaw = works.slice(0, 5).map((w) => ({
+      title: w.title || '',
+      author: w.author || '',
+      desc: w.desc || '',
+      value: '',
+      type: w.type || 'default',
+    }));
+
+    let similarArtworks = [];
+
+    if (dreamId) {
+      const d1 = env.DB;
+
+      // Удаляем старые записи перед вставкой новых
+      await d1
+        .prepare(`DELETE FROM dream_similar_artworks WHERE dream_id = ?`)
+        .bind(dreamId)
+        .run();
+
+      for (let i = 0; i < similarArtworksRaw.length; i++) {
+        const art = similarArtworksRaw[i];
+
+        // 1) Ищем или создаём artwork
+        let artworkRow = await d1
+          .prepare(`SELECT id FROM artworks WHERE title = ? AND author = ? AND type = ?`)
+          .bind(art.title, art.author, art.type)
+          .first();
+
+        let artworkId;
+        if (artworkRow) {
+          artworkId = artworkRow.id;
+        } else {
+          artworkId = crypto.randomUUID();
+          await d1
+            .prepare(
+              `INSERT INTO artworks (id, title, author, type, value, desc)
+               VALUES (?, ?, ?, ?, ?, ?)`
+            )
+            .bind(artworkId, art.title, art.author, art.type, art.value, art.desc)
+            .run();
         }
 
-        const works = Array.isArray(parsed.works) ? parsed.works : [];
-// После генерации similarArtworks:
-const similarArtworksRaw = works.slice(0, 5).map(w => ({
-  title: w.title || '',
-  author: w.author || '',
-  desc: w.desc || '',
-  value: '',             
-  type: w.type || 'default'
-}));
+        // 2) Связываем с dream
+        await d1
+          .prepare(
+            `INSERT INTO dream_similar_artworks (id, dream_id, artwork_id, position, score)
+             VALUES (?, ?, ?, ?, ?)`
+          )
+          .bind(crypto.randomUUID(), dreamId, artworkId, i, null)
+          .run();
 
-const { dreamId } = body;
-
-let similarArtworks = [];
-
-if (dreamId) {
-  const d1 = env.DB;
-
-  // ✅ УДАЛЯЕМ СТАРЫЕ ЗАПИСИ ПЕРЕД ВСТАВКОЙ НОВЫХ
-  await d1.prepare(
-    `DELETE FROM dream_similar_artworks WHERE dream_id = ?`
-  ).bind(dreamId).run();
-
-  for (let i = 0; i < similarArtworksRaw.length; i++) {
-    const art = similarArtworksRaw[i];
-
-    // 1) Ищем или создаём artwork
-    let artworkRow = await d1.prepare(
-      `SELECT id FROM artworks WHERE title = ? AND author = ? AND type = ?`
-    ).bind(art.title, art.author, art.type).first();
-
-    let artworkId;
-    if (artworkRow) {
-      artworkId = artworkRow.id;
-    } else {
-      artworkId = crypto.randomUUID();
-      await d1.prepare(
-        `INSERT INTO artworks (id, title, author, type, value, desc)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(artworkId, art.title, art.author, art.type, art.value, art.desc).run();
-    }
-
-    // 2) Связываем с dream
-    await d1.prepare(
-      `INSERT INTO dream_similar_artworks (id, dream_id, artwork_id, position, score)
-       VALUES (?, ?, ?, ?, ?)`
-    ).bind(crypto.randomUUID(), dreamId, artworkId, i, null).run();
-
-    // ✅ Добавляем artworkId в объект для клиента
-    similarArtworks.push({
-      ...art,
-      artworkId, // ✅ вот это важно!
-    });
-  }
-
-  // 3) Опционально: обновляем dreams.similarArtworks для кэша
-  await d1.prepare(
-    `UPDATE dreams SET similarArtworks = ? WHERE id = ? AND user = ?`
-  ).bind(JSON.stringify(similarArtworks), dreamId, userEmail).run();
-}
-
-return new Response(JSON.stringify({ similarArtworks }), {
-  status: 200,
-  headers: { 'Content-Type': 'application/json', ...corsHeaders }
-});
-
-      } catch (e) {
-        console.error('Error in /find_similar:', e);
-        return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        // Добавляем artworkId в объект для клиента
+        similarArtworks.push({
+          ...art,
+          artworkId,
         });
       }
+
+      // Обновляем dreams.similarArtworks для кэша
+      await d1
+        .prepare(`UPDATE dreams SET similarArtworks = ? WHERE id = ? AND user = ?`)
+        .bind(JSON.stringify(similarArtworks), dreamId, userEmail)
+        .run();
     }
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 1, 30000);
+    return new Response(JSON.stringify({ similarArtworks }), {
+      status: 200,
+      headers,
+    });
+  } catch (e) {
+    console.error('Error in /find_similar:', e);
+    return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+}
 
  // --- Interpret block endpoint (ИСПРАВЛЕННЫЙ) ---
 if (url.pathname === '/interpret_block' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  // Установка лимита: 3 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const body = await request.json();
-    const { blockText, dreamId, blockId, artworkId } = body;  // ✅ artworkId уже есть
+    const { blockText, dreamId, blockId, artworkId } = body;
 
     if (!blockText) {
       return new Response(JSON.stringify({ error: 'No blockText' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
@@ -4421,9 +7099,10 @@ if (url.pathname === '/interpret_block' && request.method === 'POST') {
     let dreamSummary = '';
 
     if (dreamId) {
-      const dreamRow = await d1.prepare(
-        `SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`
-      ).bind(dreamId, userEmail).first();
+      const dreamRow = await d1
+        .prepare(`SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`)
+        .bind(dreamId, userEmail)
+        .first();
 
       if (dreamRow) {
         autoSummary = dreamRow.autoSummary || '';
@@ -4436,13 +7115,13 @@ if (url.pathname === '/interpret_block' && request.method === 'POST') {
       userEmail,
       dreamId,
       blockId,
-      artworkId ?? null  // ✅ Корректно
+      artworkId ?? null
     );
 
     let unprocessedContext = '';
     if (unprocessedMessages.length > 0) {
       unprocessedContext = '\n\n### Последние сообщения диалога (после summary):\n';
-      unprocessedMessages.forEach(msg => {
+      unprocessedMessages.forEach((msg) => {
         const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
         unprocessedContext += `${label}: ${msg.content}\n`;
       });
@@ -4470,46 +7149,53 @@ ${unprocessedContext}
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 600,
       temperature: 0.7,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     const responseBody = await deepseekResponse.json();
     let interpretation = responseBody?.choices?.[0]?.message?.content || '';
-    interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+    interpretation = interpretation
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
 
-    // 🆕 СОХРАНЯЕМ толкование блока в messages с правильным meta
+    // Сохраняем толкование блока в messages с правильным meta
     if (dreamId && blockId && interpretation) {
       const msgId = crypto.randomUUID();
       const createdAt = Date.now();
 
-      await d1.prepare(
-        `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta, artwork_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(
-        msgId,
-        userEmail,
-        dreamId,
-        blockId,
-        'assistant',
-        interpretation,
-        createdAt,
-        JSON.stringify({ kind: 'block_interpretation' }),
-        artworkId ?? null  // ✅ Сохраняем artwork_id если есть
-      ).run();
+      await d1
+        .prepare(
+          `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta, artwork_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          msgId,
+          userEmail,
+          dreamId,
+          blockId,
+          'assistant',
+          interpretation,
+          createdAt,
+          JSON.stringify({ kind: 'block_interpretation' }),
+          artworkId ?? null
+        )
+        .run();
 
       // Также сохраняем в blocks для истории
-      const dreamRow = await d1.prepare(
-        `SELECT blocks FROM dreams WHERE id = ? AND user = ?`
-      ).bind(dreamId, userEmail).first();
+      const dreamRow = await d1
+        .prepare(`SELECT blocks FROM dreams WHERE id = ? AND user = ?`)
+        .bind(dreamId, userEmail)
+        .first();
 
       if (dreamRow) {
         let blocks = [];
@@ -4519,39 +7205,50 @@ ${unprocessedContext}
           blocks = [];
         }
 
-        const blockIndex = blocks.findIndex(b => b.id === blockId);
+        const blockIndex = blocks.findIndex((b) => b.id === blockId);
         if (blockIndex !== -1) {
           blocks[blockIndex].interpretation = interpretation;
 
-          await d1.prepare(
-            `UPDATE dreams SET blocks = ? WHERE id = ? AND user = ?`
-          ).bind(JSON.stringify(blocks), dreamId, userEmail).run();
+          await d1
+            .prepare(`UPDATE dreams SET blocks = ? WHERE id = ? AND user = ?`)
+            .bind(JSON.stringify(blocks), dreamId, userEmail)
+            .run();
         }
       }
     }
 
-    return new Response(JSON.stringify({ 
-      interpretation,
-      isBlockInterpretation: true  // 🆕 Флаг для фронтенда
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
 
+    return new Response(
+      JSON.stringify({
+        interpretation,
+        isBlockInterpretation: true,
+      }),
+      {
+        status: 200,
+        headers,
+      }
+    );
   } catch (e) {
     console.error('Error in /interpret_block:', e);
     return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 }
 
 // --- Interpret final endpoint (с rolling summary + необработанные сообщения по всем блокам) ---
 if (url.pathname === '/interpret_final' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  // Лимит: 3 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const body = await request.json();
@@ -4559,7 +7256,8 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
 
     if (!dreamText) {
       return new Response(JSON.stringify({ error: 'No dreamText' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
@@ -4569,9 +7267,10 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
     let dreamSummary = '';
 
     if (dreamId) {
-      const dreamRow = await d1.prepare(
-        `SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`
-      ).bind(dreamId, userEmail).first();
+      const dreamRow = await d1
+        .prepare(`SELECT autoSummary, dreamSummary FROM dreams WHERE id = ? AND user = ?`)
+        .bind(dreamId, userEmail)
+        .first();
 
       if (dreamRow) {
         autoSummary = dreamRow.autoSummary || '';
@@ -4585,9 +7284,9 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
         const blockId = block.id;
-        const blockText = block.text || block.content || "";
-        
-        // ✅ ИСПРАВЛЕНО: убрали artworkId (итоговая интерпретация — по сну целиком)
+        const blockText = block.text || block.content || '';
+
+        // Итоговая интерпретация — по сну целиком, artworkId не нужен
         const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
           env,
           userEmail,
@@ -4603,7 +7302,7 @@ if (url.pathname === '/interpret_final' && request.method === 'POST') {
 
         if (unprocessedMessages.length > 0) {
           blocksContext += `**Последние сообщения:**\n`;
-          unprocessedMessages.forEach(msg => {
+          unprocessedMessages.forEach((msg) => {
             const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
             blocksContext += `${label}: ${msg.content}\n`;
           });
@@ -4630,50 +7329,65 @@ ${blocksContext}
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 800,
       temperature: 0.7,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     const responseBody = await deepseekResponse.json();
     let interpretation = responseBody?.choices?.[0]?.message?.content || '';
-    interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+    interpretation = interpretation
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
 
-    // 🆕 СОХРАНЯЕМ итоговое толкование в БД
+    // Сохраняем итоговое толкование в БД
     if (dreamId && interpretation) {
-      await d1.prepare(`
+      await d1
+        .prepare(
+          `
         UPDATE dreams 
         SET globalFinalInterpretation = ?
         WHERE id = ? AND user = ?
-      `).bind(interpretation, dreamId, userEmail).run();
+      `
+        )
+        .bind(interpretation, dreamId, userEmail)
+        .run();
     }
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
 
     return new Response(JSON.stringify({ interpretation }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
-
   } catch (e) {
     console.error('Error in /interpret_final:', e);
     return new Response(JSON.stringify({ error: 'internal_error', message: e.message }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
   }
 }
 
 // --- Interpret final for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Лимит: 2 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 2,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const body = await request.json();
@@ -4682,31 +7396,35 @@ if (url.pathname === '/interpret_final_daily_convo' && request.method === 'POST'
     if (!notesText || !dailyConvoId) {
       return new Response(JSON.stringify({ error: 'notesText and dailyConvoId required' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
     const d1 = env.DB;
-    
+
     // 1. Получаем autoSummary
     let autoSummary = '';
-    const dailyRow = await d1.prepare(
-      'SELECT autoSummary FROM daily_convos WHERE id = ? AND user = ?'
-    ).bind(dailyConvoId, userEmail).first();
-    
+    const dailyRow = await d1
+      .prepare('SELECT autoSummary FROM daily_convos WHERE id = ? AND user = ?')
+      .bind(dailyConvoId, userEmail)
+      .first();
+
     if (dailyRow) {
       autoSummary = dailyRow.autoSummary || '';
     }
 
     // 2. Получаем rolling summary + необработанные сообщения
     const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
-      env, userEmail, dailyConvoId, blockId
+      env,
+      userEmail,
+      dailyConvoId,
+      blockId
     );
 
     let unprocessedContext = '';
     if (unprocessedMessages.length > 0) {
       unprocessedContext = '\n\n### Последние сообщения диалога:\n';
-      unprocessedMessages.forEach(msg => {
+      unprocessedMessages.forEach((msg) => {
         const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
         unprocessedContext += `${label}: ${msg.content}\n`;
       });
@@ -4732,54 +7450,74 @@ ${unprocessedContext}
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 800,
       temperature: 0.7,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     const responseBody = await deepseekResponse.json();
     let interpretation = responseBody?.choices?.[0]?.message?.content || '';
-    interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+    interpretation = interpretation
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
 
     // 4. Сохраняем в БД
     if (interpretation) {
-      await d1.prepare(
-        `UPDATE daily_convos SET globalFinalInterpretation = ? WHERE id = ? AND user = ?`
-      ).bind(interpretation, dailyConvoId, userEmail).run();
+      await d1
+        .prepare(
+          `UPDATE daily_convos SET globalFinalInterpretation = ? WHERE id = ? AND user = ?`
+        )
+        .bind(interpretation, dailyConvoId, userEmail)
+        .run();
     }
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 2, 30000);
 
     return new Response(JSON.stringify({ interpretation }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
-
   } catch (err) {
     console.error('Error in /interpret_final_daily_convo:', err);
-    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: err?.message || String(err),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
 // --- Interpret block for daily convo ---
 if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Лимит: 3 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const ct = request.headers.get('content-type') || '';
     if (!ct.includes('application/json')) {
       return new Response(JSON.stringify({ error: 'Invalid content type' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
@@ -4788,63 +7526,84 @@ if (url.pathname === '/interpret_block_daily_convo' && request.method === 'POST'
 
     if (!notesText || typeof notesText !== 'string') {
       return new Response(JSON.stringify({ error: 'No notesText' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
     const interpretation = await interpretBlock(env, notesText, blockType);
 
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+
     return new Response(JSON.stringify({ interpretation }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
-
   } catch (err) {
     console.error('Error in /interpret_block_daily_convo:', err);
-    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: err?.message || String(err),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
 // --- Interpret block for daily convo WITH CONTEXT ---
 if (url.pathname === '/interpret_block_daily_convo_context' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Лимит: 3 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const body = await request.json();
     const { notesText, dailyConvoId, blockId = 'main' } = body || {};
 
     if (!notesText || !dailyConvoId) {
-      return new Response(JSON.stringify({ error: 'notesText and dailyConvoId required' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      return new Response(
+        JSON.stringify({ error: 'notesText and dailyConvoId required' }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        }
+      );
     }
 
     // 1. Получаем autoSummary
     const d1 = env.DB;
     let autoSummary = '';
-    const dailyRow = await d1.prepare(
-      'SELECT autoSummary FROM daily_convos WHERE id = ? AND user = ?'
-    ).bind(dailyConvoId, userEmail).first();
-    
+    const dailyRow = await d1
+      .prepare('SELECT autoSummary FROM daily_convos WHERE id = ? AND user = ?')
+      .bind(dailyConvoId, userEmail)
+      .first();
+
     if (dailyRow) {
       autoSummary = dailyRow.autoSummary || '';
     }
 
     // 2. Получаем rolling summary + необработанные сообщения
     const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
-      env, userEmail, dailyConvoId, blockId
+      env,
+      userEmail,
+      dailyConvoId,
+      blockId
     );
 
     let unprocessedContext = '';
     if (unprocessedMessages.length > 0) {
       unprocessedContext = '\n\n### Последние сообщения диалога:\n';
-      unprocessedMessages.forEach(msg => {
+      unprocessedMessages.forEach((msg) => {
         const label = msg.role === 'user' ? 'Пользователь' : 'Ассистент';
         unprocessedContext += `${label}: ${msg.content}\n`;
       });
@@ -4870,68 +7629,91 @@ ${unprocessedContext}
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 600,
       temperature: 0.7,
-      stream: false
+      stream: false,
     };
 
     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
       },
-      body: JSON.stringify(deepseekRequestBody)
+      body: JSON.stringify(deepseekRequestBody),
     });
 
     const responseBody = await deepseekResponse.json();
     let interpretation = responseBody?.choices?.[0]?.message?.content || '';
-    interpretation = interpretation.replace(/```[\s\S]*?```/g, '').replace(/^["'`]+|["'`]+$/g, '').trim();
+    interpretation = interpretation
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .trim();
 
     // 4. Сохраняем толкование в messages
     const msgId = crypto.randomUUID();
     const createdAt = Date.now();
 
-    await d1.prepare(
-      `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      msgId,
-      userEmail,
-      dailyConvoId,
-      blockId,
-      'assistant',
-      interpretation,
-      createdAt,
-      JSON.stringify({ kind: 'daily_block_interpretation' })
-    ).run();
+    await d1
+      .prepare(
+        `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        msgId,
+        userEmail,
+        dailyConvoId, // здесь dailyConvoId идёт в dream_id
+        blockId,
+        'assistant',
+        interpretation,
+        createdAt,
+        JSON.stringify({ kind: 'daily_block_interpretation' })
+      )
+      .run();
 
-    return new Response(JSON.stringify({ 
-      interpretation,
-      isBlockInterpretation: true
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
 
+    return new Response(
+      JSON.stringify({
+        interpretation,
+        isBlockInterpretation: true,
+      }),
+      {
+        status: 200,
+        headers,
+      }
+    );
   } catch (err) {
     console.error('Error in /interpret_block_daily_convo_context:', err);
-    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: err?.message || String(err),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
 // --- Interpret final for daily convo (NEW) ---
 if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Лимит: 3 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const ct = request.headers.get('content-type') || '';
     if (!ct.includes('application/json')) {
       return new Response(JSON.stringify({ error: 'Invalid content type' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
@@ -4940,41 +7722,57 @@ if (url.pathname === '/interpret_final_daily_convo_new' && request.method === 'P
 
     if (!notesText || typeof notesText !== 'string') {
       return new Response(JSON.stringify({ error: 'No notesText' }), {
-        status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders }
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
     const interpretation = await interpretFinal(env, notesText, blockType);
 
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+
     return new Response(JSON.stringify({ interpretation }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
-
   } catch (err) {
     console.error('Error in /interpret_final_daily_convo_new:', err);
-    return new Response(JSON.stringify({ error: 'internal_error', message: err?.message || String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: err?.message || String(err),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 }
 
-// --- ART CHAT: GET /art_chat?artDialogId=...&artworkId=...&blockId=... ---
+// --- ART CHAT: GET /art_chat?dreamId=...&artworkId=...&blockId=... ---
 if (url.pathname === '/art_chat' && request.method === 'GET') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 50, windowMs: 30000 });
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    skipTrial: true,
+    maxRequests: 50,
+    windowMs: 60000,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
 
-  const dreamId = url.searchParams.get('dreamId');    // ✅ чистый UUID
+  const { userEmail, rateLimitResult } = authResult;
+
+  const dreamId = url.searchParams.get('dreamId');
   const artworkId = url.searchParams.get('artworkId');
   const blockId = url.searchParams.get('blockId');
 
   if (!dreamId || !blockId) {
-    return new Response(JSON.stringify({ error: 'Missing dreamId or blockId' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    return new Response(
+      JSON.stringify({ error: 'Missing dreamId or blockId' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
+    );
   }
 
   try {
@@ -4985,7 +7783,6 @@ if (url.pathname === '/art_chat' && request.method === 'GET') {
     `;
     const params = [userEmail, dreamId, blockId];
 
-    // ✅ Если есть artworkId — фильтруем по нему
     if (artworkId) {
       query += ` AND artwork_id = ?`;
       params.push(artworkId);
@@ -5003,24 +7800,49 @@ if (url.pathname === '/art_chat' && request.method === 'GET') {
       meta: r.meta ? JSON.parse(r.meta) : undefined,
     }));
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ messages }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
-    console.error('GET /art_chat error', e);
+    console.error('GET /art_chat error', e && (e.stack || e.message || e));
     return new Response(
-      JSON.stringify({ error: 'internal_error', details: e?.message || String(e) }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      JSON.stringify({
+        error: 'internal_error',
+        details: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      }
     );
   }
 }
 
 // --- POST /art_chat ---
 if (url.pathname === '/art_chat' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { skipTrial: true, maxRequests: 50, windowMs: 30000 });
+  // Лимит: 25 запросов за 30 секунд, без проверки trial
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    skipTrial: true,
+    maxRequests: 25,
+    windowMs: 30000,
+    requireRateLimit: true, // важно: без DO не идём дальше
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body;
   try {
@@ -5049,20 +7871,20 @@ if (url.pathname === '/art_chat' && request.method === 'POST') {
       `INSERT INTO messages (id, user, dream_id, block_id, role, content, created_at, meta, artwork_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(
-      msgId,
-      userEmail,
-      dreamId,        // ✅ чистый UUID сна
-      blockId,
-      role,
-      String(content).slice(0, 12000),
-      createdAt,
-      meta ? JSON.stringify(meta) : null,
-      artworkId || null
-    )
-    .run();
+      .bind(
+        msgId,
+        userEmail,
+        dreamId,        // чистый UUID сна
+        blockId,
+        role,
+        String(content).slice(0, 12000),
+        createdAt,
+        meta ? JSON.stringify(meta) : null,
+        artworkId || null
+      )
+      .run();
 
-    // Rolling summary
+    // Обновляем rolling summary только для сообщений ассистента
     if (role === 'assistant') {
       try {
         let artworkText = '';
@@ -5079,7 +7901,7 @@ if (url.pathname === '/art_chat' && request.method === 'POST') {
         await updateRollingSummary(
           env,
           userEmail,
-          dreamId,        // ✅ чистый UUID
+          dreamId,        // чистый UUID
           blockId,
           artworkText,
           env.DEEPSEEK_API_KEY,
@@ -5089,6 +7911,8 @@ if (url.pathname === '/art_chat' && request.method === 'POST') {
         console.warn('[POST /art_chat] Failed to update summary:', e);
       }
     }
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 25, 30000);
 
     return new Response(
       JSON.stringify({
@@ -5100,7 +7924,7 @@ if (url.pathname === '/art_chat' && request.method === 'POST') {
       }),
       {
         status: 201,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers,
       }
     );
   } catch (e) {
@@ -5163,9 +7987,15 @@ if (url.pathname.match(/^\/dreams\/[^/]+\/similar_artworks$/) && request.method 
 
 // --- Interpret block for art WITH CONTEXT ---
 if (url.pathname === '/interpret_block_art' && request.method === 'POST') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  // Лимит: 3 запроса за 30 секунд, жёстко требуем рабочий rate limiter
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 3,
+    windowMs: 30000,
+    requireRateLimit: true,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const body = await request.json();
@@ -5227,13 +8057,13 @@ if (url.pathname === '/interpret_block_art' && request.method === 'POST') {
 Описание: ${artworkRow.desc}
 `.trim();
 
-    // ✅ ИСПРАВЛЕНО: добавили artworkId для строгого контекста по artwork
+    // Контекст строго по artwork
     const { rollingSummary, unprocessedMessages } = await getUnprocessedMessages(
       env,
       userEmail,
       dreamId,
       blockId,
-      artworkId || null  // ✅ Теперь контекст строго по artwork
+      artworkId || null
     );
 
     let unprocessedContext = '';
@@ -5266,7 +8096,8 @@ ${unprocessedContext}
       messages: [
         {
           role: 'system',
-          content: 'Ты внимательный психолог и арт-терапевт. Отвечай всегда на русском, живым человеческим языком.',
+          content:
+            'Ты внимательный психолог и арт-терапевт. Отвечай всегда на русском, живым человеческим языком.',
         },
         { role: 'user', content: userPrompt },
       ],
@@ -5328,6 +8159,8 @@ ${unprocessedContext}
       )
       .run();
 
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+
     return new Response(
       JSON.stringify({
         interpretation,
@@ -5335,7 +8168,7 @@ ${unprocessedContext}
       }),
       {
         status: 200,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers,
       },
     );
   } catch (err) {
@@ -5355,13 +8188,14 @@ ${unprocessedContext}
 
 // --- DELETE /art_chat ---
 if (url.pathname === '/art_chat' && request.method === 'DELETE') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  // Лимит: 20 запросов за 60 секунд на пользователя
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   let body;
   try {
@@ -5369,22 +8203,47 @@ if (url.pathname === '/art_chat' && request.method === 'DELETE') {
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 
   const { dreamId, blockId, artworkId } = body || {};
 
   if (!dreamId || !blockId) {
-    return new Response(JSON.stringify({ error: 'Missing dreamId or blockId' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    return new Response(
+      JSON.stringify({ error: 'Missing dreamId or blockId' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   try {
-    let deleteMessagesQuery = `DELETE FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`;
-    let deleteSummariesQuery = `DELETE FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id = ?`;
+    let deleteMessagesQuery =
+      `DELETE FROM messages WHERE user = ? AND dream_id = ? AND block_id = ?`;
+    let deleteSummariesQuery =
+      `DELETE FROM dialog_summaries WHERE user = ? AND dream_id = ? AND block_id = ?`;
     const params = [userEmail, dreamId, blockId];
 
     if (artworkId) {
@@ -5396,15 +8255,43 @@ if (url.pathname === '/art_chat' && request.method === 'DELETE') {
     await env.DB.prepare(deleteMessagesQuery).bind(...params).run();
     await env.DB.prepare(deleteSummariesQuery).bind(...params).run();
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
-    console.error('DELETE /art_chat error', e);
+    console.error('DELETE /art_chat error', e && (e.stack || e.message || e));
     return new Response(
-      JSON.stringify({ error: 'internal_error', details: e?.message || String(e) }),
-      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      JSON.stringify({
+        error: 'internal_error',
+        details: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
     );
   }
 }
@@ -5413,44 +8300,51 @@ if (url.pathname === '/art_chat' && request.method === 'DELETE') {
 
 // --- Dashboard metrics endpoint (нормальный range) ---
 if (url.pathname === '/dashboard' && request.method === 'GET') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 60000 });
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 50,
+    windowMs: 60000,
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
     const d1 = env.DB;
 
-    // ✅ ОПРЕДЕЛЯЕМ ФУНКЦИЮ СРАЗУ
     function resolveSinceTs(range) {
       const now = Date.now();
       let sinceTs;
 
       switch (range) {
-        case '7d':   sinceTs = now - (7  * 24 * 60 * 60 * 1000); break;
-        case '30d':  sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
-        case '60d':  sinceTs = now - (60 * 24 * 60 * 60 * 1000); break;
-        case '90d':  sinceTs = now - (90 * 24 * 60 * 60 * 1000); break;
-        case '365d': sinceTs = now - (365 * 24 * 60 * 60 * 1000); break;
+        case '7d':   sinceTs = now - 7  * 24 * 60 * 60 * 1000; break;
+        case '30d':  sinceTs = now - 30 * 24 * 60 * 60 * 1000; break;
+        case '60d':  sinceTs = now - 60 * 24 * 60 * 60 * 1000; break;
+        case '90d':  sinceTs = now - 90 * 24 * 60 * 60 * 1000; break;
+        case '365d': sinceTs = now - 365* 24 * 60 * 60 * 1000; break;
         case 'all':  sinceTs = 0; break;
-        default:     sinceTs = now - (30 * 24 * 60 * 60 * 1000); break;
+        default:     sinceTs = now - 30 * 24 * 60 * 60 * 1000; break;
       }
 
       const date = new Date(sinceTs);
       date.setUTCHours(0, 0, 0, 0);
       sinceTs = date.getTime();
 
-      console.log(`[resolveSinceTs] range=${range}, sinceTs=${sinceTs}, date=${new Date(sinceTs).toISOString()}`);
+      console.log(
+        `[resolveSinceTs] range=${range}, sinceTs=${sinceTs}, date=${new Date(
+          sinceTs
+        ).toISOString()}`
+      );
       return sinceTs;
     }
 
-  // ---------- БЛОК RANGE ----------
+    // ---------- БЛОК RANGE ----------
     const rangeParamRaw = url.searchParams.get('range') || '30d';
-    const allowedRanges = ['7d','30d','60d','90d','365d','all'];
-    const rangeParam = (allowedRanges.includes(rangeParamRaw) ? rangeParamRaw : '30d');
+    const allowedRanges = ['7d', '30d', '60d', '90d', '365d', 'all'];
+    const rangeParam = allowedRanges.includes(rangeParamRaw)
+      ? rangeParamRaw
+      : '30d';
 
     const isAll = rangeParam === 'all';
 
-    // ✅ ВЫЗЫВАЕМ ФУНКЦИЮ И СОХРАНЯЕМ РЕЗУЛЬТАТ
     const sinceTs = resolveSinceTs(rangeParam);
     const thirtyDaysAgo = resolveSinceTs('30d');
 
@@ -5461,7 +8355,7 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       .first();
     const totalDreams = Number(totalDreamsRow?.count || 0);
 
-    // Блоков (диалогов) за последние 30 дней — НЕ зависит от range
+    // Блоков (диалогов) за последние 30 дней
     const monthlyBlocksRow = await d1
       .prepare(
         `SELECT COUNT(DISTINCT dream_id) AS count
@@ -5472,7 +8366,7 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       .first();
     const monthlyBlocks = Number(monthlyBlocksRow?.count || 0);
 
-    // Снов с финальной интерпретацией (all‑time)
+    // Снов с финальной интерпретацией
     const interpretedRow = await d1
       .prepare(
         `SELECT COUNT(*) AS count
@@ -5485,7 +8379,7 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       .first();
     const interpretedCount = Number(interpretedRow?.count || 0);
 
-    // Снов с артами (all‑time)
+    // Снов с артами
     const artworksRow = await d1
       .prepare(
         `SELECT COUNT(*) AS count
@@ -5498,19 +8392,19 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       .first();
     const artworksCount = Number(artworksRow?.count || 0);
 
-    // Снов с диалогами (all‑time)
-const dialogDreamsRow = await d1
-  .prepare(
-    `SELECT COUNT(DISTINCT dream_id) AS count
-     FROM messages
-     WHERE user = ? AND role = 'assistant'
-       AND dream_id IN (SELECT id FROM dreams WHERE user = ?)`
-  )
-  .bind(userEmail, userEmail)
-  .first();
-const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
+    // Снов с диалогами (assistant)
+    const dialogDreamsRow = await d1
+      .prepare(
+        `SELECT COUNT(DISTINCT dream_id) AS count
+         FROM messages
+         WHERE user = ? AND role = 'assistant'
+           AND dream_id IN (SELECT id FROM dreams WHERE user = ?)`
+      )
+      .bind(userEmail, userEmail)
+      .first();
+    const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
 
-    // ---------- Стрик за последний год (независим от range) ----------
+    // ---------- Стрик за последний год ----------
     const streakSinceTs = Date.now() - 365 * 24 * 60 * 60 * 1000;
     const streakStmt = await d1
       .prepare(
@@ -5535,7 +8429,8 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
 
       if (i === 0) {
         const diffDays =
-          (currentDate.getTime() - dreamDate.getTime()) / (1000 * 60 * 60 * 24);
+          (currentDate.getTime() - dreamDate.getTime()) /
+          (1000 * 60 * 60 * 24);
         if (diffDays <= 1) {
           streak = 1;
           currentDate = dreamDate;
@@ -5554,24 +8449,33 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
       }
     }
 
-    // 7) Данные для прогресса (как было)
-    const interpretedForScoreResult = await d1.prepare(
-      `SELECT COUNT(*) as count 
-       FROM dreams 
-       WHERE user = ? AND globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != ''`
-    ).bind(userEmail).first();
+    // 7) Для прогресса
+    const interpretedForScoreResult = await d1
+      .prepare(
+        `SELECT COUNT(*) as count 
+         FROM dreams 
+         WHERE user = ? AND globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != ''`
+      )
+      .bind(userEmail)
+      .first();
 
-    const summarizedForScoreResult = await d1.prepare(
-      `SELECT COUNT(*) as count 
-       FROM dreams 
-       WHERE user = ? AND dreamSummary IS NOT NULL AND dreamSummary != ''`
-    ).bind(userEmail).first();
+    const summarizedForScoreResult = await d1
+      .prepare(
+        `SELECT COUNT(*) as count 
+         FROM dreams 
+         WHERE user = ? AND dreamSummary IS NOT NULL AND dreamSummary != ''`
+      )
+      .bind(userEmail)
+      .first();
 
-    const maxLengthResult = await d1.prepare(
-      `SELECT MAX(LENGTH(globalFinalInterpretation)) as maxLength 
-       FROM dreams 
-       WHERE user = ? AND globalFinalInterpretation IS NOT NULL`
-    ).bind(userEmail).first();
+    const maxLengthResult = await d1
+      .prepare(
+        `SELECT MAX(LENGTH(globalFinalInterpretation)) as maxLength 
+         FROM dreams 
+         WHERE user = ? AND globalFinalInterpretation IS NOT NULL`
+      )
+      .bind(userEmail)
+      .first();
 
     const maxLength = maxLengthResult?.maxLength || 0;
 
@@ -5580,17 +8484,12 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
       interpreted_count: interpretedForScoreResult?.count || 0,
       summarized_count: summarizedForScoreResult?.count || 0,
       artworks_count: artworksCount,
-      max_interpretation_length: maxLength
+      max_interpretation_length: maxLength,
     };
 
-    // 8) Базовый общий score (используем вашу функцию)
     const improvementScore = calculateImprovementScore(progressData);
 
-    // ------------------------------
-    // 9) Новая логика: история (history), score/scoreDelta, highest, breakdown, recentDreams
-    // ------------------------------
-
-    // 9.1 Aggregation per day (GROUP BY day) within requested period (or all)
+    // 9.1 Aggregation per day in period / all
     const aggSql = `
       SELECT
         DATE(date/1000, 'unixepoch') as day,
@@ -5601,45 +8500,52 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
         SUM(CASE WHEN similarArtworks IS NOT NULL AND similarArtworks != '' AND similarArtworks != '[]' THEN 1 ELSE 0 END) as artworks,
         SUM(CASE WHEN EXISTS (SELECT 1 FROM messages m WHERE m.user = dreams.user AND m.dream_id = dreams.id AND m.role = 'assistant') THEN 1 ELSE 0 END) as dialogs
       FROM dreams
-      WHERE user = ? ${isAll ? "" : "AND date >= ?"}
+      WHERE user = ? ${isAll ? '' : 'AND date >= ?'}
       GROUP BY day
       ORDER BY day ASC
     `;
 
-    const aggStmt = isAll 
-      ? d1.prepare(aggSql).bind(userEmail) 
+    const aggStmt = isAll
+      ? d1.prepare(aggSql).bind(userEmail)
       : d1.prepare(aggSql).bind(userEmail, sinceTs);
     const aggRes = await aggStmt.all();
     const aggRows = aggRes.results || [];
 
-    // 9.2 Build cumulative history (cumulative up-to-day). If you prefer per-day snapshots, use row values directly.
-    let cumulative = { total: 0, interpreted: 0, summarized: 0, artworks: 0, dialogs: 0 };
+    let cumulative = {
+      total: 0,
+      interpreted: 0,
+      summarized: 0,
+      artworks: 0,
+      dialogs: 0,
+    };
     const history = [];
 
-    // Helper: compute score for given cumulative aggregation. Prefer existing calculateImprovementScore if available.
     function computeScoreFromAgg(agg) {
       try {
         if (typeof calculateImprovementScore === 'function') {
-          // CalculateImprovementScore expects an object; try passing compatible shape
           const dataForCalc = {
             total_dreams: agg.total || 0,
             interpreted_count: agg.interpreted || 0,
             summarized_count: agg.summarized || 0,
             artworks_count: agg.artworks || 0,
-            max_interpretation_length: maxLength // reuse overall max length as proxy
+            max_interpretation_length: maxLength,
           };
           return Math.round(calculateImprovementScore(dataForCalc));
         }
       } catch (e) {
-        // fall back
+        // ignore
       }
 
-      // Fallback heuristic if calculateImprovementScore unavailable
       const total = agg.total || 1;
       const interpretedPct = (agg.interpreted || 0) / total;
       const dialogPct = (agg.dialogs || 0) / total;
       const artworkPct = (agg.artworks || 0) / total;
-      const score = Math.round(Math.min(100, 100 * (0.55 * interpretedPct + 0.25 * dialogPct + 0.20 * artworkPct)));
+      const score = Math.round(
+        Math.min(
+          100,
+          100 * (0.55 * interpretedPct + 0.25 * dialogPct + 0.2 * artworkPct)
+        )
+      );
       return score;
     }
 
@@ -5653,86 +8559,91 @@ const dialogDreamsCount = Number(dialogDreamsRow?.count || 0);
       const point = {
         date: new Date(Number(r.day_first_ts || r.day)).toISOString(),
         score: computeScoreFromAgg(cumulative),
-        counts: { ...cumulative }
+        counts: { ...cumulative },
       };
       history.push(point);
     }
 
-   // ✅ Если нет данных за период — возвращаем пустой массив
-if (history.length === 0) {
-  // НЕ добавляем фейковую точку — пусть фронт сам решает, что показывать
-  console.warn(`[dashboard] No history data for range=${rangeParam}`);
-}
+    if (history.length === 0) {
+      console.warn(`[dashboard] No history data for range=${rangeParam}`);
+    }
 
-    // 9.3 Build historyOut (date + score)
-    const historyOut = history.map(h => ({ date: h.date, score: h.score }));
+    const historyOut = history.map((h) => ({
+      date: h.date,
+      score: h.score,
+    }));
 
-    // 9.4 score, scoreDelta, highestScore
-    const lastScore = historyOut.length ? historyOut[historyOut.length - 1].score : Math.round(improvementScore || 0);
-    const prevScore = historyOut.length > 1 ? historyOut[historyOut.length - 2].score : null;
+    const lastScore = historyOut.length
+      ? historyOut[historyOut.length - 1].score
+      : Math.round(improvementScore || 0);
+    const prevScore =
+      historyOut.length > 1 ? historyOut[historyOut.length - 2].score : null;
     const scoreDelta = prevScore === null ? 0 : lastScore - prevScore;
-    const highestPoint = historyOut.reduce((acc, p) => (acc === null || p.score > acc.score ? p : acc), null);
+    const highestPoint = historyOut.reduce(
+      (acc, p) => (acc === null || p.score > acc.score ? p : acc),
+      null
+    );
 
-    // 9.5 recentDreams (last N)
-    // ---------- recentDreams (за период / all) ----------
-    // ---------- recentDreams (за период / all) ----------
-// ✅ Всегда возвращаем последние 12 снов (независимо от range)
-const recentLimit = 12;
-const recentSql = `
-  SELECT id, title, date,
-    (globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '') AS interpreted
-  FROM dreams
-  WHERE user = ?
-  ORDER BY date DESC
-  LIMIT ?
-`;
+    // recentDreams (12 последних)
+    const recentLimit = 12;
+    const recentSql = `
+      SELECT id, title, date,
+        (globalFinalInterpretation IS NOT NULL AND globalFinalInterpretation != '') AS interpreted
+      FROM dreams
+      WHERE user = ?
+      ORDER BY date DESC
+      LIMIT ?
+    `;
 
-const recentStmt = d1.prepare(recentSql).bind(userEmail, recentLimit);
-const recentRes = await recentStmt.all();
+    const recentStmt = d1.prepare(recentSql).bind(userEmail, recentLimit);
+    const recentRes = await recentStmt.all();
 
-const recentDreams = (recentRes.results || []).map((r) => ({
-  id: r.id,
-  title: r.title || null,
-  date: new Date(Number(r.date)).toISOString(),
-  interpreted: Boolean(r.interpreted),
-}));
+    const recentDreams = (recentRes.results || []).map((r) => ({
+      id: r.id,
+      title: r.title || null,
+      date: new Date(Number(r.date)).toISOString(),
+      interpreted: Boolean(r.interpreted),
+    }));
 
-    // 9.6 breakdownCounts & breakdownPercent (from final cumulative)
-    const finalCounts = history.length ? history[history.length - 1].counts : { total: 0, interpreted: 0, summarized: 0, artworks: 0, dialogs: 0 };
+    // breakdown
+    const finalCounts = history.length
+      ? history[history.length - 1].counts
+      : { total: 0, interpreted: 0, summarized: 0, artworks: 0, dialogs: 0 };
     const breakdownCounts = {
       interpreted: finalCounts.interpreted || 0,
       summarized: finalCounts.summarized || 0,
       artworks: finalCounts.artworks || 0,
-      dialogs: finalCounts.dialogs || 0
+      dialogs: finalCounts.dialogs || 0,
     };
     const totalForPct = Math.max(1, finalCounts.total || 0);
     const totalDreamsInPeriod = finalCounts.total || 0;
     const breakdownPercent = {
-      interpreted: Math.round((breakdownCounts.interpreted / totalForPct) * 100),
-      summarized: Math.round((breakdownCounts.summarized / totalForPct) * 100),
+      interpreted: Math.round(
+        (breakdownCounts.interpreted / totalForPct) * 100
+      ),
+      summarized: Math.round(
+        (breakdownCounts.summarized / totalForPct) * 100
+      ),
       artworks: Math.round((breakdownCounts.artworks / totalForPct) * 100),
-      dialogs: Math.round((breakdownCounts.dialogs / totalForPct) * 100)
+      dialogs: Math.round((breakdownCounts.dialogs / totalForPct) * 100),
     };
 
-    // =============================
-    // ✅ АГРЕГАЦИЯ НАСТРОЕНИЙ С УЧЁТОМ ПЕРИОДА
-    // =============================
-
+    // moods
     let moodCounts = {};
     let moodTotal = 0;
 
     try {
       const moodsSql = isAll
-  ? `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? GROUP BY context`
-  : `SELECT context, COUNT(*) AS cnt 
-     FROM moods 
-     WHERE user_email = ? 
-       AND date >= ?  -- ✅ Убираем date(), сравниваем напрямую
-     GROUP BY context`;
+        ? `SELECT context, COUNT(*) AS cnt FROM moods WHERE user_email = ? GROUP BY context`
+        : `SELECT context, COUNT(*) AS cnt 
+           FROM moods 
+           WHERE user_email = ? 
+             AND date >= ?
+           GROUP BY context`;
 
-const moodsStmt = isAll
-  ? d1.prepare(moodsSql).bind(userEmail)
-  : d1.prepare(moodsSql).bind(userEmail, sinceTs); // ✅ Передаём миллисекунды напрямую
+      const moodsStmt = isAll
+        ? d1.prepare(moodsSql).bind(userEmail)
+        : d1.prepare(moodsSql).bind(userEmail, sinceTs);
 
       const moodsRes = await moodsStmt.all();
       const moodRows = moodsRes?.results ?? [];
@@ -5749,113 +8660,134 @@ const moodsStmt = isAll
       moodTotal = 0;
     }
 
-    // =============================
-    // ✅ НОВЫЙ БЛОК: АГРЕГАЦИЯ ИНСАЙТОВ
-    // =============================
-let insightsDreamsCount = 0;
-let insightsArtworksCount = 0;
+    // инсайты
+    let insightsDreamsCount = 0;
+    let insightsArtworksCount = 0;
 
-try {
-  const insightsSql = isAll
-    ? `
-      SELECT
-        COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS insights_dreams,
-        COUNT(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 END) AS insights_artworks
-      FROM messages
-      WHERE user = ?
-    `
-    : `
-      SELECT
-        COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS insights_dreams,
-        COUNT(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 END) AS insights_artworks
-      FROM messages
-      WHERE user = ? AND created_at >= ?
-    `;
+    try {
+      const insightsSql = isAll
+        ? `
+          SELECT
+            COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS insights_dreams,
+            COUNT(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 END) AS insights_artworks
+          FROM messages
+          WHERE user = ?
+        `
+        : `
+          SELECT
+            COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS insights_dreams,
+            COUNT(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 END) AS insights_artworks
+          FROM messages
+          WHERE user = ? AND created_at >= ?
+        `;
 
-  const insightsStmt = isAll
-    ? d1.prepare(insightsSql).bind(userEmail)
-    : d1.prepare(insightsSql).bind(userEmail, sinceTs);
+      const insightsStmt = isAll
+        ? d1.prepare(insightsSql).bind(userEmail)
+        : d1.prepare(insightsSql).bind(userEmail, sinceTs);
 
-  const insightsRes = await insightsStmt.first();
-  insightsDreamsCount = Number(insightsRes?.insights_dreams ?? 0);
-  insightsArtworksCount = Number(insightsRes?.insights_artworks ?? 0);
+      const insightsRes = await insightsStmt.first();
+      insightsDreamsCount = Number(insightsRes?.insights_dreams ?? 0);
+      insightsArtworksCount = Number(insightsRes?.insights_artworks ?? 0);
+    } catch (err) {
+      console.error('Failed to aggregate insights:', err);
+    }
 
-} catch (err) {
-  console.error('Failed to aggregate insights:', err);
-}
-
-    
-    // === DAILY CONVOS AGGREGATION FOR DASHBOARD ===
+    // daily_convos aggregation
     let totalDailyConvos = 0;
     let dailyConvoInsightsCount = 0;
     try {
-      const dailyCountRes = await d1.prepare(`SELECT COUNT(*) AS cnt FROM daily_convos WHERE user = ?`).bind(userEmail).first();
+      const dailyCountRes = await d1
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM daily_convos WHERE user = ?`
+        )
+        .bind(userEmail)
+        .first();
       totalDailyConvos = Number(dailyCountRes?.cnt ?? 0);
 
-      // Count insights from messages linked to daily_convos (dream_id used)
-      const dailyInsightsRes = await d1.prepare(`
+      const dailyInsightsRes = await d1
+        .prepare(
+          `
         SELECT
           COUNT(DISTINCT CASE WHEN CAST(json_extract(meta, '$.insightLiked') AS REAL) = 1 THEN dream_id END) AS daily_convos_with_insight,
           SUM(CASE WHEN CAST(json_extract(meta, '$.insightArtworksLiked') AS REAL) = 1 THEN 1 ELSE 0 END) AS daily_artwork_insight_msgs
         FROM messages
         WHERE user = ? AND dream_id IN (SELECT id FROM daily_convos WHERE user = ?)
-      `).bind(userEmail, userEmail).first();
+      `
+        )
+        .bind(userEmail, userEmail)
+        .first();
 
-      dailyConvoInsightsCount = Number(dailyInsightsRes?.daily_convos_with_insight ?? 0);
+      dailyConvoInsightsCount = Number(
+        dailyInsightsRes?.daily_convos_with_insight ?? 0
+      );
     } catch (e) {
-      console.warn('Failed to aggregate daily_convos metrics for dashboard:', e);
+      console.warn(
+        'Failed to aggregate daily_convos metrics for dashboard:',
+        e
+      );
       totalDailyConvos = totalDailyConvos || 0;
       dailyConvoInsightsCount = dailyConvoInsightsCount || 0;
     }
 
-    // =============================
-    // 10) ФОРМИРОВАНИЕ ОТВЕТА
-    // =============================
-
-    // ✅ ПЕРИОДНЫЕ ДАННЫЕ (для графиков, истории, активностей)
+    // данные периода
     const dashboardDataPeriod = {
-      totalDreams: totalDreamsInPeriod, // количество снов в выбранном периоде
+      totalDreams: totalDreamsInPeriod,
       totalDreamsInPeriod: totalDreamsInPeriod,
-      breakdownCounts: breakdownCounts, // из периода
-      breakdownPercent: breakdownPercent, // из периода
-      streak: streak, // стрик всегда за год
-      insights: insightsDreamsCount, // из периода
+      breakdownCounts: breakdownCounts,
+      breakdownPercent: breakdownPercent,
+      streak: streak,
+      insights: insightsDreamsCount,
       depthScore: 0,
     };
     dashboardDataPeriod.depthScore = calculateDepthScore(dashboardDataPeriod);
 
-    // ✅ ОБЩИЕ ДАННЫЕ (ЗА ВСЁ ВРЕМЯ) — для Depth Score, уровня, бейджей
+    // all‑time данные
     const dashboardDataTotal = {
-      totalDreams: totalDreams, // ВСЕ сны за всё время
-      totalDreamsInPeriod: totalDreams, // важно: для расчета используем ВСЕ сны
+      totalDreams: totalDreams,
+      totalDreamsInPeriod: totalDreams,
       breakdownCounts: {
-        interpreted: interpretedCount, // за всё время
+        interpreted: interpretedCount,
         summarized: summarizedForScoreResult?.count || 0,
-        artworks: artworksCount, // за всё время
-        dialogs: dialogDreamsCount, // за всё время
+        artworks: artworksCount,
+        dialogs: dialogDreamsCount,
       },
       breakdownPercent: {
-        interpreted: totalDreams > 0 ? Math.round((interpretedCount / totalDreams) * 100) : 0,
-        summarized: totalDreams > 0 ? Math.round(((summarizedForScoreResult?.count || 0) / totalDreams) * 100) : 0,
-        artworks: totalDreams > 0 ? Math.round((artworksCount / totalDreams) * 100) : 0,
-        dialogs: totalDreams > 0 ? Math.round((dialogDreamsCount / totalDreams) * 100) : 0,
+        interpreted:
+          totalDreams > 0
+            ? Math.round((interpretedCount / totalDreams) * 100)
+            : 0,
+        summarized:
+          totalDreams > 0
+            ? Math.round(
+                ((summarizedForScoreResult?.count || 0) / totalDreams) * 100
+              )
+            : 0,
+        artworks:
+          totalDreams > 0
+            ? Math.round((artworksCount / totalDreams) * 100)
+            : 0,
+        dialogs:
+          totalDreams > 0
+            ? Math.round((dialogDreamsCount / totalDreams) * 100)
+            : 0,
       },
       streak: streak,
-      insights: insightsDreamsCount, // за всё время (из all-time запроса выше)
+      insights: insightsDreamsCount,
       depthScore: 0,
     };
     dashboardDataTotal.depthScore = calculateDepthScore(dashboardDataTotal);
 
-    // ✅ DEPTH SCORE С DECAY (всегда одинаковый, не зависит от фильтра)
-    const now = Date.now();
+    // depth score с decay
+    const nowTs = Date.now();
     const baseDepthScoreTotal = dashboardDataTotal.depthScore;
 
-    // Загружаем сохраненное состояние decay
     let storedScore = baseDepthScoreTotal;
-    let lastAt = now;
+    let lastAt = nowTs;
     try {
       const row = await d1
-        .prepare('SELECT depth_score_stored, last_depth_update_at FROM user_depth_state WHERE user_email = ?')
+        .prepare(
+          'SELECT depth_score_stored, last_depth_update_at FROM user_depth_state WHERE user_email = ?'
+        )
         .bind(userEmail)
         .first();
       if (row) {
@@ -5866,7 +8798,13 @@ try {
       console.warn('Failed to load depth state:', e);
     }
 
-    function applyDepthDecay({ baseScore, storedScore, lastAt, now, halfLifeDays = 30 }) {
+    function applyDepthDecay({
+      baseScore,
+      storedScore,
+      lastAt,
+      now,
+      halfLifeDays = 30,
+    }) {
       const hlMs = halfLifeDays * 24 * 60 * 60 * 1000;
       const dt = Math.max(0, now - (lastAt || now));
       const k = hlMs > 0 ? Math.pow(0.5, dt / hlMs) : 0;
@@ -5874,52 +8812,72 @@ try {
       return Math.max(baseScore, decayed);
     }
 
-    const depthScoreTotal = Math.round(applyDepthDecay({
-  baseScore: baseDepthScoreTotal,
-  storedScore,
-  lastAt,
-  now,
-  halfLifeDays: 30,
-}));
+    const depthScoreTotal = Math.round(
+      applyDepthDecay({
+        baseScore: baseDepthScoreTotal,
+        storedScore,
+        lastAt,
+        now: nowTs,
+        halfLifeDays: 30,
+      })
+    );
 
-    // Сохраняем состояние decay (только если изменилось)
     try {
-      await d1.prepare(`
+      await d1
+        .prepare(
+          `
         INSERT INTO user_depth_state (user_email, depth_score_stored, last_depth_update_at)
         VALUES (?, ?, ?)
         ON CONFLICT(user_email) DO UPDATE SET
           depth_score_stored = excluded.depth_score_stored,
           last_depth_update_at = excluded.last_depth_update_at
-      `).bind(userEmail, depthScoreTotal, now).run();
+      `
+        )
+        .bind(userEmail, depthScoreTotal, nowTs)
+        .run();
     } catch (e) {
       console.warn('Failed to save depth state:', e);
     }
 
-    // ✅ ГЕЙМИФИКАЦИЯ (всегда за всё время)
+    // геймификация
     const level = getLevel(depthScoreTotal);
 
-// ✅ Проверяем, новый ли уровень
-const lastSeenLevelRow = await env.DB.prepare(
-  'SELECT last_seen_level FROM user_depth_state WHERE user_email = ?'
-)
-  .bind(userEmail)
-  .first();
+    const lastSeenLevelRow = await env.DB
+      .prepare(
+        'SELECT last_seen_level FROM user_depth_state WHERE user_email = ?'
+      )
+      .bind(userEmail)
+      .first();
 
-const isNew = level.level > (lastSeenLevelRow?.last_seen_level || 0);
+    const isNew = level.level > (lastSeenLevelRow?.last_seen_level || 0);
 
-// Возвращаем уровень с флагом isNew
-const levelWithNew = {
-  ...level,
-  isNew,
-};
-    const badgesInfo = await checkAndUnlockBadges(d1, userEmail, dashboardDataTotal);
-    const recommendedGoal = getNextGoal(level, badgesInfo.unlocked, dashboardDataTotal);
-    const advice = generateAdvice(level, recommendedGoal, dashboardDataTotal);
+    const levelWithNew = {
+      ...level,
+      isNew,
+    };
+
+    const badgesInfo = await checkAndUnlockBadges(
+      d1,
+      userEmail,
+      dashboardDataTotal
+    );
+    const recommendedGoal = getNextGoal(
+      level,
+      badgesInfo.unlocked,
+      dashboardDataTotal
+    );
+    const advice = generateAdvice(
+      level,
+      recommendedGoal,
+      dashboardDataTotal
+    );
 
     let currentBadgeGoalId = null;
     try {
       const row = await d1
-        .prepare('SELECT current_badge_goal_id FROM user_goal_settings WHERE user_email = ?')
+        .prepare(
+          'SELECT current_badge_goal_id FROM user_goal_settings WHERE user_email = ?'
+        )
         .bind(userEmail)
         .first();
       currentBadgeGoalId = row?.current_badge_goal_id ?? null;
@@ -5927,65 +8885,69 @@ const levelWithNew = {
       currentBadgeGoalId = null;
     }
 
-    const currentGoal = (currentBadgeGoalId && BADGES[currentBadgeGoalId])
-      ? {
-          badgeId: currentBadgeGoalId,
-          name: BADGES[currentBadgeGoalId].name,
-          emoji: BADGES[currentBadgeGoalId].emoji,
-          description: BADGES[currentBadgeGoalId].description,
-          progress: calculateBadgeProgress(currentBadgeGoalId, dashboardDataTotal),
-          advice: generateAdvice(level, { badgeId: currentBadgeGoalId }, dashboardDataTotal),
-        }
-      : null;
+    const currentGoal =
+      currentBadgeGoalId && BADGES[currentBadgeGoalId]
+        ? {
+            badgeId: currentBadgeGoalId,
+            name: BADGES[currentBadgeGoalId].name,
+            emoji: BADGES[currentBadgeGoalId].emoji,
+            description: BADGES[currentBadgeGoalId].description,
+            progress: calculateBadgeProgress(
+              currentBadgeGoalId,
+              dashboardDataTotal
+            ),
+            advice: generateAdvice(
+              level,
+              { badgeId: currentBadgeGoalId },
+              dashboardDataTotal
+            ),
+          }
+        : null;
 
-    // ✅ ФИНАЛЬНЫЙ PAYLOAD
     const payload = {
-      period: rangeParam, // '7d' | '30d' | '60d' | '90d' | '365d' | 'all'
+      period: rangeParam,
 
-      // =============================
-      // ALL-TIME МЕТРИКИ (не зависят от фильтра)
-      // =============================
-      totalDreams, // всегда за всё время
+      totalDreams,
       entriesCount: totalDreams,
-      interpretedCount, // всегда за всё время
-      interpretedPercent: totalDreams > 0 ? Math.round((interpretedCount / totalDreams) * 100) : 0,
-      artworksCount, // всегда за всё время
-      dialogDreamsCount, // всегда за всё время
-      streak, // всегда за последний год
-      monthlyBlocks, // всегда за последние 30 дней
+      interpretedCount,
+      interpretedPercent:
+        totalDreams > 0
+          ? Math.round((interpretedCount / totalDreams) * 100)
+          : 0,
+      artworksCount,
+      dialogDreamsCount,
+      streak,
+      monthlyBlocks,
 
-      // =============================
-      // ПЕРИОДНЫЕ МЕТРИКИ (зависят от фильтра)
-      // =============================
-      totalDreamsInPeriod, // количество снов в выбранном периоде
-      score: lastScore, // score из истории за период
+      totalDreamsInPeriod,
+      score: lastScore,
       scoreDelta,
-      history: historyOut, // история за период
-      highestScore: highestPoint ? { score: highestPoint.score, date: highestPoint.date } : null,
-      breakdownCounts, // за период
-      breakdownPercent, // за период
-      recentDreams, // за период
-      moodCounts, // за период
-      moodTotal, // за период
-      insightsDreamsCount, // за период
-      insightsArtworksCount, // за период
-      totalDailyConvos, // всегда за всё время (или можно фильтровать)
-      dailyConvoInsightsCount, // всегда за всё время
+      history: historyOut,
+      highestScore: highestPoint
+        ? { score: highestPoint.score, date: highestPoint.date }
+        : null,
+      breakdownCounts,
+      breakdownPercent,
+      recentDreams,
+      moodCounts,
+      moodTotal,
+      insightsDreamsCount,
+      insightsArtworksCount,
+      totalDailyConvos,
+      dailyConvoInsightsCount,
 
       lastUpdated: new Date().toISOString(),
 
-      // =============================
-      // ГЕЙМИФИКАЦИЯ (всегда за всё время)
-      // =============================
       gamification: {
-        depthScoreTotal, // ✅ ВСЕГДА ОДИНАКОВЫЙ (за всё время с decay)
-        engagementScorePeriod: dashboardDataPeriod.depthScore, // ✅ МЕНЯЕТСЯ (за период)
+        depthScoreTotal,
+        engagementScorePeriod: dashboardDataPeriod.depthScore,
         level: {
-          name: level.name,
-          emoji: level.emoji,
-          color: level.color,
-          min: level.min,
-          max: level.max,
+          name: levelWithNew.name,
+          emoji: levelWithNew.emoji,
+          color: levelWithNew.color,
+          min: levelWithNew.min,
+          max: levelWithNew.max,
+          isNew: levelWithNew.isNew,
         },
         badges: {
           unlocked: badgesInfo.unlocked.map((id) => ({
@@ -6021,7 +8983,9 @@ const levelWithNew = {
               category: badge.category,
               description: badge.description,
               unlocked,
-              unlockedAt: unlocked ? badgesInfo.unlockedAtById?.get(id) ?? null : null,
+              unlockedAt: unlocked
+                ? badgesInfo.unlockedAtById?.get(id) ?? null
+                : null,
             };
           }),
         },
@@ -6039,17 +9003,44 @@ const levelWithNew = {
       },
     };
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify(payload), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
-
   } catch (e) {
-    console.error('Dashboard error:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('Dashboard error:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
@@ -6058,65 +9049,111 @@ const levelWithNew = {
 // =============================
 
 if (url.pathname === '/mark-badges-seen' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
-    const body = await request.json();
-    const badgeIds = body.badgeIds || [];
+    const body = await request.json().catch(() => ({}));
+    const badgeIds = Array.isArray(body.badgeIds) ? body.badgeIds : [];
 
     if (badgeIds.length === 0) {
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       });
     }
 
     const now = Date.now();
-
     const d1 = env.DB;
 
     for (const badgeId of badgeIds) {
       await d1
-        .prepare('UPDATE user_badges SET seen_at = ? WHERE user_email = ? AND badge_id = ?')
+        .prepare(
+          'UPDATE user_badges SET seen_at = ? WHERE user_email = ? AND badge_id = ?'
+        )
         .bind(now, userEmail, badgeId)
         .run();
     }
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
-    console.error('Failed to mark badges as seen:', e);
+    console.error('Failed to mark badges as seen:', e && (e.stack || e.message || e));
     return new Response(JSON.stringify({ error: 'internal_error' }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 }
 
 if (url.pathname === '/api/gamification/mark-level-seen' && request.method === 'POST') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+    const body = await request.json().catch(() => ({}));
+    const { level } = body || {};
+
+    if (typeof level !== 'number') {
+      return new Response(JSON.stringify({ error: 'invalid_level' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
       });
     }
-
-    const token = authHeader.substring(7);
-    const payload = await verifyToken(token, env.JWT_SECRET);
-    const userEmail = payload.email;
-
-    const body = await request.json();
-    const { level } = body;
 
     await env.DB.prepare(
       'UPDATE user_depth_state SET last_seen_level = ? WHERE user_email = ?'
@@ -6124,39 +9161,70 @@ if (url.pathname === '/api/gamification/mark-level-seen' && request.method === '
       .bind(level, userEmail)
       .run();
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers,
     });
 
   } catch (err) {
-    console.error('Error in /api/gamification/mark-level-seen:', err);
+    console.error('Error in /api/gamification/mark-level-seen:', err && (err.stack || err.message || err));
     return new Response(JSON.stringify({ 
       error: 'internal_error',
-      message: err.message 
+      message: err?.message || String(err),
     }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+        'X-RateLimit-Remaining': String(
+          Math.max(0, rateLimitResult?.remaining ?? 0)
+        ),
+        'X-RateLimit-Reset': String(
+          rateLimitResult?.resetAt ?? Date.now() + 60000
+        ),
+        ...corsHeaders,
+      },
     });
   }
 }
 
 // --- PUT /me (заменить существующий блок) ---
 if ((url.pathname === '/me' || url.pathname === '/api/me') && request.method === 'PUT') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   const ct = request.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
-    return new Response(JSON.stringify({ error: 'Invalid content type', message: 'application/json expected' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    return new Response(
+      JSON.stringify({ error: 'Invalid content type', message: 'application/json expected' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   let body;
@@ -6165,119 +9233,225 @@ if ((url.pathname === '/me' || url.pathname === '/api/me') && request.method ===
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+        'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+        ...corsHeaders,
+      },
     });
   }
 
-  let { name, avatar_icon, avatar_image_url } = body;
+  let { name, avatar_icon, avatar_image_url } = body || {};
 
   if (name === undefined && avatar_icon === undefined && avatar_image_url === undefined) {
-    return new Response(JSON.stringify({ error: 'At least one field (name, avatar_icon or avatar_image_url) is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    return new Response(
+      JSON.stringify({ error: 'At least one field (name, avatar_icon or avatar_image_url) is required' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   if (typeof name !== 'undefined' && (typeof name !== 'string' || name.length > 100)) {
-    return new Response(JSON.stringify({ error: 'Invalid name (must be string up to 100 chars)' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    return new Response(
+      JSON.stringify({ error: 'Invalid name (must be string up to 100 chars)' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
-  if (typeof avatar_icon !== 'undefined' && (typeof avatar_icon !== 'string' || !VALID_AVATAR_ICONS.includes(avatar_icon))) {
+  if (
+    typeof avatar_icon !== 'undefined' &&
+    (typeof avatar_icon !== 'string' || !VALID_AVATAR_ICONS.includes(avatar_icon))
+  ) {
     return new Response(JSON.stringify({ error: 'Invalid avatar_icon' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+        'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+        ...corsHeaders,
+      },
     });
   }
 
-  if (typeof avatar_image_url !== 'undefined' && (typeof avatar_image_url !== 'string' || !(avatar_image_url.startsWith('http://') || avatar_image_url.startsWith('https://')))) {
+  if (
+    typeof avatar_image_url !== 'undefined' &&
+    (typeof avatar_image_url !== 'string' ||
+      !(avatar_image_url.startsWith('http://') || avatar_image_url.startsWith('https://')))
+  ) {
     return new Response(JSON.stringify({ error: 'Invalid avatar_image_url' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+        'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+        ...corsHeaders,
+      },
     });
   }
 
   try {
-    // Сформируем UPDATE-часть динамически
     const sets = [];
     const binds = [];
 
-    if (typeof name !== 'undefined') { sets.push('name = ?'); binds.push(name); }
-    if (typeof avatar_icon !== 'undefined') { sets.push('avatar_icon = ?'); binds.push(avatar_icon); }
-    if (typeof avatar_image_url !== 'undefined') { sets.push('avatar_image_url = ?'); binds.push(avatar_image_url); }
+    if (typeof name !== 'undefined') {
+      sets.push('name = ?');
+      binds.push(name);
+    }
+    if (typeof avatar_icon !== 'undefined') {
+      sets.push('avatar_icon = ?');
+      binds.push(avatar_icon);
+    }
+    if (typeof avatar_image_url !== 'undefined') {
+      sets.push('avatar_image_url = ?');
+      binds.push(avatar_image_url);
+    }
 
     if (sets.length === 0) {
       return new Response(JSON.stringify({ error: 'Nothing to update' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
       });
     }
 
     binds.push(userEmail);
     const sql = `UPDATE users SET ${sets.join(', ')} WHERE email = ?`;
-    const res = await env.DB.prepare(sql).bind(...binds).run();
+    await env.DB.prepare(sql).bind(...binds).run();
 
-    // Проверяем, действительно ли запись существует теперь в таблице
-    let userRow = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(userEmail).first();
+    let userRow = await env.DB
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .bind(userEmail)
+      .first();
 
     if (!userRow) {
-      // Если строки нет — создаём её, подставляя обязательные поля из KV
       const kvRaw = await env.USERS_KV.get(`user:${userEmail}`);
       let kv = {};
-      try { kv = kvRaw ? JSON.parse(kvRaw) : {}; } catch (e) { kv = {}; }
+      try {
+        kv = kvRaw ? JSON.parse(kvRaw) : {};
+      } catch {
+        kv = {};
+      }
 
-      const password_hash = kv.password ?? ''; // в вашем KV пароль хранится под ключом 'password'
-      const id = kv.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}`);
-      const created_at = kv.created ? new Date(kv.created).toISOString() : new Date().toISOString();
+      const password_hash = kv.password ?? '';
+      const id =
+        kv.id ??
+        (typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `id-${Date.now()}`);
+      const created_at = kv.created
+        ? new Date(kv.created).toISOString()
+        : new Date().toISOString();
 
-      // Выполняем INSERT (включаем обязательные поля id, email, password_hash)
       await env.DB.prepare(
         `INSERT INTO users (id, email, password_hash, name, avatar_icon, avatar_image_url, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind(id, userEmail, password_hash, name ?? null, avatar_icon ?? null, avatar_image_url ?? null, created_at).run();
+      )
+        .bind(
+          id,
+          userEmail,
+          password_hash,
+          name ?? null,
+          avatar_icon ?? null,
+          avatar_image_url ?? null,
+          created_at
+        )
+        .run();
 
-      // Теперь подтянем строку
-      userRow = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(userEmail).first();
+      userRow = await env.DB
+        .prepare('SELECT id FROM users WHERE email = ?')
+        .bind(userEmail)
+        .first();
 
       if (!userRow) {
-        return new Response(JSON.stringify({ error: 'User not found or insert failed' }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...corsHeaders },
-        });
+        return new Response(
+          JSON.stringify({ error: 'User not found or insert failed' }),
+          {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+              'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+              'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+              ...corsHeaders,
+            },
+          }
+        );
       }
     }
 
-    // Возвращаем актуальную запись
-    const userFull = await env.DB.prepare(
-      'SELECT id, email, name, avatar_icon, avatar_image_url, created_at FROM users WHERE email = ?'
-    ).bind(userEmail).first();
+    const userFull = await env.DB
+      .prepare(
+        'SELECT id, email, name, avatar_icon, avatar_image_url, created_at FROM users WHERE email = ?'
+      )
+      .bind(userEmail)
+      .first();
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+      'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+      ...corsHeaders,
+    };
 
     return new Response(JSON.stringify({ ok: true, user: userFull }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
-
   } catch (e) {
-    console.error('PUT /me error:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    console.error('PUT /me error:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 if (url.pathname === '/set-current-goal' && request.method === 'POST') {
-  try {
-  const userEmail = await getUserEmail(request, env);
-    if (!userEmail) {
-      return new Response(JSON.stringify({ error: 'unauthorized' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      });
-    }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
 
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
     let body = {};
     try { body = await request.json(); } catch {}
 
@@ -6287,7 +9461,13 @@ if (url.pathname === '/set-current-goal' && request.method === 'POST') {
     if (badgeId !== null && (!badgeId || typeof badgeId !== 'string')) {
       return new Response(JSON.stringify({ error: 'badgeId must be string or null' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
       });
     }
 
@@ -6295,13 +9475,18 @@ if (url.pathname === '/set-current-goal' && request.method === 'POST') {
     if (badgeId !== null && !BADGES[badgeId]) {
       return new Response(JSON.stringify({ error: 'unknown_badge' }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+          'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+          'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+          ...corsHeaders,
+        },
       });
     }
 
     const now = Date.now();
 
-    // ✅ ДОБАВЬ ЛОГИРОВАНИЕ
     console.log('🎯 Setting current goal:', { userEmail, badgeId, now });
 
     await env.DB.prepare(`
@@ -6314,86 +9499,167 @@ if (url.pathname === '/set-current-goal' && request.method === 'POST') {
 
     console.log('✅ Current goal updated successfully');
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+      'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+      'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
-    console.error('❌ POST /set-current-goal error:', e);
-    
-    // ✅ ВАЖНО: Возвращаем CORS заголовки даже при ошибке!
+    console.error('❌ POST /set-current-goal error:', e && (e.stack || e.message || e));
     return new Response(JSON.stringify({ 
       error: 'internal_error', 
       message: e?.message || String(e),
-      stack: e?.stack // ✅ добавь stack trace для отладки
+      stack: e?.stack
     }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+        'X-RateLimit-Remaining': String(Math.max(0, rateLimitResult?.remaining ?? 0)),
+        'X-RateLimit-Reset': String(rateLimitResult?.resetAt ?? Date.now() + 60000),
+        ...corsHeaders,
+      },
     });
   }
 }
 
 // GET rolling_summary
 if (url.pathname === '/rolling_summary' && request.method === 'GET') {
-  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, { maxRequests: 50, windowMs: 30000 });
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 50,
+    windowMs: 60000, // чуть мягче, чем было 30s
+  });
   if (authResult instanceof Response) return authResult;
-  const { userEmail } = authResult;
+  const { userEmail, rateLimitResult } = authResult;
 
   const dreamId = url.searchParams.get('dreamId');
   const blockId = url.searchParams.get('blockId');
   const artworkId = url.searchParams.get('artworkId') || null;
 
   if (!dreamId || !blockId) {
-    return new Response(JSON.stringify({ error: 'dreamId and blockId required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({ error: 'dreamId and blockId required' }),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 
   try {
-    const summaryData = await getRollingSummary(env, userEmail, dreamId, blockId, artworkId);
-    
+    const summaryData = await getRollingSummary(
+      env,
+      userEmail,
+      dreamId,
+      blockId,
+      artworkId
+    );
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     if (!summaryData) {
-      return new Response(JSON.stringify({ summary: null, lastMessageCount: 0 }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders }
-      });
+      return new Response(
+        JSON.stringify({ summary: null, lastMessageCount: 0 }),
+        {
+          status: 200,
+          headers,
+        }
+      );
     }
 
-    return new Response(JSON.stringify({
-      summary: summaryData.summary,
-      lastMessageCount: summaryData.lastMessageCount
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    return new Response(
+      JSON.stringify({
+        summary: summaryData.summary,
+        lastMessageCount: summaryData.lastMessageCount,
+      }),
+      {
+        status: 200,
+        headers,
+      }
+    );
   } catch (e) {
-    console.error('[GET /api/rolling_summary] error:', e);
-    return new Response(JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders }
-    });
+    console.error('[GET /rolling_summary] error:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 50),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 
 if (url.pathname === '/toggle_artwork_insight' && request.method === 'POST') {
-  const userEmail = await getUserEmail(request, env);
-  if (!userEmail) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
 
   try {
-    const body = await request.json();
-    const { dreamId, messageId, liked } = body;
+    const body = await request.json().catch(() => ({}));
+    const { dreamId, messageId, liked } = body || {};
 
     if (!dreamId || !messageId || typeof liked !== 'boolean') {
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      });
+      return new Response(
+        JSON.stringify({ error: 'Missing required fields' }),
+        {
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+            'X-RateLimit-Remaining': String(
+              Math.max(0, rateLimitResult?.remaining ?? 0)
+            ),
+            'X-RateLimit-Reset': String(
+              rateLimitResult?.resetAt ?? Date.now() + 60000
+            ),
+            ...corsHeaders,
+          },
+        }
+      );
     }
 
     const updatedMessage = await toggleMessageArtworkInsight(env, {
@@ -6403,16 +9669,41 @@ if (url.pathname === '/toggle_artwork_insight' && request.method === 'POST') {
       userEmail,
     });
 
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+      'X-RateLimit-Remaining': String(
+        Math.max(0, rateLimitResult?.remaining ?? 0)
+      ),
+      'X-RateLimit-Reset': String(
+        rateLimitResult?.resetAt ?? Date.now() + 60000
+      ),
+      ...corsHeaders,
+    };
+
     return new Response(JSON.stringify({ message: updatedMessage }), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      headers,
     });
   } catch (e) {
-    console.error('Error in /toggle_artwork_insight:', e);
-    return new Response(JSON.stringify({ error: e.message || 'internal_error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
+    console.error('Error in /toggle_artwork_insight:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({ error: e?.message || 'internal_error' }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 30),
+          'X-RateLimit-Remaining': String(
+            Math.max(0, rateLimitResult?.remaining ?? 0)
+          ),
+          'X-RateLimit-Reset': String(
+            rateLimitResult?.resetAt ?? Date.now() + 60000
+          ),
+          ...corsHeaders,
+        },
+      }
+    );
   }
 }
 

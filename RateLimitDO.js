@@ -4,6 +4,7 @@ export class RateLimitDO {
     this.env = env;
   }
 
+  // Ожидаемый POST JSON: { action: 'hit' | 'get' | 'reset', maxRequests?: number, windowMs?: number }
   async fetch(request) {
     const now = Date.now();
     let payload = {};
@@ -16,84 +17,54 @@ export class RateLimitDO {
       });
     }
 
-    const maxRequests = Number(payload.maxRequests) || 50; // default 50
-    const windowMs = Number(payload.windowMs) || 30000; // default 30s
+    const maxRequests = Number(payload.maxRequests) || 50;
+    const windowMs = Number(payload.windowMs) || 30000;
 
-    // Безопасно пробуем установить alarm (ошибки не должны прерывать обработку)
-    try {
-      await this.ensureAlarm();
-    } catch (err) {
-      console.warn('[RateLimitDO] fetch: ensureAlarm failed (ignored)', err);
-    }
-
-    // Получаем состояние
+    // Читаем состояние
     let st = (await this.state.storage.get('st')) || { count: 0, resetAt: 0 };
 
-    // Если окно истекло — сбросить и задать новое resetAt
-    if (now > st.resetAt) {
+    // Если окно истекло или resetAt пустой -> сбрасываем
+    if (!st.resetAt || now > st.resetAt) {
       st.count = 0;
       st.resetAt = now + windowMs;
     }
 
-    // Если запись устарела (resetAt + буфер), удаляем её
-    const DELETE_AFTER_MS = 60 * 60 * 1000; // 1 час после resetAt
-    if (st.resetAt && now > (st.resetAt + DELETE_AFTER_MS)) {
-      await this.state.storage.delete('st');
-      st = { count: 0, resetAt: now + windowMs };
-      console.log('[RateLimitDO] fetch: deleted stale state during request');
-    }
+    // Обеспечим числовой тип для count
+    st.count = typeof st.count === 'number' ? st.count : 0;
 
-    // Обработка действий
     if (payload.action === 'hit') {
-      st.count = (typeof st.count === 'number' ? st.count : 0) + 1;
+      st.count += 1;
       await this.state.storage.put('st', st);
+      console.log('[RateLimitDO] hit', { count: st.count, resetAt: new Date(st.resetAt).toISOString() });
     } else if (payload.action === 'reset') {
       st = { count: 0, resetAt: now + windowMs };
       await this.state.storage.put('st', st);
-    } // 'get' — ничего не меняем
+      console.log('[RateLimitDO] reset action performed');
+    } else if (payload.action === 'get') {
+      // только чтение, ничего не делаем
+      console.log('[RateLimitDO] get', { count: st.count, resetAt: new Date(st.resetAt).toISOString() });
+    } else {
+      return new Response(JSON.stringify({ error: 'bad_request', message: 'unknown action' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     const allowed = st.count <= maxRequests;
+    const remaining = Math.max(0, maxRequests - st.count);
+
     const body = {
       allowed,
       count: st.count,
-      remaining: Math.max(0, maxRequests - st.count),
+      remaining,
       resetAt: st.resetAt
     };
 
-    return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' }});
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
-  // Обработчик alarm — вызывается по расписанию
-  async alarm() {
-    const now = Date.now();
-    const st = await this.state.storage.get('st');
-    if (st) {
-      const DELETE_AFTER_MS = 60 * 60 * 1000; // 1 час
-      if (now > (st.resetAt + DELETE_AFTER_MS)) {
-        await this.state.storage.delete('st');
-        console.log('[RateLimitDO] alarm: deleted stale state');
-      } else {
-        console.log('[RateLimitDO] alarm: state not stale', st);
-      }
-    } else {
-      console.log('[RateLimitDO] alarm: no state to clean');
-    }
-
-    // Ставим следующий alarm через 1 час
-    const NEXT_MS = 60 * 60 * 1000; // 1 час
-    await this.state.setAlarm(Date.now() + NEXT_MS);
-    console.log('[RateLimitDO] alarm: next alarm set for', new Date(Date.now() + NEXT_MS).toISOString());
-  }
-
-  // Надёжная реализация ensureAlarm: ставим alarm и логируем ошибки — без проверки getAlarm()
-  async ensureAlarm() {
-    try {
-      const NEXT_MS = 60 * 60 * 1000; // 1 час
-      await this.state.setAlarm(Date.now() + NEXT_MS);
-      console.log('[RateLimitDO] ensureAlarm: alarm set for', new Date(Date.now() + NEXT_MS).toISOString());
-    } catch (err) {
-      // Не прерываем основной поток — логируем и идём дальше
-      console.warn('[RateLimitDO] ensureAlarm: failed to set alarm', err);
-    }
-  }
+  // alarm/ensureAlarm intentionally omitted — вернуть позже при необходимости
 }
