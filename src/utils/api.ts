@@ -967,13 +967,16 @@ export interface GamificationData {
   depthScoreTotal: number;
   engagementScorePeriod?: number;
 
+  // 🔥 новое поле — дельта глубины за выбранный период
+  depthDeltaInPeriod?: number;
+
   level: Level;
   badges: {
     unlocked: Badge[];
     new: Badge[];
     unseen: Badge[];
     all: Badge[];
-    categories?: BadgeCategory[]; // ✅ добавили это поле
+    categories?: BadgeCategory[];
   };
 
   currentGoal?: GoalBadge | null;

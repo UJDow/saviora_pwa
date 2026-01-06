@@ -1035,6 +1035,8 @@ const handleSetGoalFromModal = async (badge: Badge) => {
 const usedHistory = progressHistory;
 
 const depthScoreTotal = usedDashboard?.gamification?.depthScoreTotal ?? 0;
+const depthDeltaInPeriod =
+  usedDashboard?.gamification?.depthDeltaInPeriod ?? 0;
 const level = usedDashboard?.gamification?.level ?? {
   name: 'Неизвестно',
   emoji: '❓',
@@ -1043,18 +1045,25 @@ const level = usedDashboard?.gamification?.level ?? {
   max: 100,
 };
 
-// 🔥 ДОБАВИТЬ: считаем общее количество инсайтов
+// 🔥 считаем общее количество инсайтов
 const insightsTotal =
   (usedDashboard?.insightsDreamsCount ?? 0) +
   (usedDashboard?.insightsArtworksCount ?? 0);
 
-{/* Безопасный расчёт процента прогресса */}
+// Безопасный расчёт процента прогресса
 const progressPercent = React.useMemo(() => {
   const range = level.max - level.min;
   if (range <= 0) return 0;
   const val = ((depthScoreTotal - level.min) / range) * 100;
   return Math.min(100, Math.max(0, val));
 }, [depthScoreTotal, level]);
+
+// Нормализованный текст для дельты (с плюсом)
+const depthDeltaLabel = React.useMemo(() => {
+  if (!depthDeltaInPeriod) return '0';
+  const sign = depthDeltaInPeriod > 0 ? '+' : '';
+  return `${sign}${Math.round(depthDeltaInPeriod)}`;
+}, [depthDeltaInPeriod]);
 
 useEffect(() => {
     if (inputOpen || keyboardHeight > 0) {
@@ -1625,81 +1634,129 @@ const toggleCategory = (category: string) => {
         {usedDashboard.gamification && (
           <>
             <Box
-              sx={{
-                mb: 2,
-                px: { xs: 0.5, sm: 0 },
-              }}
-            >
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  mb: 1.5,
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: 3,
-                    background: usedDashboard.gamification.level.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 32,
-                    boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
-                  }}
-                >
-                  {usedDashboard.gamification.level.emoji}
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    variant="h5"
-                    sx={{ fontWeight: 700, color: '#fff', mb: 0.3 }}
-                  >
-                    {usedDashboard.gamification.level.name}
-                  </Typography>
-                 <Typography
-  variant="body2"
-  sx={{ color: 'rgba(255,255,255,0.8)' }}
+  sx={{
+    mb: 2,
+    px: { xs: 0.5, sm: 0 },
+  }}
 >
-  Глубина практики:{' '}
-  {Math.round(usedDashboard.gamification.depthScoreTotal)} /{' '}
-  {usedDashboard.gamification.level.max}
-</Typography>
-                </Box>
-              </Box>
+  <Box
+    sx={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 2,
+      mb: 1.5,
+    }}
+  >
+    <Box
+      sx={{
+        width: 64,
+        height: 64,
+        borderRadius: 3,
+        background: usedDashboard.gamification.level.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 32,
+        boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
+      }}
+    >
+      {usedDashboard.gamification.level.emoji}
+    </Box>
+    <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography
+        variant="h5"
+        sx={{ fontWeight: 700, color: '#fff', mb: 0.3 }}
+      >
+        {usedDashboard.gamification.level.name}
+      </Typography>
 
-              <LinearProgress
-                variant="determinate"
-                value={progressPercent}
-                sx={{
-                  height: 10,
-                  borderRadius: 999,
-                  background: 'rgba(255,255,255,0.10)',
-                  '& .MuiLinearProgress-bar': {
-                    background: usedDashboard.gamification.level.color,
-                    boxShadow: `0 0 10px ${usedDashboard.gamification.level.color}`,
-                  },
-                }}
-              />
+      {/* Строка: текущее значение + дельта за период */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 1,
+          flexWrap: 'wrap',
+        }}
+      >
+        <Typography
+          variant="body2"
+          sx={{ color: 'rgba(255,255,255,0.8)' }}
+        >
+          Глубина практики:{' '}
+          {Math.round(usedDashboard.gamification.depthScoreTotal)} /{' '}
+          {usedDashboard.gamification.level.max}
+        </Typography>
 
-              <Typography
-                variant="caption"
-                sx={{
-                  color: 'rgba(255,255,255,0.7)',
-                  display: 'block',
-                  mt: 0.75,
-                }}
-              >
-                До следующего уровня:{' '}
-                {usedDashboard.gamification.level.max -
-                  Math.round(depthScoreTotal)}{' '}
-                очков
-              </Typography>
-            </Box>
+        {mapTimeRangeToApiRange(engagementTimeRange) !== 'all' && (
+  <Box
+    sx={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      px: 1.1,
+      py: 0.15,
+      borderRadius: 999,
+      border: '1px solid',
+      borderColor:
+        depthDeltaInPeriod > 0
+          ? 'rgba(74, 222, 128, 0.5)'
+          : depthDeltaInPeriod < 0
+          ? 'rgba(248, 113, 113, 0.5)'
+          : 'rgba(156, 163, 175, 0.5)',
+      backgroundColor:
+        depthDeltaInPeriod > 0
+          ? 'rgba(22, 163, 74, 0.15)'   // мягкий зелёный фон
+          : depthDeltaInPeriod < 0
+          ? 'rgba(220, 38, 38, 0.15)'  // мягкий красный фон
+          : 'rgba(148, 163, 184, 0.1)', // нейтральный
+      color:
+        depthDeltaInPeriod > 0
+          ? 'rgba(74, 222, 128, 0.95)'
+          : depthDeltaInPeriod < 0
+          ? 'rgba(248, 113, 113, 0.95)'
+          : 'rgba(209, 213, 219, 0.95)',
+      fontSize: 13,
+      fontWeight: 700,
+      letterSpacing: 0.2,
+      lineHeight: 1.2,
+    }}
+  >
+    {depthDeltaLabel}
+  </Box>
+)}
+      </Box>
+    </Box>
+  </Box>
 
+  <LinearProgress
+    variant="determinate"
+    value={progressPercent}
+    sx={{
+      height: 10,
+      borderRadius: 999,
+      background: 'rgba(255,255,255,0.10)',
+      '& .MuiLinearProgress-bar': {
+        background: usedDashboard.gamification.level.color,
+        boxShadow: `0 0 10px ${usedDashboard.gamification.level.color}`,
+      },
+    }}
+  />
+
+  <Typography
+    variant="caption"
+    sx={{
+      color: 'rgba(255,255,255,0.7)',
+      display: 'block',
+      mt: 0.75,
+    }}
+  >
+    До следующего уровня:{' '}
+    {usedDashboard.gamification.level.max -
+      Math.round(depthScoreTotal)}{' '}
+    очков
+  </Typography>
+</Box>
             <Divider
               sx={{
                 my: { xs: 1.5, sm: 2 },

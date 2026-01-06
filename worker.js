@@ -8336,6 +8336,60 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
       return sinceTs;
     }
 
+    // глубина периода S (0..1)
+    function computeDailyDepthS(dashboardDataPeriod) {
+      const {
+        totalDreamsInPeriod,
+        breakdownCounts,
+        breakdownPercent,
+        streak,
+        insights,
+      } = dashboardDataPeriod;
+
+      if (!totalDreamsInPeriod || totalDreamsInPeriod <= 0) {
+        return 0;
+      }
+
+      const pInterpreted = (breakdownPercent.interpreted || 0) / 100;
+      const pSummarized = (breakdownPercent.summarized || 0) / 100;
+      const pDialogs = (breakdownPercent.dialogs || 0) / 100;
+      const pArtworks = (breakdownPercent.artworks || 0) / 100;
+
+      const streakNorm = Math.min(1, (streak || 0) / 30);
+      const insightsNorm = Math.min(1, (insights || 0) / 3);
+
+      const wI = 0.35;
+      const wS = 0.20;
+      const wD = 0.15;
+      const wA = 0.10;
+      const wSt = 0.10;
+      const wIns = 0.10;
+
+      const depthRaw =
+        wI * pInterpreted +
+        wS * pSummarized +
+        wD * pDialogs +
+        wA * pArtworks +
+        wSt * streakNorm +
+        wIns * insightsNorm;
+
+      return Math.max(0, Math.min(1, depthRaw));
+    }
+
+    // Elo‑обновление рейтинга глубины
+    function updateDepthElo(currentRating, dailyS, K) {
+      var R = currentRating || 0;
+      var R0 = 1500;   // центр шкалы
+      var scale = 400; // "крутизна" кривой ожиданий
+
+      var S = Math.max(0, Math.min(1, dailyS));
+
+      var E = 1 / (1 + Math.pow(10, (R - R0) / (2 * scale)));
+
+      var newRating = R + K * (S - E);
+      return Math.max(0, newRating);
+    }
+
     // ---------- БЛОК RANGE ----------
     const rangeParamRaw = url.searchParams.get('range') || '30d';
     const allowedRanges = ['7d', '30d', '60d', '90d', '365d', 'all'];
@@ -8777,11 +8831,11 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     };
     dashboardDataTotal.depthScore = calculateDepthScore(dashboardDataTotal);
 
-    // depth score с decay
+    // --- НОВАЯ ЛОГИКА depthScoreTotal (Elo + decay) ---
     const nowTs = Date.now();
-    const baseDepthScoreTotal = dashboardDataTotal.depthScore;
 
-    let storedScore = baseDepthScoreTotal;
+    // 1) достаём прошлое значение
+    let storedScore = 0;
     let lastAt = nowTs;
     try {
       const row = await d1
@@ -8791,37 +8845,62 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
         .bind(userEmail)
         .first();
       if (row) {
-        storedScore = Number(row.depth_score_stored);
-        lastAt = Number(row.last_depth_update_at);
+        storedScore = Number(row.depth_score_stored || 0);
+        lastAt = Number(row.last_depth_update_at || nowTs);
       }
     } catch (e) {
       console.warn('Failed to load depth state:', e);
     }
 
-    function applyDepthDecay({
-      baseScore,
-      storedScore,
-      lastAt,
-      now,
-      halfLifeDays = 30,
-    }) {
-      const hlMs = halfLifeDays * 24 * 60 * 60 * 1000;
-      const dt = Math.max(0, now - (lastAt || now));
-      const k = hlMs > 0 ? Math.pow(0.5, dt / hlMs) : 0;
-      const decayed = baseScore + (storedScore - baseScore) * k;
-      return Math.max(baseScore, decayed);
-    }
+    // 2) считаем качество текущего периода S (0..1)
+    const dailyS = computeDailyDepthS(dashboardDataPeriod);
 
-    const depthScoreTotal = Math.round(
-      applyDepthDecay({
-        baseScore: baseDepthScoreTotal,
-        storedScore,
-        lastAt,
-        now: nowTs,
-        halfLifeDays: 30,
-      })
-    );
+    // 3) шаг обновления рейтинга
+    const K = 16;
 
+    // 4) Elo‑обновление
+    let rating = updateDepthElo(storedScore, dailyS, K);
+
+    // 5) decay вокруг базового all‑time depthScore (как якорь)
+function applyDepthDecay(opts) {
+  const baseScore = opts.baseScore;
+  const storedScoreLocal = opts.storedScore;
+  const lastAtLocal = opts.lastAt;
+  const nowLocal = opts.now;
+
+  // Half‑life: через ~14 дней «выступ» над базой уменьшается в 2 раза
+  const halfLifeDays = opts.halfLifeDays || 14;
+
+  const hlMs = halfLifeDays * 24 * 60 * 60 * 1000;
+  let dt = Math.max(0, nowLocal - (lastAtLocal || nowLocal));
+
+  // 👇 Grace‑период: до 3 дней паузы не штрафуем
+  const graceMs = 3 * 24 * 60 * 60 * 1000;
+  if (dt <= graceMs) {
+    dt = 0;
+  }
+
+  const k = hlMs > 0 ? Math.pow(0.5, dt / hlMs) : 0;
+
+  const decayed = baseScore + (storedScoreLocal - baseScore) * k;
+
+  // Рейтинг не опускается ниже базы
+  return Math.max(baseScore, decayed);
+}
+
+    const baseDepthScoreTotal = dashboardDataTotal.depthScore;
+
+rating = applyDepthDecay({
+  baseScore: baseDepthScoreTotal,
+  storedScore: rating,
+  lastAt,
+  now: nowTs,
+  halfLifeDays: 14, // можно и не передавать, т.к. в функции стоит 14 по умолчанию
+});
+
+const depthScoreTotal = Math.round(rating);
+
+    // 6) сохраняем новое значение в user_depth_state
     try {
       await d1
         .prepare(
@@ -8838,6 +8917,65 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
     } catch (e) {
       console.warn('Failed to save depth state:', e);
     }
+
+    // 6.1) сохраняем дневную точку в user_depth_history
+    try {
+      const dayDate = new Date(nowTs);
+      dayDate.setUTCHours(0, 0, 0, 0);
+      const dayKey = dayDate.getTime();
+
+      await d1
+        .prepare(
+          `
+      INSERT INTO user_depth_history (user_email, day, rating)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_email, day) DO UPDATE SET
+        rating = excluded.rating
+    `
+        )
+        .bind(userEmail, dayKey, depthScoreTotal)
+        .run();
+    } catch (e) {
+      console.warn('Failed to save depth history:', e);
+    }
+
+    // 6.2) считаем рейтинг на начало периода и дельту
+let depthScoreAtPeriodStart = null;
+let depthDeltaInPeriod = 0;
+
+if (!isAll) {
+  try {
+    const sinceDateObj = new Date(sinceTs);
+    sinceDateObj.setUTCHours(0, 0, 0, 0);
+    const sinceDayKey = sinceDateObj.getTime();
+
+    const row = await d1
+      .prepare(
+        `
+        SELECT rating
+        FROM user_depth_history
+        WHERE user_email = ? AND day <= ?
+        ORDER BY day DESC
+        LIMIT 1
+      `
+      )
+      .bind(userEmail, sinceDayKey)
+      .first();
+
+    if (row && row.rating != null) {
+      // нашли рейтинг на (или до) начала периода
+      depthScoreAtPeriodStart = Number(row.rating);
+    } else {
+      // 🔥 fallback: если истории раньше начала периода нет — считаем, что стартовали с 0
+      depthScoreAtPeriodStart = 0;
+    }
+
+    depthDeltaInPeriod = depthScoreTotal - depthScoreAtPeriodStart;
+  } catch (e) {
+    console.warn('Failed to load depth history for period:', e);
+    // в случае ошибки просто оставим delta = 0 и start = null
+  }
+}
 
     // геймификация
     const level = getLevel(depthScoreTotal);
@@ -8940,6 +9078,8 @@ if (url.pathname === '/dashboard' && request.method === 'GET') {
 
       gamification: {
         depthScoreTotal,
+        depthScoreAtPeriodStart,
+        depthDeltaInPeriod,
         engagementScorePeriod: dashboardDataPeriod.depthScore,
         level: {
           name: levelWithNew.name,
