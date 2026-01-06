@@ -6282,7 +6282,7 @@ if (url.pathname === '/daily_chat' && request.method === 'DELETE') {
 if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
   // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
-    maxRequests: 3,
+    maxRequests: 5, // изменено с 3 на 5
     windowMs: 30000,
     requireRateLimit: true,
   });
@@ -6328,7 +6328,7 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
     // Если уже есть autoSummary и текст сна не менялся — используем кэш,
     // но всё равно возвращаем актуальные rate-limit заголовки.
     if (existing.autoSummary && existing.dreamText === dreamText) {
-      const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+      const headers = buildRateHeaders(rateLimitResult, corsHeaders, 5, 30000); // изменено с 3 на 5
       return new Response(JSON.stringify({ success: true, autoSummary: existing.autoSummary }), {
         status: 200,
         headers,
@@ -6373,7 +6373,7 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
       .bind(autoSummary, dreamId, userEmail)
       .run();
 
-    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 5, 30000); // изменено с 3 на 5
     return new Response(JSON.stringify({ success: true, autoSummary }), {
       status: 200,
       headers,
@@ -6387,11 +6387,11 @@ if (url.pathname === '/generate_auto_summary' && request.method === 'POST') {
   }
 }
 
-// --- Analyze endpoint (с rolling summary) ---
+/// --- Analyze endpoint (с rolling summary) ---
 if (url.pathname === '/analyze' && request.method === 'POST') {
   // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
-    maxRequests: 3,
+    maxRequests: 10, // изменено с 5 на 10
     windowMs: 30000,
     requireRateLimit: true,
   });
@@ -6562,7 +6562,7 @@ if (url.pathname === '/analyze' && request.method === 'POST') {
     responseBody.choices[0].message.content = content;
 
     // Корректные заголовки rate limit
-    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 10, 30000); // изменено с 5 на 10
 
     return new Response(JSON.stringify(responseBody), {
       status: 200,
@@ -6588,7 +6588,7 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
   // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter; trial пропускаем)
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
     skipTrial: true,
-    maxRequests: 3,
+    maxRequests: 10, // изменено с 5 на 10
     windowMs: 30000,
     requireRateLimit: true,
   });
@@ -6702,7 +6702,7 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
     responseBody.choices[0].message.content = content;
 
     // Корректные заголовки rate limit
-    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 10, 30000); // изменено с 5 на 10
 
     return new Response(JSON.stringify(responseBody), {
       status: 200,
@@ -6727,7 +6727,7 @@ if (url.pathname === '/analyze_daily_convo' && request.method === 'POST') {
 if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 'POST') {
   // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
-    maxRequests: 3,
+    maxRequests: 5, // изменено с 3 на 5
     windowMs: 30000,
     requireRateLimit: true,
   });
@@ -6772,7 +6772,7 @@ if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 
 
     // Если уже есть autoSummary и текст не менялся — возвращаем кэш, но с актуальными rate-limit заголовками
     if (existing.autoSummary && existing.notes === notes) {
-      const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+      const headers = buildRateHeaders(rateLimitResult, corsHeaders, 5, 30000); // изменено с 3 на 5
       return new Response(JSON.stringify({ success: true, autoSummary: existing.autoSummary }), {
         status: 200,
         headers,
@@ -6820,7 +6820,7 @@ if (url.pathname === '/generate_auto_summary_daily_convo' && request.method === 
       .bind(autoSummary, dailyConvoId, userEmail)
       .run();
 
-    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 3, 30000);
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 5, 30000); // изменено с 3 на 5
     return new Response(JSON.stringify({ success: true, autoSummary }), {
       status: 200,
       headers,
@@ -6889,7 +6889,7 @@ function calculateImprovementScore(data) {
 if (url.pathname === '/find_similar' && request.method === 'POST') {
   // Вызов middleware с rate limiting (жёстко требуем рабочий rate limiter)
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
-    maxRequests: 1,
+    maxRequests: 2,
     windowMs: 30000,
     requireRateLimit: true,
   });
@@ -7057,7 +7057,7 @@ ${contextText}
         .run();
     }
 
-    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 1, 30000);
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 2, 30000);
     return new Response(JSON.stringify({ similarArtworks }), {
       status: 200,
       headers,
