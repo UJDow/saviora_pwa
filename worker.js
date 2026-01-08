@@ -5011,10 +5011,11 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
   }
 }
 
-    if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
-  // Лимит: 20 запросов за 60 секунд на пользователя
+    // PUT /dreams/:dreamId
+if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
+  // Лимит: 60 запросов за 60 секунд на пользователя
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
-    maxRequests: 20,
+    maxRequests: 60,
     windowMs: 60000,
   });
   if (authResult instanceof Response) return authResult;
@@ -5026,7 +5027,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
       status: 403,
       headers: {
         'Content-Type': 'application/json',
-        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
         'X-RateLimit-Remaining': String(
           Math.max(0, rateLimitResult?.remaining ?? 0)
         ),
@@ -5046,7 +5047,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
       status: 400,
       headers: {
         'Content-Type': 'application/json',
-        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
         'X-RateLimit-Remaining': String(
           Math.max(0, rateLimitResult?.remaining ?? 0)
         ),
@@ -5069,7 +5070,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
         status: 400,
         headers: {
           'Content-Type': 'application/json',
-          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
           'X-RateLimit-Remaining': String(
             Math.max(0, rateLimitResult?.remaining ?? 0)
           ),
@@ -5088,7 +5089,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
       status: 400,
       headers: {
         'Content-Type': 'application/json',
-        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+        'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
         'X-RateLimit-Remaining': String(
           Math.max(0, rateLimitResult?.remaining ?? 0)
         ),
@@ -5112,7 +5113,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
         status: 404,
         headers: {
           'Content-Type': 'application/json',
-          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
           'X-RateLimit-Remaining': String(
             Math.max(0, rateLimitResult?.remaining ?? 0)
           ),
@@ -5183,7 +5184,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
 
     const headers = {
       'Content-Type': 'application/json',
-      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+      'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
       'X-RateLimit-Remaining': String(
         Math.max(0, rateLimitResult?.remaining ?? 0)
       ),
@@ -5208,7 +5209,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
         status: 500,
         headers: {
           'Content-Type': 'application/json',
-          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 20),
+          'X-RateLimit-Limit': String(rateLimitResult?.limit ?? 60),
           'X-RateLimit-Remaining': String(
             Math.max(0, rateLimitResult?.remaining ?? 0)
           ),

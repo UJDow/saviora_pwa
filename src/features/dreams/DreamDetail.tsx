@@ -1,5 +1,5 @@
 // DreamDetail.tsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -107,6 +107,11 @@ export function DreamDetail() {
   const [blocks, setBlocks] = useState<WordBlock[]>([]);
   const [autoSummaryRequested, setAutoSummaryRequested] = useState(false);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
+
+  // ---- blocks autosave (debounce + flush) ----
+  const blocksAutosaveTimerRef = useRef<number | null>(null);
+  const blocksDirtyRef = useRef(false);
+  const skipNextBlocksAutosaveRef = useRef(false);
 
   const [insights, setInsights] = useState<EnrichedDreamInsight[] | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(true);
@@ -262,6 +267,7 @@ export function DreamDetail() {
           });
 
         const blocksFromDream = Array.isArray(found.blocks) ? (found.blocks as WordBlock[]) : [];
+        skipNextBlocksAutosaveRef.current = true; // blocks пришли с сервера — не шлём PUT обратно
         setBlocks(blocksFromDream);
         setActiveBlockId(blocksFromDream.length ? blocksFromDream[0].id : null);
       } catch (e: any) {
@@ -275,6 +281,60 @@ export function DreamDetail() {
 
     fetchDream();
   }, [id]);
+
+  // ---- autosave blocks (debounce) ----
+  useEffect(() => {
+    if (!dream?.id) return;
+
+    // пропускаем автосейв сразу после загрузки blocks из БД
+    if (skipNextBlocksAutosaveRef.current) {
+      skipNextBlocksAutosaveRef.current = false;
+      blocksDirtyRef.current = false;
+      return;
+    }
+
+    // помечаем, что есть несохранённые изменения
+    blocksDirtyRef.current = true;
+
+    // debounce
+    if (blocksAutosaveTimerRef.current) {
+      window.clearTimeout(blocksAutosaveTimerRef.current);
+    }
+
+    blocksAutosaveTimerRef.current = window.setTimeout(async () => {
+      if (!dream?.id) return;
+      if (!blocksDirtyRef.current) return;
+
+      try {
+        await updateDream(
+          dream.id,
+          dream.dreamText,
+          dream.title,
+          blocks,
+          dream.globalFinalInterpretation,
+          dream.dreamSummary,
+          dream.similarArtworks,
+          dream.category,
+          dream.date,
+        );
+        blocksDirtyRef.current = false;
+      } catch (e) {
+        // оставляем dirty=true, чтобы можно было повторить/flush
+        setSnackbar({
+          open: true,
+          message: 'Ошибка сохранения блоков',
+          severity: 'error',
+        });
+      }
+    }, 1000);
+
+    return () => {
+      if (blocksAutosaveTimerRef.current) {
+        window.clearTimeout(blocksAutosaveTimerRef.current);
+        blocksAutosaveTimerRef.current = null;
+      }
+    };
+  }, [blocks, dream]);
 
   // ---- insights ----
   useEffect(() => {
@@ -415,14 +475,52 @@ export function DreamDetail() {
     });
   };
 
-  const handleGoToDialogue = () => {
-  if (!dream) return;
-  const targetBlock = activeBlockId ?? blocks[0]?.id ?? null;
-  const basePath = `/dreams/${dream.id}/chat`;
-  const url = targetBlock ? `${basePath}?blockId=${encodeURIComponent(targetBlock)}` : basePath;
+  const flushBlocksSave = useCallback(async () => {
+    if (!dream?.id) return;
 
-  navigate(url, { replace: true }); // КЛЮЧЕВОЕ: не добавляем лишний шаг в историю
-};
+    // отменяем ожидающий debounce, чтобы не было двойного PUT
+    if (blocksAutosaveTimerRef.current) {
+      window.clearTimeout(blocksAutosaveTimerRef.current);
+      blocksAutosaveTimerRef.current = null;
+    }
+
+    if (!blocksDirtyRef.current) return;
+
+    await updateDream(
+      dream.id,
+      dream.dreamText,
+      dream.title,
+      blocks,
+      dream.globalFinalInterpretation,
+      dream.dreamSummary,
+      dream.similarArtworks,
+      dream.category,
+      dream.date,
+    );
+
+    blocksDirtyRef.current = false;
+  }, [blocks, dream]);
+
+  const handleGoToDialogue = async () => {
+    if (!dream) return;
+
+    try {
+      await flushBlocksSave();
+    } catch (e: any) {
+      setSnackbar({
+        open: true,
+        message: e?.message || 'Не удалось сохранить блоки перед переходом в диалог',
+        severity: 'error',
+      });
+      return;
+    }
+
+    const targetBlock = activeBlockId ?? blocks[0]?.id ?? null;
+    const basePath = `/dreams/${dream.id}/chat`;
+    const url = targetBlock ? `${basePath}?blockId=${encodeURIComponent(targetBlock)}` : basePath;
+
+    navigate(url, { replace: true });
+  };
 
   const handleInsightClick = (insight: EnrichedDreamInsight) => {
     if (!dream) return;
@@ -1235,7 +1333,6 @@ export function DreamDetail() {
               <DreamBlocks
                 text={dream.dreamText}
                 blocks={blocks}
-                dreamId={dream.id}
                 onBlocksChange={(next) => {
                   setBlocks(next);
                   if (!next.length) {

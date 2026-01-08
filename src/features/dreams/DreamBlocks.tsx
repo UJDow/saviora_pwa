@@ -1,9 +1,7 @@
 // DreamBlocks.tsx
-import React, { useEffect, useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import { Box, Paper, Typography, IconButton, Snackbar, Alert } from '@mui/material';
 import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew';
-import { getDreams, updateDream } from '../../utils/api';
-import type { Dream } from '../../utils/api';
 import type { WordBlock } from './DreamTextSelector';
 
 const glassBorder = 'rgba(255,255,255,0.06)';
@@ -12,11 +10,13 @@ interface DreamBlocksProps {
   text: string;
   blocks: WordBlock[];
   onBlocksChange: (blocks: WordBlock[]) => void;
-  dreamId: string;
+
   onBack: () => void;
   hideInternalBackButton?: boolean;
+
   activeBlockId?: string | null;
   onActiveBlockChange?: (blockId: string | null) => void;
+
   hideHeader?: boolean;
 }
 
@@ -43,7 +43,6 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
   text,
   blocks,
   onBlocksChange,
-  dreamId,
   onBack,
   hideInternalBackButton = false,
   activeBlockId,
@@ -51,7 +50,6 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
   hideHeader = false,
 }) => {
   const [selectionStart, setSelectionStart] = useState<number | null>(null);
-  const [dream, setDream] = useState<Dream | null>(null);
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
     message: '',
@@ -94,7 +92,7 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
     return res;
   }, [sortedBlocks, words]);
 
-  // Новые стили для слов внутри блоков
+  // Новые стили для слов внутри блоков (по индексам start/end — как у тебя было)
   const wordStyles = useMemo(() => {
     const styles: Record<number, { backgroundColor: string }> = {};
     sortedBlocks.forEach((block) => {
@@ -106,49 +104,6 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
     });
     return styles;
   }, [sortedBlocks, blockColorMap]);
-
-  useEffect(() => {
-    // подгружаем данные сна, если нужно
-    async function load() {
-      try {
-        const list = await getDreams();
-        const found = list.find((d) => d.id === dreamId);
-        if (found) {
-          setDream(found);
-          if (Array.isArray(found.blocks) && found.blocks.length) {
-            onBlocksChange(found.blocks as WordBlock[]);
-          }
-        }
-      } catch (err) {
-        console.error('Dream load error', err);
-      }
-    }
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dreamId]);
-
-  useEffect(() => {
-    if (!dream) return;
-    // автосохранение блоков
-    const save = async () => {
-      try {
-        await updateDream(
-          dreamId,
-          dream.dreamText,
-          dream.title,
-          blocks,
-          dream.globalFinalInterpretation,
-          dream.dreamSummary,
-          dream.similarArtworks,
-          dream.category,
-          dream.date,
-        );
-      } catch (err) {
-        setSnackbar({ open: true, message: 'Ошибка сохранения блоков', severity: 'error' });
-      }
-    };
-    void save();
-  }, [blocks, dream, dreamId]);
 
   const getBlockForWord = useCallback(
     (idx: number) =>
@@ -193,7 +148,10 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
 
     const textSlice = words.slice(start, end + 1).join(' ');
     const newBlock: WordBlock = {
-      id: typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id:
+        typeof crypto !== 'undefined' && (crypto as any).randomUUID
+          ? (crypto as any).randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       start,
       end,
       text: textSlice,
@@ -212,6 +170,7 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
         const b = seg.block;
         const color = blockColorMap.get(b.id) ?? 'rgba(255,255,255,0.12)';
         const active = b.id === activeBlockId;
+
         return (
           <Box
             component="span"
@@ -220,8 +179,8 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
             sx={{
               display: 'inline-block',
               padding: '3px 8px',
-marginRight: '6px',
-marginBottom: '4px',
+              marginRight: '6px',
+              marginBottom: '4px',
               borderRadius: '14px',
               backgroundColor: active ? color.replace(/0\.(\d+)/, '0.92') : color,
               color: '#fff',
@@ -232,13 +191,11 @@ marginBottom: '4px',
               maxWidth: '100%',
               wordBreak: 'break-word',
               overflowWrap: 'break-word',
-              // лёгкая тень для читаемости
               boxShadow: active ? '0 6px 18px rgba(0,0,0,0.18)' : 'none',
               border: active ? '1px solid rgba(255,255,255,0.12)' : '1px solid transparent',
             }}
           >
-            {b.text}
-            {' '}
+            {b.text}{' '}
           </Box>
         );
       }
@@ -256,8 +213,8 @@ marginBottom: '4px',
           sx={{
             display: 'inline-block',
             padding: '2px 7px',
-marginRight: '5px',
-marginBottom: '4px',
+            marginRight: '5px',
+            marginBottom: '4px',
             borderRadius: '999px',
             backgroundColor: isPending ? 'rgba(88,120,255,0.55)' : style.backgroundColor || 'transparent',
             color: '#fff',
@@ -268,8 +225,7 @@ marginBottom: '4px',
             border: isPending ? '1px solid rgba(255,255,255,0.12)' : '1px solid transparent',
           }}
         >
-          {word}
-          {' '}
+          {word}{' '}
         </Box>
       );
     });
@@ -303,7 +259,6 @@ marginBottom: '4px',
           </IconButton>
         )}
 
-        {/* Показываем внутренний заголовок только если не передан hideHeader */}
         {!hideHeader && (
           <Typography variant="subtitle1" sx={{ color: '#fff', fontWeight: 600 }}>
             Выделите блоки в тексте сна
@@ -319,19 +274,19 @@ marginBottom: '4px',
 
       {/* Основной контейнер */}
       <Paper
-  sx={{
-    p: 2,
-    borderRadius: 2,
-    background: 'transparent',
-    border: 'none',
-    color: '#fff',
-    boxShadow: 'none',
+        sx={{
+          p: 2,
+          borderRadius: 2,
+          background: 'transparent',
+          border: 'none',
+          color: '#fff',
+          boxShadow: 'none',
 
-    // важно: больше НЕ скроллим тут
-    maxHeight: 'none',
-    overflow: 'visible',
-  }}
->
+          // важно: больше НЕ скроллим тут (скролл только у DialogContent в родителе)
+          maxHeight: 'none',
+          overflow: 'visible',
+        }}
+      >
         <Box
           sx={{
             width: '100%',
@@ -346,62 +301,53 @@ marginBottom: '4px',
       </Paper>
 
       {/* Уведомления */}
-     {/* Уведомления */}
-<Snackbar
-  open={snackbar.open}
-  autoHideDuration={4000}
-  onClose={(_, reason) => {
-    if (reason === 'clickaway') return;
-    setSnackbar((s) => ({ ...s, open: false }));
-  }}
-  anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-  sx={{
-    // НЕТ vh, только предсказуемые пиксели над нижней границей окна
-    '&.MuiSnackbar-root': {
-      bottom: 32, // 32px над низом экрана/модалки
-    },
-  }}
->
-  <Alert
-    onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-    severity={snackbar.severity}
-    icon={false}
-    variant="outlined"
-    sx={{
-      width: '100%',
-      px: 2.4,
-      py: 1.4,
-      borderRadius: 2.5,
-      display: 'flex',
-      alignItems: 'center',
-
-      border: `1px solid ${glassBorder}`,
-
-      // стекло, но без сумасшедшей прозрачности
-      background:
-        'linear-gradient(135deg, rgba(16,24,48,0.92), rgba(40,56,96,0.92))',
-      backdropFilter: 'blur(4px)',
-      WebkitBackdropFilter: 'blur(4px)',
-
-      boxShadow: 'none', // УБРАЛИ ТЕНЬ
-      color: '#fff',
-      '& .MuiAlert-message': {
-        fontSize: '1.05rem',
-        padding: 0,
-      },
-
-      ...(snackbar.severity === 'error'
-        ? {
-            borderColor: 'rgba(255,120,120,0.9)',
-            background:
-              'linear-gradient(135deg, rgba(40,8,16,0.96), rgba(88,24,40,0.94))',
-          }
-        : {}),
-    }}
-  >
-    {snackbar.message}
-  </Alert>
-</Snackbar>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') return;
+          setSnackbar((s) => ({ ...s, open: false }));
+        }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          '&.MuiSnackbar-root': {
+            bottom: 32,
+          },
+        }}
+      >
+        <Alert
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          severity={snackbar.severity}
+          icon={false}
+          variant="outlined"
+          sx={{
+            width: '100%',
+            px: 2.4,
+            py: 1.4,
+            borderRadius: 2.5,
+            display: 'flex',
+            alignItems: 'center',
+            border: `1px solid ${glassBorder}`,
+            background: 'linear-gradient(135deg, rgba(16,24,48,0.92), rgba(40,56,96,0.92))',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            boxShadow: 'none',
+            color: '#fff',
+            '& .MuiAlert-message': {
+              fontSize: '1.05rem',
+              padding: 0,
+            },
+            ...(snackbar.severity === 'error'
+              ? {
+                  borderColor: 'rgba(255,120,120,0.9)',
+                  background: 'linear-gradient(135deg, rgba(40,8,16,0.96), rgba(88,24,40,0.94))',
+                }
+              : {}),
+          }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
