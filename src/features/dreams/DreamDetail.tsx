@@ -284,57 +284,63 @@ export function DreamDetail() {
 
   // ---- autosave blocks (debounce) ----
   useEffect(() => {
-    if (!dream?.id) return;
+  if (!dream?.id) return;
 
-    // пропускаем автосейв сразу после загрузки blocks из БД
-    if (skipNextBlocksAutosaveRef.current) {
-      skipNextBlocksAutosaveRef.current = false;
-      blocksDirtyRef.current = false;
-      return;
-    }
-
-    // помечаем, что есть несохранённые изменения
-    blocksDirtyRef.current = true;
-
-    // debounce
+  // Если вошли в режим редактирования — отменяем любой pending autosave блоков
+  if (editing) {
     if (blocksAutosaveTimerRef.current) {
       window.clearTimeout(blocksAutosaveTimerRef.current);
+      blocksAutosaveTimerRef.current = null;
     }
+    return;
+  }
 
-    blocksAutosaveTimerRef.current = window.setTimeout(async () => {
-      if (!dream?.id) return;
-      if (!blocksDirtyRef.current) return;
+  // пропускаем автосейв сразу после загрузки blocks из БД
+  if (skipNextBlocksAutosaveRef.current) {
+    skipNextBlocksAutosaveRef.current = false;
+    blocksDirtyRef.current = false;
+    return;
+  }
 
-      try {
-        await updateDream(
-          dream.id,
-          dream.dreamText,
-          dream.title,
-          blocks,
-          dream.globalFinalInterpretation,
-          dream.dreamSummary,
-          dream.similarArtworks,
-          dream.category,
-          dream.date,
-        );
-        blocksDirtyRef.current = false;
-      } catch (e) {
-        // оставляем dirty=true, чтобы можно было повторить/flush
-        setSnackbar({
-          open: true,
-          message: 'Ошибка сохранения блоков',
-          severity: 'error',
-        });
-      }
-    }, 1000);
+  // помечаем, что есть несохранённые изменения
+  blocksDirtyRef.current = true;
 
-    return () => {
-      if (blocksAutosaveTimerRef.current) {
-        window.clearTimeout(blocksAutosaveTimerRef.current);
-        blocksAutosaveTimerRef.current = null;
-      }
-    };
-  }, [blocks, dream]);
+  // debounce
+  if (blocksAutosaveTimerRef.current) {
+    window.clearTimeout(blocksAutosaveTimerRef.current);
+  }
+
+  blocksAutosaveTimerRef.current = window.setTimeout(async () => {
+    // важно: если пользователь уже перешёл в editing после постановки таймера — не сохраняем
+    if (!dream?.id) return;
+    if (editing) return;
+    if (!blocksDirtyRef.current) return;
+
+    try {
+      await updateDream(
+        dream.id,
+        dream.dreamText,
+        dream.title,
+        blocks,
+        dream.globalFinalInterpretation,
+        dream.dreamSummary,
+        dream.similarArtworks,
+        dream.category,
+        dream.date,
+      );
+      blocksDirtyRef.current = false;
+    } catch (e) {
+      setSnackbar({ open: true, message: 'Ошибка сохранения блоков', severity: 'error' });
+    }
+  }, 1000);
+
+  return () => {
+    if (blocksAutosaveTimerRef.current) {
+      window.clearTimeout(blocksAutosaveTimerRef.current);
+      blocksAutosaveTimerRef.current = null;
+    }
+  };
+}, [blocks, dream?.id, editing]);
 
   // ---- insights ----
   useEffect(() => {
