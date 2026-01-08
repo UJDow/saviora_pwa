@@ -1392,15 +1392,34 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   onClose={() => setFinalDialogOpen(false)}
   fullWidth
   maxWidth="md"
+  scroll="paper"
+  sx={{
+    '& .MuiDialog-container': {
+      alignItems: 'flex-start', // чтобы не центрировалось и учитывало top
+    },
+  }}
   PaperProps={{
     sx: {
-      background: glassBackground,          // как у хедера
-      backdropFilter: 'blur(20px)',        // как у хедера
+      background: glassBackground, // как у хедера
+      backdropFilter: 'blur(20px)', // как у хедера
       WebkitBackdropFilter: 'blur(20px)',
-      border: `1px solid ${glassBorder}`,  // как у хедера
+      border: `1px solid ${glassBorder}`, // как у хедера
       color: '#fff',
-      maxHeight: '80vh',
       borderRadius: 3,
+
+      // важно: не залезаем под фикс-хедер и не вылезаем вниз
+      m: 0,
+      position: 'fixed',
+      top: `calc(${HEADER_BASE}px + env(safe-area-inset-top) + 12px)`,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'min(900px, calc(100vw - 24px))',
+      maxHeight: `calc(100dvh - (${HEADER_BASE}px + env(safe-area-inset-top) + 24px))`,
+
+      // скролл только внутри DialogContent
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
     },
   }}
 >
@@ -1412,6 +1431,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
       alignItems: 'center',
       justifyContent: 'space-between',
       pb: 1.25,
+      flex: '0 0 auto',
     }}
   >
     <span>Итоговое толкование</span>
@@ -1419,9 +1439,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
       <span>
         <IconButton
           onClick={handleRefreshFinal}
-          disabled={
-            refreshingFinal || loadingFinalInterpretation || !canFinalInterpret
-          }
+          disabled={refreshingFinal || loadingFinalInterpretation || !canFinalInterpret}
           sx={{
             color: '#fff',
             '&:hover': { background: 'rgba(255, 255, 255, 0.1)' },
@@ -1448,6 +1466,11 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
       borderColor: 'rgba(255, 255, 255, 0.18)',
       pt: 2,
       pb: 2.5,
+
+      // важно: если текста много — скроллим тут
+      overflowY: 'auto',
+      flex: '1 1 auto',
+      overscrollBehavior: 'contain',
     }}
   >
     {loadingFinalInterpretation ? (
@@ -1473,10 +1496,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
         {finalInterpretationText}
       </Typography>
     ) : (
-      <Typography
-        variant="body2"
-        sx={{ color: 'rgba(255, 255, 255, 0.75)' }}
-      >
+      <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.75)' }}>
         Итоговое толкование ещё не сформировано.
       </Typography>
     )}
@@ -1489,6 +1509,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
       pb: 2.2,
       pt: 1.3,
       justifyContent: 'flex-end',
+      flex: '0 0 auto',
     }}
   >
     <Button
@@ -1500,10 +1521,10 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
         textTransform: 'none',
         px: 3,
         fontSize: '0.95rem',
-        border: '1px solid rgba(255,255,255,0.35)',  // тонкий светлый обвод
-        bgcolor: 'transparent',                       // без заливки
+        border: '1px solid rgba(255,255,255,0.35)', // тонкий светлый обвод
+        bgcolor: 'transparent', // без заливки
         '&:hover': {
-          bgcolor: 'rgba(255,255,255,0.06)',          // лёгкий hover
+          bgcolor: 'rgba(255,255,255,0.06)', // лёгкий hover
         },
       }}
     >
