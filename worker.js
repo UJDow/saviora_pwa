@@ -5126,18 +5126,32 @@ if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
     }
 
     const {
-      dreamText = existing.dreamText,
-      title = existing.title,
-      category = existing.category,
-      dreamSummary = existing.dreamSummary,
-      globalFinalInterpretation = existing.globalFinalInterpretation,
-      blocks = existing.blocks ? JSON.parse(existing.blocks) : [],
-      // similarArtworks больше не берём из body
-      context = existing.context,
-    } = body;
+  dreamText = existing.dreamText,
+  title = existing.title,
+  category = existing.category,
+  dreamSummary = existing.dreamSummary,
+  globalFinalInterpretation = existing.globalFinalInterpretation,
+  blocks = existing.blocks ? JSON.parse(existing.blocks) : [],
+  similarArtworks = undefined, // ✅ как раньше: можно передать из body
+  context = existing.context,
+} = body;
 
-    const similarArtworks = existing.similarArtworks || '[]';
-    const textChanged = existing.dreamText !== dreamText;
+// ✅ Нормализация: в API массив, в DB строка
+let similarArtworksArr = [];
+if (Array.isArray(similarArtworks)) {
+  similarArtworksArr = similarArtworks;
+} else {
+  // если клиент не прислал — берём из existing
+  try {
+    const parsed = JSON.parse(existing.similarArtworks || '[]');
+    similarArtworksArr = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    similarArtworksArr = [];
+  }
+}
+
+const similarArtworksDb = JSON.stringify(similarArtworksArr);
+const textChanged = existing.dreamText !== dreamText;
 
     await env.DB
       .prepare(
@@ -5160,8 +5174,8 @@ if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
         dreamSummary,
         globalFinalInterpretation,
         JSON.stringify(blocks),
-        similarArtworks, // ✅ Используем из existing
-        context,
+similarArtworksDb,
+context,
         id,
         userEmail
       )
@@ -5177,8 +5191,7 @@ if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
       dreamSummary,
       globalFinalInterpretation,
       blocks,
-      similarArtworks,
-      context,
+similarArtworks: similarArtworksArr,      context,
       autoSummary: textChanged ? null : existing.autoSummary ?? null,
     };
 
