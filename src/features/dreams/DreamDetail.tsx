@@ -1115,29 +1115,48 @@ export function DreamDetail() {
   maxWidth="md"
   fullWidth
   scroll="paper"
+  sx={{
+    '& .MuiDialog-container': {
+      alignItems: 'flex-start', // не по центру, а сверху
+      paddingTop: `calc(${HEADER_BASE}px + env(safe-area-inset-top) + 12px)`,
+      paddingBottom: `calc(env(safe-area-inset-bottom) + 12px)`,
+    },
+  }}
   PaperProps={{
     sx: {
-      // всегда в пределах экрана (и safe-area)
-      maxHeight:
-        'calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
-      m: 1.5, // внешний отступ от краёв, чтобы не липло
+      // теперь модалка НЕ сможет уехать вверх под хедер
+      // и НЕ сможет вылезти вниз — она ограничена контейнером
+      maxHeight: '100%',
+      width: '100%',
+      m: 0, // важно: margin убираем, у нас padding у container
       display: 'flex',
       flexDirection: 'column',
-
-      position: 'relative',
+      overflow: 'hidden',
+      borderRadius: 4,
       background:
         'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
       backdropFilter: 'blur(18px)',
       border: `1px solid ${glassBorder}`,
       color: '#fff',
-      borderRadius: 4,
       boxShadow: '0 12px 60px rgba(24,32,80,0.38)',
-      p: 0,
-      overflow: 'hidden', // чтобы радиус работал и ничего не вылезало
     },
   }}
 >
-            <DialogTitle sx={{ px: 3, pt: 2, pb: 1 }}>
+            <DialogTitle
+  sx={{
+    px: 3,
+    pt: 2,
+    pb: 1,
+
+    position: 'sticky',
+    top: 0,
+    zIndex: 2,
+
+    backdropFilter: 'blur(10px)',
+    background: 'rgba(40,56,96,0.35)',
+    borderBottom: '1px solid rgba(255,255,255,0.10)',
+  }}
+>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 <IconButton
                   aria-label="Назад к тексту"
