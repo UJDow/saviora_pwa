@@ -1147,14 +1147,15 @@ export function DreamDetail() {
     px: 3,
     pt: 2,
     pb: 1,
-
     position: 'sticky',
     top: 0,
     zIndex: 2,
 
+    // стекло, но не синее
+    background: 'rgba(255,255,255,0.06)',
     backdropFilter: 'blur(10px)',
-    background: 'rgba(40,56,96,0.35)',
-    borderBottom: '1px solid rgba(255,255,255,0.10)',
+    WebkitBackdropFilter: 'blur(10px)',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
   }}
 >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
