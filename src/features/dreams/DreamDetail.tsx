@@ -1109,25 +1109,34 @@ export function DreamDetail() {
           </Paper>
 
           {/* Диалог с блоками сна */}
-          <Dialog
-            open={isBlockView}
-            onClose={handleCloseBlockView}
-            maxWidth="md"
-            fullWidth
-            PaperProps={{
-              sx: {
-                position: 'relative',
-                background:
-                  'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
-                backdropFilter: 'blur(18px)',
-                border: `1px solid ${glassBorder}`,
-                color: '#fff',
-                borderRadius: 4,
-                boxShadow: '0 12px 60px rgba(24,32,80,0.38)',
-                p: 0,
-              },
-            }}
-          >
+           <Dialog
+  open={isBlockView}
+  onClose={handleCloseBlockView}
+  maxWidth="md"
+  fullWidth
+  scroll="paper"
+  PaperProps={{
+    sx: {
+      // всегда в пределах экрана (и safe-area)
+      maxHeight:
+        'calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',
+      m: 1.5, // внешний отступ от краёв, чтобы не липло
+      display: 'flex',
+      flexDirection: 'column',
+
+      position: 'relative',
+      background:
+        'linear-gradient(135deg, rgba(88,120,255,0.10), rgba(138,92,255,0.06))',
+      backdropFilter: 'blur(18px)',
+      border: `1px solid ${glassBorder}`,
+      color: '#fff',
+      borderRadius: 4,
+      boxShadow: '0 12px 60px rgba(24,32,80,0.38)',
+      p: 0,
+      overflow: 'hidden', // чтобы радиус работал и ничего не вылезало
+    },
+  }}
+>
             <DialogTitle sx={{ px: 3, pt: 2, pb: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 <IconButton
@@ -1198,7 +1207,17 @@ export function DreamDetail() {
               </Box>
             </DialogTitle>
 
-            <DialogContent sx={{ px: 3, pt: 1, pb: 6 }}>
+            <DialogContent
+  dividers
+  sx={{
+    px: 3,
+    pt: 1,
+    pb: 10,        // запас под кнопку чата
+    flex: 1,       // занимает всё оставшееся место
+    minHeight: 0,  // критично для flex+scroll
+    overflowY: 'auto',
+  }}
+>
               <DreamBlocks
                 text={dream.dreamText}
                 blocks={blocks}

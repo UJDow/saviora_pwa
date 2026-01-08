@@ -219,14 +219,14 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
             onClick={() => onActiveBlockChange?.(b.id)}
             sx={{
               display: 'inline-block',
-              padding: '6px 10px',
-              marginRight: '8px',
-              marginBottom: '8px',
+              padding: '3px 8px',
+marginRight: '6px',
+marginBottom: '4px',
               borderRadius: '14px',
               backgroundColor: active ? color.replace(/0\.(\d+)/, '0.92') : color,
               color: '#fff',
               fontSize: '0.95rem',
-              lineHeight: 1.2,
+              lineHeight: 1.1,
               cursor: 'pointer',
               userSelect: 'none',
               maxWidth: '100%',
@@ -255,14 +255,14 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
           onClick={() => handleWordClick(wordIndex)}
           sx={{
             display: 'inline-block',
-            padding: '4px 8px',
-            marginRight: '6px',
-            marginBottom: '8px',
+            padding: '2px 7px',
+marginRight: '5px',
+marginBottom: '4px',
             borderRadius: '999px',
             backgroundColor: isPending ? 'rgba(88,120,255,0.55)' : style.backgroundColor || 'transparent',
             color: '#fff',
             fontSize: '0.92rem',
-            lineHeight: 1.3,
+            lineHeight: 1.1,
             cursor: 'pointer',
             userSelect: 'none',
             border: isPending ? '1px solid rgba(255,255,255,0.12)' : '1px solid transparent',
@@ -319,21 +319,19 @@ export const DreamBlocks: React.FC<DreamBlocksProps> = ({
 
       {/* Основной контейнер */}
       <Paper
-        sx={{
-          p: 2,
-          borderRadius: 2,
-          background: 'transparent',
-          border: 'none',
-          color: '#fff',
-          maxHeight: '72vh',
-          overflowY: 'auto',
-          position: 'relative',
-          boxShadow: 'none',
-          '&::-webkit-scrollbar': { width: 0, height: 0 },
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-        }}
-      >
+  sx={{
+    p: 2,
+    borderRadius: 2,
+    background: 'transparent',
+    border: 'none',
+    color: '#fff',
+    boxShadow: 'none',
+
+    // важно: больше НЕ скроллим тут
+    maxHeight: 'none',
+    overflow: 'visible',
+  }}
+>
         <Box
           sx={{
             width: '100%',
