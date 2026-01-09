@@ -58,36 +58,35 @@ export const MOOD_GROUPS: MoodGroup[] = [
   { 
     id: 'heaviness', 
     label: 'Тяжесть', 
-    color: '#37474F', // Насыщенный темный серо-синий (Blue Grey 800) - чтобы было видно
+    color: '#37474F', // Насыщенный темный серо-синий
     icon: CloudIcon 
   },
   { 
     id: 'storm',     
     label: 'Шторм',   
-    color: '#455A64', // Slate (Blue Grey 700) - Оставили как было
+    color: '#5C6BC0', // Индиго (Indigo 400) - Сине-фиолетовый, четко отличается от серого
     icon: TsunamiIcon 
   },
   { 
     id: 'fire',      
     label: 'Огонь',   
-    color: '#FF8A65', // Пастельный Коралловый (Deep Orange 300)
+    color: '#FF8A65', // Пастельный Коралловый
     icon: WhatshotIcon 
   },
   { 
     id: 'clarity',   
     label: 'Ясность', 
-    color: '#4DB6AC', // Пастельная Бирюза (Teal 300)
+    color: '#4DB6AC', // Пастельная Бирюза
     icon: SpaIcon 
   },
   { 
     id: 'flight',    
     label: 'Полет',   
-    color: '#FFD54F', // Пастельный Золотой (Amber 300)
+    color: '#FFD54F', // Пастельный Золотой
     icon: HistoryEduIcon 
   },
 ];
 
-// Цвета здесь дублируются из групп, чтобы подкатегории наследовали пастельность/насыщенность
 export const MOODS: MoodOption[] = [
   // --- 1. HEAVINESS (#37474F) ---
   {
@@ -131,13 +130,13 @@ export const MOODS: MoodOption[] = [
     icon: ContentCutIcon,
   },
 
-  // --- 2. STORM (#455A64) ---
+  // --- 2. STORM (#5C6BC0) ---
   {
     id: 'storm_anxiety',
     groupId: 'storm',
     label: 'Тревога',
     fullLabel: 'Фоновое беспокойство, ожидание беды',
-    color: '#455A64',
+    color: '#5C6BC0',
     icon: AnxietyIcon,
   },
   {
@@ -145,7 +144,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Страх',
     fullLabel: 'Боюсь чего-то конкретного',
-    color: '#455A64',
+    color: '#5C6BC0',
     icon: VisibilityIcon,
   },
   {
@@ -153,7 +152,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Паника',
     fullLabel: 'Теряю контроль, хаос мыслей',
-    color: '#455A64',
+    color: '#5C6BC0',
     icon: BlurOnIcon,
   },
   {
@@ -161,7 +160,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Стресс',
     fullLabel: 'Давление обстоятельств, перегруз',
-    color: '#455A64',
+    color: '#5C6BC0',
     icon: SportsGymnasticsIcon,
   },
   {
@@ -169,7 +168,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Растерянность',
     fullLabel: 'Не знаю, куда идти и что делать',
-    color: '#455A64',
+    color: '#5C6BC0',
     icon: ExploreOffIcon,
   },
 
