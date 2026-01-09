@@ -1,4 +1,3 @@
-// src/screens/UserProfileScreen.tsx
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -19,8 +18,8 @@ import { setMoodForDate } from 'src/utils/api';
 import { getLocalDateStr } from 'src/utils/dateUtils';
 import RecentInsightsGrid from 'src/features/insights/RecentInsightsGrid';
 
-const HEADER_BASE_HEIGHT = 56; // внутренняя высота хедера (контент)
-const FOOTER_HEIGHT = 64; // высота "невидимого" футера (мы учитываем как отступ снизу)
+const HEADER_BASE_HEIGHT = 56;
+const FOOTER_HEIGHT = 64;
 
 export function UserProfileScreen() {
   const navigate = useNavigate();
@@ -61,7 +60,7 @@ export function UserProfileScreen() {
         });
         return;
       } catch {
-        // ignore share failure, fallback to clipboard
+        // ignore
       }
     }
     try {
@@ -106,10 +105,9 @@ export function UserProfileScreen() {
   const screenGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
   const glassBorder = 'rgba(255,255,255,0.06)';
 
-  // ДИНАМИЧЕСКИЙ ОТСТУП ДЛЯ HEADER (как в ProfileEditForm)
+  // ДИНАМИЧЕСКИЙ ОТСТУП ДЛЯ HEADER
   const [headerExtra, setHeaderExtra] = useState(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  // Если на странице будут инпуты, можно добавлять inputOpen state и учитывать его — сейчас достаточно visualViewport
 
   useEffect(() => {
     const vv = (window as any).visualViewport;
@@ -166,7 +164,7 @@ export function UserProfileScreen() {
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {/* ========== Header (fixed, с safe-area и headerExtra) ========== */}
+      {/* ========== Header ========== */}
       <Box
         sx={{
           position: 'fixed',
@@ -241,7 +239,7 @@ export function UserProfileScreen() {
         </IconButton>
       </Box>
 
-      {/* ========== Content (scrollable, учитывает header & footer) ========== */}
+      {/* ========== Content ========== */}
       <Box
         sx={{
           flexGrow: 1,
@@ -253,7 +251,6 @@ export function UserProfileScreen() {
           position: 'relative',
         }}
       >
-        {/* Меню — открывается "под" кнопкой (нижняя привязка), glass style, скругления сверху */}
         <Menu
           anchorEl={anchorEl}
           open={open}
@@ -279,18 +276,19 @@ export function UserProfileScreen() {
           <MenuItem onClick={handleShare}>Поделиться</MenuItem>
         </Menu>
 
-        {/* Header area in content: avatar + name (left) and MoodSlider (right) */}
+        {/* Header area: Avatar + Name + Mood Widget */}
         <Box
           sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: '1fr minmax(240px, 420px)' },
-            alignItems: 'center',
-            gap: 2,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 3,
             mt: 4,
             px: { xs: 0, sm: 1 },
             width: '100%',
+            alignItems: 'flex-start',
           }}
         >
+          {/* Avatar & Name */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Avatar
               sx={{
@@ -315,24 +313,36 @@ export function UserProfileScreen() {
             </Box>
           </Box>
 
-          <Box
-            sx={{
-              justifySelf: { xs: 'stretch', sm: 'end' },
-              alignSelf: 'center',
-              width: { xs: '100%', sm: 360, md: 420 },
-              maxWidth: '48vw',
-            }}
-          >
-            <MoodSlider
-  value={profile.todayMood ?? null}
-  onChange={handleSaveMood}
-  closeOnSelect="confirmed"
-  transferToProfileOnSelect={false}
-  startCollapsed={Boolean(profile.todayMood)}
-  loading={moodSaving} // Передаем состояние загрузки сюда
-  disabled={profile.loading || moodSaving}
-  ready={!profile.loading}
-/>
+          {/* Mood Widget Area */}
+          <Box sx={{ width: '100%' }}>
+            <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
+              Настроение сегодня
+            </Typography>
+            
+            {/* 
+              1. ml: -1 (примерно -8px) компенсирует внутренний паддинг элемента списка.
+              2. '& > *' принудительно выравнивает содержимое MoodSlider влево, 
+                 перебивая внутреннее центрирование (justify-content: center).
+            */}
+            <Box sx={{ 
+              ml: -1,
+              width: '100%',
+              '& > *': { 
+                justifyContent: 'flex-start !important',
+                textAlign: 'left !important'
+              }
+            }}>
+              <MoodSlider
+                value={profile.todayMood ?? null}
+                onChange={handleSaveMood}
+                closeOnSelect="confirmed"
+                transferToProfileOnSelect={false}
+                startCollapsed={false}
+                loading={moodSaving}
+                disabled={profile.loading || moodSaving}
+                ready={!profile.loading}
+              />
+            </Box>
           </Box>
         </Box>
 
@@ -348,21 +358,14 @@ export function UserProfileScreen() {
       </Box>
 
       {/* Snackbar */}
-      {/* Стеклянный снекбар */}
       <Snackbar
         open={snackbarOpen}
         autoHideDuration={3000}
         onClose={() => setSnackbarOpen(false)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        sx={{
-          bottom: '15vh', // чуть выше футера
-        }}
+        sx={{ bottom: '15vh' }}
         ContentProps={{
-          sx: {
-            backgroundColor: 'transparent',
-            boxShadow: 'none',
-            padding: 0,
-          },
+          sx: { backgroundColor: 'transparent', boxShadow: 'none', padding: 0 },
         }}
       >
         <Box
@@ -382,14 +385,7 @@ export function UserProfileScreen() {
             maxWidth: 520,
           }}
         >
-          <Typography
-            sx={{
-              fontSize: '1.0rem',
-              whiteSpace: 'pre-wrap',
-              textAlign: 'center',
-              width: '100%'
-            }}
-          >
+          <Typography sx={{ fontSize: '1.0rem', whiteSpace: 'pre-wrap', textAlign: 'center', width: '100%' }}>
             {snackbarMessage}
           </Typography>
         </Box>
