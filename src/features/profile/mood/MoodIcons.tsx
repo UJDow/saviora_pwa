@@ -64,7 +64,7 @@ export const MOOD_GROUPS: MoodGroup[] = [
   { 
     id: 'storm',     
     label: 'Шторм',   
-    color: '#5C6BC0', // Индиго (Indigo 400) - Сине-фиолетовый, четко отличается от серого
+    color: '#3077ab', // Ярко-голубой (Electric Blue) - Контрастный к фиолетовому
     icon: TsunamiIcon 
   },
   { 
@@ -130,13 +130,13 @@ export const MOODS: MoodOption[] = [
     icon: ContentCutIcon,
   },
 
-  // --- 2. STORM (#5C6BC0) ---
+  // --- 2. STORM (#3077ab) ---
   {
     id: 'storm_anxiety',
     groupId: 'storm',
     label: 'Тревога',
     fullLabel: 'Фоновое беспокойство, ожидание беды',
-    color: '#5C6BC0',
+    color: '#3077ab',
     icon: AnxietyIcon,
   },
   {
@@ -144,7 +144,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Страх',
     fullLabel: 'Боюсь чего-то конкретного',
-    color: '#5C6BC0',
+    color: '#3077ab',
     icon: VisibilityIcon,
   },
   {
@@ -152,7 +152,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Паника',
     fullLabel: 'Теряю контроль, хаос мыслей',
-    color: '#5C6BC0',
+    color: '#3077ab',
     icon: BlurOnIcon,
   },
   {
@@ -160,7 +160,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Стресс',
     fullLabel: 'Давление обстоятельств, перегруз',
-    color: '#5C6BC0',
+    color: '#3077ab',
     icon: SportsGymnasticsIcon,
   },
   {
@@ -168,7 +168,7 @@ export const MOODS: MoodOption[] = [
     groupId: 'storm',
     label: 'Растерянность',
     fullLabel: 'Не знаю, куда идти и что делать',
-    color: '#5C6BC0',
+    color: '#3077ab',
     icon: ExploreOffIcon,
   },
 
