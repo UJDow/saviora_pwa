@@ -1,162 +1,302 @@
-// mood/MoodIcons.tsx
 import React from 'react';
 import type { SvgIconProps } from '@mui/material/SvgIcon';
-// Иконки
-import SearchIcon from '@mui/icons-material/Search';
-import WhatshotIcon from '@mui/icons-material/Whatshot';
-import WbSunnyIcon from '@mui/icons-material/WbSunny';
-import SentimentVerySatisfiedIcon from '@mui/icons-material/SentimentVerySatisfied';
-import EmojiEmotionsIcon from '@mui/icons-material/EmojiEmotions';
-import SentimentNeutralIcon from '@mui/icons-material/SentimentNeutral';
-import NightlightRoundIcon from '@mui/icons-material/NightlightRound';
-import MoodBadIcon from '@mui/icons-material/MoodBad';
-import SentimentDissatisfiedIcon from '@mui/icons-material/SentimentDissatisfied';
+
+// --- ИКОНКИ ГЛАВНЫХ КАТЕГОРИЙ (MUI) ---
+import CloudIcon from '@mui/icons-material/Cloud';       // Тяжесть
+import TsunamiIcon from '@mui/icons-material/Tsunami';   // Шторм
+import WhatshotIcon from '@mui/icons-material/Whatshot'; // Огонь
+import SpaIcon from '@mui/icons-material/Spa';           // Ясность
+import HistoryEduIcon from '@mui/icons-material/HistoryEdu'; // Полет (Перо)
+
+// --- ИКОНКИ ПОДКАТЕГОРИЙ (SVG/Custom) ---
+import { 
+  SadnessIcon, AnxietyIcon, AngerIcon, CalmIcon, JoyIcon
+} from './CustomMoodIcons';
+
+// --- ИКОНКИ ПОДКАТЕГОРИЙ (MUI Заглушки) ---
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import HeartBrokenIcon from '@mui/icons-material/HeartBroken';
+import ParkIcon from '@mui/icons-material/Park';
+import ContentCutIcon from '@mui/icons-material/ContentCut';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import BlurOnIcon from '@mui/icons-material/BlurOn';
+import SportsGymnasticsIcon from '@mui/icons-material/SportsGymnastics';
+import ExploreOffIcon from '@mui/icons-material/ExploreOff';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import ReportProblemIcon from '@mui/icons-material/ReportProblem';
+import PestControlRodentIcon from '@mui/icons-material/PestControlRodent';
 import FavoriteIcon from '@mui/icons-material/Favorite';
-import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
+import AnchorIcon from '@mui/icons-material/Anchor';
+import HandshakeIcon from '@mui/icons-material/Handshake';
+import StarIcon from '@mui/icons-material/Star';
+import WeekendIcon from '@mui/icons-material/Weekend';
+import LightbulbIcon from '@mui/icons-material/Lightbulb';
+import VolunteerActivismIcon from '@mui/icons-material/VolunteerActivism';
+import KeyIcon from '@mui/icons-material/Key';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
 
-export type MoodGroupId = 'seeking' | 'joy' | 'bond' | 'fear' | 'sadness' | 'anger';
+export type MoodGroupId = 'heaviness' | 'storm' | 'fire' | 'clarity' | 'flight';
 
-export type MoodOption = {
-  id: string;
-  groupId: MoodGroupId;
-  label: string;      // Короткое для слайдера / подписи под иконкой
-  fullLabel: string;  // Пояснение (короткая фраза, НЕ повторяет название)
+export type MoodGroup = {
+  id: MoodGroupId;
+  label: string;
   color: string;
   icon: React.ComponentType<SvgIconProps>;
 };
 
-export const MOOD_GROUPS: { id: MoodGroupId; label: string; color: string }[] = [
-  { id: 'seeking', label: 'Интерес', color: 'rgba(255,175,95,0.9)' },
-  { id: 'joy',     label: 'Радость', color: 'rgba(255,215,110,0.9)' },
-  { id: 'bond',    label: 'Тепло',   color: 'rgba(185,230,205,0.9)' },
-  { id: 'fear',    label: 'Тревога', color: 'rgba(125,160,210,0.9)' },
-  { id: 'sadness', label: 'Печаль',  color: 'rgba(135,160,215,0.9)' },
-  { id: 'anger',   label: 'Злость',  color: 'rgba(215,90,100,0.9)' },
+export type MoodOption = {
+  id: string;
+  groupId: MoodGroupId;
+  label: string;      
+  fullLabel: string;  
+  color: string;
+  icon: React.ComponentType<SvgIconProps>;
+};
+
+// ГРУППЫ (Главный экран)
+export const MOOD_GROUPS: MoodGroup[] = [
+  { 
+    id: 'heaviness', 
+    label: 'Тяжесть', 
+    color: '#37474F', // Насыщенный темный серо-синий (Blue Grey 800) - чтобы было видно
+    icon: CloudIcon 
+  },
+  { 
+    id: 'storm',     
+    label: 'Шторм',   
+    color: '#455A64', // Slate (Blue Grey 700) - Оставили как было
+    icon: TsunamiIcon 
+  },
+  { 
+    id: 'fire',      
+    label: 'Огонь',   
+    color: '#FF8A65', // Пастельный Коралловый (Deep Orange 300)
+    icon: WhatshotIcon 
+  },
+  { 
+    id: 'clarity',   
+    label: 'Ясность', 
+    color: '#4DB6AC', // Пастельная Бирюза (Teal 300)
+    icon: SpaIcon 
+  },
+  { 
+    id: 'flight',    
+    label: 'Полет',   
+    color: '#FFD54F', // Пастельный Золотой (Amber 300)
+    icon: HistoryEduIcon 
+  },
 ];
 
+// Цвета здесь дублируются из групп, чтобы подкатегории наследовали пастельность/насыщенность
 export const MOODS: MoodOption[] = [
-  // INEREST / SEEKING (оранжевые оттенки)
+  // --- 1. HEAVINESS (#37474F) ---
   {
-    id: 'seeking_interest',
-    groupId: 'seeking',
-    label: 'Любопытство',
-    fullLabel: 'Желание узнать новое, исследовать мир',
-    color: 'rgba(255,185,105,0.94)',
-    icon: SearchIcon,
+    id: 'heaviness_sadness',
+    groupId: 'heaviness',
+    label: 'Грусть',
+    fullLabel: 'Хочется плакать или побыть в тишине',
+    color: '#37474F',
+    icon: SadnessIcon,
   },
   {
-    id: 'seeking_azart',
-    groupId: 'seeking',
-    label: 'Азарт',
-    fullLabel: 'Возбуждение и энергия перед важным событием или вызовом',
-    color: 'rgba(255,155,80,0.94)',
-    icon: WhatshotIcon,
-  },
-
-  // JOY / RADOST (жёлтые)
-  {
-    id: 'play_serenity',
-    groupId: 'joy',
-    label: 'Покой',
-    fullLabel: 'Умиротворение и внутренний баланс',
-    color: 'rgba(255,235,160,0.94)',
-    icon: WbSunnyIcon,
+    id: 'heaviness_fatigue',
+    groupId: 'heaviness',
+    label: 'Усталость',
+    fullLabel: 'Нет сил, батарейка на нуле',
+    color: '#37474F',
+    icon: HourglassEmptyIcon,
   },
   {
-    id: 'play_happiness',
-    groupId: 'joy',
-    label: 'Счастье',
-    fullLabel: 'Чувство удовлетворения и радости жизни',
-    color: 'rgba(255,215,110,0.94)',
-    icon: SentimentVerySatisfiedIcon,
+    id: 'heaviness_emptiness',
+    groupId: 'heaviness',
+    label: 'Пустота',
+    fullLabel: 'Ничего не чувствую, дыра внутри',
+    color: '#37474F',
+    icon: HeartBrokenIcon,
   },
   {
-    id: 'play_ecstasy',
-    groupId: 'joy',
-    label: 'Восторг',
-    fullLabel: 'Сильный эмоциональный подъём и экстаз',
-    color: 'rgba(255,200,80,0.94)',
-    icon: EmojiEmotionsIcon,
+    id: 'heaviness_loneliness',
+    groupId: 'heaviness',
+    label: 'Одиночество',
+    fullLabel: 'Меня никто не понимает',
+    color: '#37474F',
+    icon: ParkIcon,
+  },
+  {
+    id: 'heaviness_powerless',
+    groupId: 'heaviness',
+    label: 'Бессилие',
+    fullLabel: 'Не могу ни на что повлиять',
+    color: '#37474F',
+    icon: ContentCutIcon,
   },
 
-  // BOND / WARMTH (зелёные — позитивные)
+  // --- 2. STORM (#455A64) ---
   {
-    id: 'care_acceptance',
-    groupId: 'bond',
-    label: 'Принятие',
-    fullLabel: 'Ощущение безопасности и поддержки',
-    color: 'rgba(200,235,200,0.90)',
-    icon: FavoriteBorderIcon,
+    id: 'storm_anxiety',
+    groupId: 'storm',
+    label: 'Тревога',
+    fullLabel: 'Фоновое беспокойство, ожидание беды',
+    color: '#455A64',
+    icon: AnxietyIcon,
   },
   {
-    id: 'care_trust',
-    groupId: 'bond',
-    label: 'Доверие',
-    fullLabel: 'Уверенность и спокойствие рядом с близкими людьми',
-    color: 'rgba(185,230,205,0.92)',
+    id: 'storm_fear',
+    groupId: 'storm',
+    label: 'Страх',
+    fullLabel: 'Боюсь чего-то конкретного',
+    color: '#455A64',
+    icon: VisibilityIcon,
+  },
+  {
+    id: 'storm_panic',
+    groupId: 'storm',
+    label: 'Паника',
+    fullLabel: 'Теряю контроль, хаос мыслей',
+    color: '#455A64',
+    icon: BlurOnIcon,
+  },
+  {
+    id: 'storm_stress',
+    groupId: 'storm',
+    label: 'Стресс',
+    fullLabel: 'Давление обстоятельств, перегруз',
+    color: '#455A64',
+    icon: SportsGymnasticsIcon,
+  },
+  {
+    id: 'storm_confusion',
+    groupId: 'storm',
+    label: 'Растерянность',
+    fullLabel: 'Не знаю, куда идти и что делать',
+    color: '#455A64',
+    icon: ExploreOffIcon,
+  },
+
+  // --- 3. FIRE (#FF8A65) ---
+  {
+    id: 'fire_anger',
+    groupId: 'fire',
+    label: 'Злость',
+    fullLabel: 'Хочется разрушать или кричать',
+    color: '#FF8A65',
+    icon: AngerIcon,
+  },
+  {
+    id: 'fire_irritation',
+    groupId: 'fire',
+    label: 'Раздражение',
+    fullLabel: 'Все бесит, колючее состояние',
+    color: '#FF8A65',
+    icon: BugReportIcon,
+  },
+  {
+    id: 'fire_resentment',
+    groupId: 'fire',
+    label: 'Обида',
+    fullLabel: 'Горькое чувство несправедливости',
+    color: '#FF8A65',
+    icon: ReportProblemIcon,
+  },
+  {
+    id: 'fire_jealousy',
+    groupId: 'fire',
+    label: 'Ревность',
+    fullLabel: 'Сравнение себя с другими не в свою пользу',
+    color: '#FF8A65',
+    icon: PestControlRodentIcon,
+  },
+  {
+    id: 'fire_passion',
+    groupId: 'fire',
+    label: 'Страсть',
+    fullLabel: 'Горение идеей или человеком, азарт',
+    color: '#FF8A65',
     icon: FavoriteIcon,
   },
 
-  // FEAR / ANXIETY (индиго / серо-синие)
+  // --- 4. CLARITY (#4DB6AC) ---
   {
-    id: 'fear_apprehension',
-    groupId: 'fear',
-    label: 'Опасение',
-    fullLabel: 'Лёгкое беспокойство и настороженность',
-    color: 'rgba(145,175,215,0.90)',
-    icon: MoodBadIcon,
+    id: 'clarity_calm',
+    groupId: 'clarity',
+    label: 'Спокойствие',
+    fullLabel: 'Внутренняя тишина и баланс',
+    color: '#4DB6AC',
+    icon: CalmIcon,
   },
   {
-    id: 'fear_fear',
-    groupId: 'fear',
-    label: 'Страх',
-    fullLabel: 'Чувство угрозы и неуверенности',
-    color: 'rgba(120,155,205,0.90)',
-    icon: SentimentDissatisfiedIcon,
+    id: 'clarity_confidence',
+    groupId: 'clarity',
+    label: 'Уверенность',
+    fullLabel: 'Твердая почва под ногами',
+    color: '#4DB6AC',
+    icon: AnchorIcon,
   },
   {
-    id: 'fear_panic',
-    groupId: 'fear',
-    label: 'Паника',
-    fullLabel: 'Острый стресс и потеря контроля',
-    color: 'rgba(100,130,190,0.86)',
-    icon: NightlightRoundIcon,
-  },
-
-  // SADNESS / MELANCHOLY (синие)
-  {
-    id: 'sadness_ pensiveness',
-    groupId: 'sadness',
-    label: 'Грусть',
-    fullLabel: 'Лёгкая меланхолия и задумчивость',
-    color: 'rgba(145,165,205,0.88)',
-    icon: SentimentNeutralIcon,
+    id: 'clarity_gratitude',
+    groupId: 'clarity',
+    label: 'Благодарность',
+    fullLabel: 'Теплое чувство к миру или людям',
+    color: '#4DB6AC',
+    icon: HandshakeIcon,
   },
   {
-    id: 'sadness_grief',
-    groupId: 'sadness',
-    label: 'Тоска',
-    fullLabel: 'Глубокое чувство утраты и сожаления',
-    color: 'rgba(115,140,200,0.90)',
-    icon: SentimentDissatisfiedIcon,
+    id: 'clarity_hope',
+    groupId: 'clarity',
+    label: 'Надежда',
+    fullLabel: 'Свет в конце туннеля',
+    color: '#4DB6AC',
+    icon: StarIcon,
+  },
+  {
+    id: 'clarity_relax',
+    groupId: 'clarity',
+    label: 'Расслабленность',
+    fullLabel: 'Тело и ум отдыхают',
+    color: '#4DB6AC',
+    icon: WeekendIcon,
   },
 
-  // ANGER (красные)
+  // --- 5. FLIGHT (#FFD54F) ---
   {
-    id: 'anger_annoyance',
-    groupId: 'anger',
-    label: 'Досада',
-    fullLabel: 'Раздражение и недовольство мелочами',
-    color: 'rgba(235,120,120,0.88)',
-    icon: SentimentDissatisfiedIcon,
+    id: 'flight_joy',
+    groupId: 'flight',
+    label: 'Радость',
+    fullLabel: 'Легкость и улыбка',
+    color: '#FFD54F',
+    icon: JoyIcon,
   },
   {
-    id: 'anger_rage',
-    groupId: 'anger',
-    label: 'Ярость',
-    fullLabel: 'Интенсивный и почти неконтролируемый гнев',
-    color: 'rgba(195,70,90,0.86)',
-    icon: WhatshotIcon,
+    id: 'flight_inspiration',
+    groupId: 'flight',
+    label: 'Вдохновение',
+    fullLabel: 'Поток идей, желание творить',
+    color: '#FFD54F',
+    icon: LightbulbIcon,
+  },
+  {
+    id: 'flight_love',
+    groupId: 'flight',
+    label: 'Любовь',
+    fullLabel: 'Сердце открыто',
+    color: '#FFD54F',
+    icon: VolunteerActivismIcon,
+  },
+  {
+    id: 'flight_curiosity',
+    groupId: 'flight',
+    label: 'Любопытство',
+    fullLabel: 'Интерес к новому, исследователь',
+    color: '#FFD54F',
+    icon: KeyIcon,
+  },
+  {
+    id: 'flight_pride',
+    groupId: 'flight',
+    label: 'Гордость',
+    fullLabel: 'Довольство собой и своими успехами',
+    color: '#FFD54F',
+    icon: EmojiEventsIcon,
   },
 ];
 
