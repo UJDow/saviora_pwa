@@ -88,11 +88,12 @@ export const DreamChat: React.FC = () => {
   const [currentBlock, setCurrentBlock] = useState<WordBlock | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [messagesLoading, setMessagesLoading] = useState(false);
-  const [sendingReply, setSendingReply] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const [input, setInput] = useState('');
+const [loading, setLoading] = useState(true);
+const [messagesLoading, setMessagesLoading] = useState(false);
+const [isSending, setIsSending] = useState(false);
+const [isAiThinking, setIsAiThinking] = useState(false);
+const [error, setError] = useState<string | null>(null);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [headerExpanded, setHeaderExpanded] = useState(true);
   const [generatingInterpretation, setGeneratingInterpretation] = useState(false);
@@ -176,6 +177,17 @@ export const DreamChat: React.FC = () => {
 
   const mapDbToUi = (role: Role): 'user' | 'bot' => (role === 'user' ? 'user' : 'bot');
 
+// ✅ НОВАЯ ФУНКЦИЯ
+const mergeMessages = useCallback((newMsgs: Message[]) => {
+  setMessages((prev) => {
+    const map = new Map(prev.map((m) => [m.id, m]));
+    newMsgs.forEach((m) => {
+      map.set(m.id, m);
+    });
+    return Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
+  });
+}, []);
+
   const getPairsCount = (msgs: Message[]) => {
     let count = 0;
     for (let i = 0; i < msgs.length - 1; i++) {
@@ -208,7 +220,6 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   const handleInterpret = async () => {
   if (!dream || !currentBlock) return;
 
-  // не даём толкование, пока луна не заполнилась
   if (pairs < TARGET_PAIRS_FOR_INTERPRET) {
     showInterpretSnackbar(
       'Луна ещё наполняется — продолжите диалог, чтобы открыть толкование этого фрагмента 🌙',
@@ -217,10 +228,9 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
     return;
   }
 
-  if (sendingReply || generatingInterpretation) return;
+  if (isSending || generatingInterpretation) return;
 
   setGeneratingInterpretation(true);
-  setSendingReply(true);
   try {
     await interpretBlock(
       currentBlock.text,
@@ -240,14 +250,13 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
       meta: m.meta ?? null,
       insightLiked: Boolean(m.meta?.insightLiked),
     })) as Message[];
-    setMessages(msgs);
+    mergeMessages(msgs);
 
     await recomputeInterpretedCount();
   } catch (e: any) {
     console.error(e);
     showInterpretSnackbar(e?.message || 'Не удалось получить толкование блока', 'error');
   } finally {
-    setSendingReply(false);
     setGeneratingInterpretation(false);
   }
 };
@@ -483,41 +492,47 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
 }, [dream?.id, currentBlock?.id]);
 
   useEffect(() => {
-    (async () => {
-      if (!dream || !currentBlock) return;
+  let isMounted = true;
 
-      if (skipNextFetchRef.current) {
-        skipNextFetchRef.current = false;
-        return;
+  async function loadChat() {
+    if (!dream?.id || !currentBlock?.id) return;
+
+    try {
+      setError(null);
+      setMessagesLoading(true);
+
+      const resp = await getChat(dream.id, currentBlock.id);
+
+      if (!isMounted) return;
+
+      const msgs = (resp.messages || []).map((m: any) => ({
+        id: m.id,
+        text: m.content,
+        sender: mapDbToUi(m.role as Role),
+        role: m.role as Role,
+        timestamp: toTimestamp(m.createdAt ?? m.created_at),
+        meta: m.meta ?? null,
+        insightLiked: Boolean(m.meta?.insightLiked),
+      })) as Message[];
+
+      mergeMessages(msgs);
+
+      if (msgs.length === 0 && kickoffDoneRef.current !== currentBlock.id && !kickoffInProgressRef.current) {
+        runKickoff();
       }
+    } catch (e: any) {
+      console.error('Chat load error:', e);
+      if (isMounted) setError('Не удалось загрузить историю');
+    } finally {
+      if (isMounted) setMessagesLoading(false);
+    }
+  }
 
-      try {
-        setError(null);
-        setMessagesLoading(true);
-
-        const resp = await getChat(dream.id, currentBlock.id);
-        const msgs = (resp.messages || []).map((m: any) => ({
-          id: m.id,
-          text: m.content,
-          sender: mapDbToUi(m.role as Role),
-          role: m.role as Role,
-          timestamp: toTimestamp(m.createdAt ?? m.created_at),
-          meta: m.meta ?? null,
-          insightLiked: Boolean(m.meta?.insightLiked),
-        })) as Message[];
-        setMessages(msgs);
-
-        if (msgs.length === 0 && kickoffDoneRef.current !== currentBlock.id && !kickoffInProgressRef.current && !sendingReply) {
-          setSendingReply(true);
-          await runKickoff();
-        }
-      } catch (e: any) {
-        setError(e.message || 'Не удалось загрузить историю');
-      } finally {
-        setMessagesLoading(false);
-      }
-    })();
-  }, [dream?.id, currentBlock?.id, sendingReply]);
+  loadChat();
+  return () => {
+    isMounted = false;
+  };
+}, [dream?.id, currentBlock?.id, mergeMessages]);
 
   useEffect(() => {
     (async () => {
@@ -554,150 +569,150 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   }
 
   const runKickoff = async () => {
-    if (!dream || !currentBlock) return;
-    if (kickoffDoneRef.current === currentBlock.id) return;
-    if (kickoffInProgressRef.current) return;
-    if (sendingReply) return;
+  if (!dream || !currentBlock) return;
+  if (kickoffDoneRef.current === currentBlock.id) return;
+  if (kickoffInProgressRef.current) return;
 
-    kickoffInProgressRef.current = true;
-    setSendingReply(true);
+  kickoffInProgressRef.current = true;
 
-    try {
-      const kickoffInstruction =
-        'Сформулируй один первый вопрос для начала анализа этого фрагмента сна. ' +
-        'Тон: тёплый, поддерживающий, без преамбулы, без списков. Коротко (1–2 предложения).';
+  try {
+    const kickoffInstruction =
+      'Сформулируй один первый вопрос для начала анализа этого фрагмента сна. ' +
+      'Тон: тёплый, поддерживающий, без преамбулы, без списков. Коротко (1–2 предложения).';
 
-      const response = await analyzeDream(
-        currentBlock.text,
-        [],
-        kickoffInstruction,
-        dream.id,
-        currentBlock.id,
-        dream.dreamSummary ?? null,
-        dream.autoSummary ?? null,
-      );
+    const response = await analyzeDream(
+      currentBlock.text,
+      [],
+      kickoffInstruction,
+      dream.id,
+      currentBlock.id,
+      dream.dreamSummary ?? null,
+      dream.autoSummary ?? null,
+    );
 
-      const assistantText =
-        response?.choices?.[0]?.message?.content ||
-        'Готов начать. Что в этом фрагменте кажется вам самым важным?';
+    const assistantText =
+      response?.choices?.[0]?.message?.content ||
+      'Готов начать. Что в этом фрагменте кажется вам самым важным?';
 
-      const saved = await appendChat({
-        dreamId: dream.id,
-        blockId: currentBlock.id,
+    const saved = await appendChat({
+      dreamId: dream.id,
+      blockId: currentBlock.id,
+      role: 'assistant',
+      content: assistantText,
+    });
+
+    mergeMessages([
+      {
+        id: saved.id,
+        text: saved.content,
+        sender: 'bot',
         role: 'assistant',
-        content: assistantText,
-      });
+        timestamp: toTimestamp(saved.createdAt),
+        meta: saved.meta ?? null,
+        insightLiked: Boolean(saved.meta?.insightLiked),
+      },
+    ]);
 
-      setMessages([
-        {
-          id: saved.id,
-          text: saved.content,
-          sender: 'bot',
-          role: 'assistant',
-          timestamp: toTimestamp(saved.createdAt ?? saved.createdAt),
-          meta: saved.meta ?? null,
-          insightLiked: Boolean(saved.meta?.insightLiked),
-        },
-      ]);
-
-      kickoffDoneRef.current = currentBlock.id;
-    } catch (e: any) {
-      setError(e.message || 'Не удалось начать диалог');
-    } finally {
-      kickoffInProgressRef.current = false;
-      setSendingReply(false);
-    }
-  };
+    kickoffDoneRef.current = currentBlock.id;
+  } catch (e: any) {
+    setError(e.message || 'Не удалось начать диалог');
+  } finally {
+    kickoffInProgressRef.current = false;
+  }
+};
 
   const handleSend = async (forcedUserText?: string) => {
-    if ((!input.trim() && !forcedUserText) || !currentBlock || !dream) return;
+  const textToSend = (forcedUserText ?? input).trim();
+  if (!textToSend || !currentBlock || !dream || isSending) return;
 
-    const textToSend = (forcedUserText ?? input).trim();
-    if (!textToSend) return;
+  setIsSending(true);
+  if (!forcedUserText) setInput('');
 
-    setSendingReply(true);
-    try {
-      const savedUser = await appendChat({
-        dreamId: dream.id,
-        blockId: currentBlock.id,
-        role: 'user',
-        content: textToSend,
-      });
+  try {
+    // 1. Отправляем сообщение пользователя
+    const savedUser = await appendChat({
+      dreamId: dream.id,
+      blockId: currentBlock.id,
+      role: 'user',
+      content: textToSend,
+    });
 
-      const nextMessages = [
-        ...messages,
-        {
-          id: savedUser.id,
-          text: savedUser.content,
-          sender: 'user' as const,
-          role: 'user' as const,
-          timestamp: toTimestamp(savedUser.createdAt ?? savedUser.createdAt),
-          meta: savedUser.meta ?? null,
-          insightLiked: Boolean(savedUser.meta?.insightLiked),
-        },
-      ];
+    const userMsg: Message = {
+      id: savedUser.id,
+      text: savedUser.content,
+      sender: 'user',
+      role: 'user',
+      timestamp: toTimestamp(savedUser.createdAt),
+      meta: savedUser.meta ?? null,
+      insightLiked: false,
+    };
 
-      setMessages(nextMessages);
-      if (!forcedUserText) setInput('');
+    // Сразу добавляем в UI
+    mergeMessages([userMsg]);
 
-      const lastTurns = nextMessages.slice(-MAX_TURNS).map((m) => ({
-        role: m.role ?? (m.sender === 'user' ? 'user' : 'assistant'),
-        content: m.text,
-      }));
+    // 2. Генерируем ответ ИИ
+    setIsAiThinking(true);
 
-      const ai = await analyzeDream(
-        currentBlock.text,
-        lastTurns,
-        undefined,
-        dream.id,
-        currentBlock.id,
-        dream.dreamSummary ?? null,
-        dream.autoSummary ?? null,
-      );
+    // Берем контекст из текущего стейта + новое сообщение
+    const context = [...messages, userMsg].slice(-MAX_TURNS).map((m) => ({
+      role: m.role,
+      content: m.text,
+    }));
 
-      const assistantText = ai?.choices?.[0]?.message?.content || 'Понял(а). Продолжим.';
+    const aiResponse = await analyzeDream(
+      currentBlock.text,
+      context,
+      undefined,
+      dream.id,
+      currentBlock.id,
+      dream.dreamSummary ?? null,
+      dream.autoSummary ?? null,
+    );
 
-      const savedAssistant = await appendChat({
-        dreamId: dream.id,
-        blockId: currentBlock.id,
+    const assistantText = aiResponse?.choices?.[0]?.message?.content || 'Понял(а). Продолжим.';
+
+    // 3. Сохраняем ответ ассистента
+    const savedAssistant = await appendChat({
+      dreamId: dream.id,
+      blockId: currentBlock.id,
+      role: 'assistant',
+      content: assistantText,
+    });
+
+    mergeMessages([
+      {
+        id: savedAssistant.id,
+        text: savedAssistant.content,
+        sender: 'bot',
         role: 'assistant',
-        content: assistantText,
-      });
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: savedAssistant.id,
-          text: savedAssistant.content,
-          sender: 'bot',
-          role: 'assistant',
-          timestamp: toTimestamp(savedAssistant.createdAt ?? savedAssistant.createdAt),
-          meta: savedAssistant.meta ?? null,
-          insightLiked: Boolean(savedAssistant.meta?.insightLiked),
-        },
-      ]);
-    } catch (e: any) {
-      setError(e.message || 'Ошибка отправки сообщения');
-    } finally {
-      setSendingReply(false);
-    }
-  };
+        timestamp: toTimestamp(savedAssistant.createdAt),
+        meta: savedAssistant.meta ?? null,
+        insightLiked: false,
+      },
+    ]);
+  } catch (e: any) {
+    console.error('Send error:', e);
+    enqueueSnackbar('Ошибка связи. Сообщение может появиться позже.', { variant: 'error' });
+  } finally {
+    setIsSending(false);
+    setIsAiThinking(false);
+  }
+};
 
   const handleClear = async () => {
   if (!dream || !currentBlock) return;
   try {
-    setSendingReply(true);
+    setIsSending(true);
     await clearChat(dream.id, currentBlock.id);
     setMessages([]);
     kickoffDoneRef.current = null;
     await runKickoff();
     await recomputeInterpretedCount();
-    // закрываем модалку, как в SimilarArtworksScreen
     setClearDialogOpen(false);
   } catch (e: any) {
     setError(e.message || 'Не удалось очистить чат');
   } finally {
-    setSendingReply(false);
+    setIsSending(false);
   }
 };
 
@@ -718,7 +733,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   const showFinalInterpretationIcon =
     dream?.globalFinalInterpretation !== null && dream?.globalFinalInterpretation !== undefined;
 
-  const isKickoffActive = sendingReply || messagesLoading || kickoffInProgressRef.current;
+const isKickoffActive = isSending || isAiThinking || messagesLoading || kickoffInProgressRef.current;
 
   if (loading) {
     return (
@@ -831,7 +846,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
       onClick={() => setClearDialogOpen(true)}
       sx={{ color: '#fff' }}
       aria-label="Очистить чат"
-      disabled={sendingReply}
+      disabled={isSending || isAiThinking}
     >
       <DeleteSweepIcon />
     </IconButton>
@@ -1251,25 +1266,25 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
             </Box>
           </Box>
         )}
-        {sendingReply && !generatingInterpretation && messages.length > 0 && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {renderAssistantAvatar()}
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 1.25,
-                  borderRadius: 2,
-                  background: 'rgba(255, 255, 255, 0.15)',
-                  backdropFilter: 'blur(10px)',
-                  border: `1px solid ${glassBorder}`,
-                }}
-              >
-                <CircularProgress size={20} sx={{ color: '#fff' }} />
-              </Paper>
-            </Box>
-          </Box>
-        )}
+        {isAiThinking && !generatingInterpretation && messages.length > 0 && (
+  <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2 }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      {renderAssistantAvatar()}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 1.25,
+          borderRadius: 2,
+          background: 'rgba(255, 255, 255, 0.15)',
+          backdropFilter: 'blur(10px)',
+          border: `1px solid ${glassBorder}`,
+        }}
+      >
+        <CircularProgress size={20} sx={{ color: '#fff' }} />
+      </Paper>
+    </Box>
+  </Box>
+)}
         <div ref={messagesEndRef} />
       </Box>
 
@@ -1299,7 +1314,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   illumination={illumination}
   onInterpret={handleInterpret}
   onFinalInterpret={() => handleFinalInterpret(false)}
-  disabled={sendingReply || !canBlockInterpret} // ← пока луна не полная — кнопка неактивна
+  disabled={isSending || isAiThinking || !canBlockInterpret}
   direction="waxing"
   size={32}
   totalBlocks={totalBlocks}
@@ -1313,17 +1328,17 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
             }}
           >
             <GlassInputBox
-              value={input}
-              onChange={setInput}
-              onSend={() => handleSend()}
-              disabled={sendingReply}
-              onClose={() => {}}
-              containerStyle={{
-                position: 'static',
-                margin: '0 auto',
-                maxWidth: '100%',
-              }}
-            />
+  value={input}
+  onChange={setInput}
+  onSend={() => handleSend()}
+  disabled={isSending || isAiThinking}
+  onClose={() => {}}
+  containerStyle={{
+    position: 'static',
+    margin: '0 auto',
+    maxWidth: '100%',
+  }}
+/>
           </Box>
         </Box>
       </Box>
@@ -1332,7 +1347,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
 <Dialog
   open={clearDialogOpen}
   onClose={() => {
-    if (!sendingReply) setClearDialogOpen(false);
+    if (!isSending) setClearDialogOpen(false);
   }}
   PaperProps={{
     sx: {
@@ -1362,7 +1377,7 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
         height: 44,
         textTransform: 'none',
       }}
-      disabled={sendingReply}
+      disabled={isSending}
     >
       Отмена
     </Button>
@@ -1379,9 +1394,9 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
         height: 44,
         textTransform: 'none',
       }}
-      disabled={sendingReply}
-    >
-      {sendingReply ? 'Очистка…' : 'Очистить чат'}
+    disabled={isSending}
+  >
+    {isSending ? 'Очистка…' : 'Очистить чат'}
     </Button>
   </DialogActions>
 </Dialog>
