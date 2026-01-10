@@ -356,6 +356,14 @@ const canBlockInterpret = pairs >= TARGET_PAIRS_FOR_INTERPRET;
   };
 
   useEffect(() => {
+  // 🔒 при смене блока чат ДОЛЖЕН быть чистым
+  setMessages([]);
+  kickoffDoneRef.current = null;
+  kickoffInProgressRef.current = false;
+  hasScrolledToTargetRef.current = false;
+}, [currentBlock?.id]);
+
+  useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
