@@ -442,6 +442,30 @@ const BADGES = {
     description: '20 инсайтов',
     condition: (data) => data.insights >= 20,
   },
+  philosopher_50: {
+  id: 'philosopher_50',
+  name: 'Великий мыслитель',
+  emoji: '🏛️',
+  category: 'depth',
+  description: '50 диалогов с AI',
+  condition: (data) => data.breakdownCounts.dialogs >= 50,
+},
+visionary_50: {
+  id: 'visionary_50',
+  name: 'Мастер образов',
+  emoji: '🌌',
+  category: 'depth',
+  description: '50 артворков',
+  condition: (data) => data.breakdownCounts.artworks >= 50,
+},
+collector_100: {
+  id: 'collector_100',
+  name: 'Хранитель мудрости',
+  emoji: '📜',
+  category: 'depth',
+  description: '100 инсайтов',
+  condition: (data) => data.insights >= 100,
+},
 
   // Категория: Мастерство
   perfectionist: {
@@ -587,15 +611,15 @@ function getNextGoal(level, unlockedBadges, dashboardData) {
   const unlockedSet = new Set(unlockedBadges);
 
   const goalPriority = {
-    'Новичок': ['first_interpretation', 'first_artwork', 'first_dialog'],
-    'Мечтатель': ['streak_7', 'habit_10', 'first_dialog'],
-    'Исследователь': ['philosopher_10', 'collector_20', 'analyst_10'],
-    'Аналитик': ['full_immersion', 'perfectionist', 'visionary_10'],
-    'Философ': ['guru', 'streak_30', 'philosopher_50'],
-    'Визионер': ['visionary_50', 'collector_100', 'perfectionist'],
-    'Мастер': ['guru', 'streak_30', 'full_immersion'],
-    'Гуру': ['guru', 'perfectionist', 'streak_30'],
-  };
+  'Новичок': ['first_interpretation', 'first_artwork', 'first_dialog'],
+  'Мечтатель': ['streak_7', 'habit_10', 'first_dialog'],
+  'Исследователь': ['philosopher_10', 'collector_20', 'analyst_10'],
+  'Аналитик': ['full_immersion', 'perfectionist', 'visionary_10'],
+  'Философ': ['guru', 'streak_30', 'philosopher_50'],
+  'Визионер': ['visionary_50', 'collector_100', 'perfectionist'],
+  'Мастер': ['guru', 'streak_30', 'full_immersion'],
+  'Гуру': ['guru', 'perfectionist', 'streak_30'],
+};
 
   const priorities = goalPriority[level.name] || [];
 
@@ -645,7 +669,10 @@ function calculateBadgeProgress(badgeId, data) {
     philosopher_10: { current: data.breakdownCounts.dialogs, target: 10 },
     visionary_10: { current: data.breakdownCounts.artworks, target: 10 },
     collector_20: { current: data.insights, target: 20 },
-    perfectionist: { current: data.depthScore, target: 100 },
+    philosopher_50: { current: data.breakdownCounts.dialogs, target: 50 },
+    visionary_50: { current: data.breakdownCounts.artworks, target: 50 },
+    collector_100: { current: data.insights, target: 100 },
+    perfectionist: { current: data.depthScore, target: 100 }, // ✅ оставляем один
     full_immersion: { 
       current: [
         data.breakdownCounts.interpreted > 0,
