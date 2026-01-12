@@ -16,7 +16,7 @@ import NightlightRoundIcon from '@mui/icons-material/NightlightRound';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 
 import { useAuth } from '../auth/AuthProvider';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import * as api from 'src/utils/api';
 import type { Dream as ApiDream, DailyConvo as ApiDailyConvo } from 'src/utils/api';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -67,6 +67,20 @@ export function ProfileScreen() {
   const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
 
   const navigate = useNavigate();
+  const location = useLocation();
+
+// Обработка создания сна на конкретную дату из другого экрана
+useEffect(() => {
+  const state = location.state as any;
+  if (state?.createDreamForDate) {
+    const targetDate = new Date(state.createDreamForDate);
+    setSelectedDate(targetDate);
+    openCreateBox('dream');
+    
+    // Очищаем state, чтобы не открывалось повторно
+    navigate(location.pathname, { replace: true, state: {} });
+  }
+}, [location.state]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const avatarIcon = profile?.avatarIcon ?? null;
@@ -244,7 +258,31 @@ export function ProfileScreen() {
 
     try {
       if (createMode === 'dream') {
-        const newDream = await api.addDream(createText.trim());
+  // Берём выбранную дату (или сегодня, если не выбрана)
+  const baseDate = selectedDate ?? new Date();
+  const dateObj = new Date(baseDate);
+  dateObj.setHours(0, 0, 0, 0);
+  const dateMs = dateObj.getTime();
+
+  // Проверка: не будущее
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  if (dateMs > now.getTime()) {
+    showSnackbar('Нельзя добавить сон на будущую дату', 'error');
+    setSaving(false);
+    return;
+  }
+
+  const newDream = await api.addDream(
+    createText.trim(),
+    null, // title
+    null, // category
+    [],   // blocks
+    null, // globalFinalInterpretation
+    null, // dreamSummary
+    [],   // similarArtworks
+    dateMs // 👈 передаём дату
+  );
         const norm: NormalizedDream = {
           ...newDream,
           date: toMs((newDream as any).date ?? (newDream as any).createdAt),
@@ -487,9 +525,16 @@ export function ProfileScreen() {
         {/* Сон */}
         <Box
           onClick={() => {
-            setSelectedDate(new Date());
-            openCreateBox('dream');
-          }}
+  // Если дата не выбрана или в будущем — ставим сегодня
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  
+  if (!selectedDate || selectedDate.getTime() > now.getTime()) {
+    setSelectedDate(new Date());
+  }
+  
+  openCreateBox('dream');
+}}
           onMouseDown={() => handlePressStart('dream')}
           onMouseUp={handlePressEnd}
           onMouseLeave={handlePressEnd}

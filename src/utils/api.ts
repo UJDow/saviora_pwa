@@ -285,7 +285,8 @@ export const addDream = (
   blocks: any[] = [],
   globalFinalInterpretation: string | null = null,
   dreamSummary: string | null = null,
-  similarArtworks: any[] = []
+  similarArtworks: any[] = [],
+  date?: number
 ) =>
   request<Dream>(
     '/dreams',
@@ -299,6 +300,7 @@ export const addDream = (
         globalFinalInterpretation,
         dreamSummary,
         similarArtworks,
+        ...(typeof date === 'number' ? { date } : {}), // 👈 добавили
       }),
     },
     true

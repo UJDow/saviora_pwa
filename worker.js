@@ -3746,8 +3746,9 @@ if (url.pathname === '/dreams' && request.method === 'POST') {
 
   const { dreamText } = body;
   const id = crypto.randomUUID();
-  const date = Date.now();
-
+  const date = body.date && typeof body.date === 'number' && body.date > 0
+  ? body.date
+  : Date.now();
   try {
     const d1 = env.DB;
     await d1

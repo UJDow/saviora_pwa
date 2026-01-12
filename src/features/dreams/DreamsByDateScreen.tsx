@@ -15,6 +15,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { alpha } from '@mui/material/styles';
 import type { CalendarStyles } from 'src/features/profile/calendar/MonthView';
 import type { Dream as ApiDream, DailyConvo as ApiDailyConvo } from 'src/utils/api';
+import NightlightRoundIcon from '@mui/icons-material/NightlightRound';
 
 type NormalizedDream = Omit<ApiDream, 'date'> & { date: number };
 type NormalizedDailyConvo = Omit<ApiDailyConvo, 'date'> & { date: number };
@@ -242,24 +243,65 @@ export function DreamsByDateScreen({
       </Stack>
 
       {!items.length ? (
-        <Box
-          sx={{
-            py: 4,
-            px: 2,
-            borderRadius: 2,
-            border: `1px dashed ${alpha('#ffffff', 0.18)}`,
-            background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(210,195,255,0.06))',
-            backdropFilter: 'blur(12px)',
-            textAlign: 'center',
-          }}
-        >
-          <Typography variant="body1" sx={{ color: alpha('#ffffff', 0.82), fontWeight: 500 }}>
-            В этот день ничего не записано.
-          </Typography>
-          <Typography variant="body2" sx={{ color: alpha('#ffffff', 0.6), mt: 0.5 }}>
-            Создайте сон или тему беседы, чтобы увидеть их здесь.
-          </Typography>
-        </Box>
+  <Box
+    sx={{
+      py: 4,
+      px: 2,
+      borderRadius: 2,
+      border: `1px dashed ${alpha('#ffffff', 0.18)}`,
+      background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(210,195,255,0.06))',
+      backdropFilter: 'blur(12px)',
+      textAlign: 'center',
+    }}
+  >
+    <Typography variant="body1" sx={{ color: alpha('#ffffff', 0.82), fontWeight: 500 }}>
+      В этот день ничего не записано.
+    </Typography>
+    <Typography variant="body2" sx={{ color: alpha('#ffffff', 0.6), mt: 0.5, mb: 2 }}>
+      Создайте сон или тему беседы, чтобы увидеть их здесь.
+    </Typography>
+    
+    {/* 👇 Кнопка добавления сна */}
+    <Button
+      variant="contained"
+      startIcon={<NightlightRoundIcon />}
+      onClick={() => {
+        // Парсим дату из dateStr (формат "дд.мм.гггг")
+        if (dateStr) {
+          const [day, month, year] = dateStr.split('.').map(Number);
+          const targetDate = new Date(year, month - 1, day);
+          
+          // Проверка: не будущее
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          targetDate.setHours(0, 0, 0, 0);
+          
+          if (targetDate.getTime() > now.getTime()) {
+            alert('Нельзя добавить сон на будущую дату');
+            return;
+          }
+          
+          // Переходим на главный экран с выбранной датой
+          navigate('/', { state: { createDreamForDate: targetDate.getTime() } });
+        }
+      }}
+      sx={{
+        mt: 1,
+        textTransform: 'none',
+        fontWeight: 600,
+        background: 'linear-gradient(135deg, rgba(120,140,255,0.85), rgba(150,110,250,0.85))',
+        color: '#fff',
+        px: 3,
+        py: 1,
+        borderRadius: 2,
+        '&:hover': {
+          background: 'linear-gradient(135deg, rgba(120,140,255,0.95), rgba(150,110,250,0.95))',
+        },
+      }}
+    >
+      Добавить сновидение
+    </Button>
+  </Box>
       ) : (
         <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {items.map((item) => {
