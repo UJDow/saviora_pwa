@@ -698,80 +698,78 @@ useEffect(() => {
   }}
 >
           <AnimatePresence mode="wait">
-            {selectedDreamDate ? (
-              <motion.div
-                key="dreamsList"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.3 }}
-              >
-                <DreamsByDateScreen
-  date={selectedDreamDate}
-  onBack={handleBackToCalendar}
-  usePaper={false}
-  dreams={filteredDreams}
-  dailyConvos={filteredDailyConvos}
-  // Прокидываем уведомления
-  onNotify={showSnackbar}
-  // Логика открытия инпута на нужную дату
-  onRequestAddDream={(dateStr) => {
-    const [day, month, year] = dateStr.split('.').map(Number);
-    const targetDate = new Date(year, month - 1, day);
-    setSelectedDate(targetDate);
-    openCreateBox('dream');
-  }}
-/>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="calendarView"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.3 }}
-              >
-                {calendarView === 'month' && (
-                  <MonthView
-                    dreamDates={eventDates}
-                    selectedDate={selectedDate}
-                    onDateClick={handleDreamDateSelect}
-                    onWeekClick={(weekStartDate: Date) => {
-                      setPreviousMonthDate(selectedDate);
-                      setSelectedDate(weekStartDate);
-                      setCalendarView('week');
-                    }}
-                    onYearClick={() => setCalendarView('year')}
-                    onDateChange={setSelectedDate}
-                    onBackToWeek={goToWeekView}
-                  />
-                )}
-                {calendarView === 'year' && (
-                  <YearView
-                    dreamDates={eventDates}
-                    selectedYear={selectedDate.getFullYear()}
-                    onMonthClick={(monthDate: Date) => {
-                      setSelectedDate(monthDate);
-                      setCalendarView('month');
-                    }}
-                    onYearChange={(year: number) => {
-                      setSelectedDate(new Date(year, selectedDate.getMonth(), 1));
-                    }}
-                    onBackToWeek={goToWeekView}
-                  />
-                )}
-                {calendarView === 'day' && (
-                  <DayView
-                    dreamDates={eventDates}
-                    selectedDate={selectedDate}
-                    onDateClick={handleDreamDateSelect}
-                    onDateChange={setSelectedDate}
-                    onBackToWeek={goToWeekView}
-                  />
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
+  {selectedDreamDate && !inputOpen ? (
+    <motion.div
+      key="dreamsList"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.3 }}
+    >
+      <DreamsByDateScreen
+        date={selectedDreamDate}
+        onBack={handleBackToCalendar}
+        usePaper={false}
+        dreams={filteredDreams}
+        dailyConvos={filteredDailyConvos}
+        onNotify={showSnackbar}
+        onRequestAddDream={(dateStr) => {
+          const [day, month, year] = dateStr.split('.').map(Number);
+          const targetDate = new Date(year, month - 1, day);
+          setSelectedDate(targetDate);
+          openCreateBox('dream');
+        }}
+      />
+    </motion.div>
+  ) : (
+    <motion.div
+      key="calendarView"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.3 }}
+    >
+      {calendarView === 'month' && (
+        <MonthView
+          dreamDates={eventDates}
+          selectedDate={selectedDate}
+          onDateClick={handleDreamDateSelect}
+          onWeekClick={(weekStartDate: Date) => {
+            setPreviousMonthDate(selectedDate);
+            setSelectedDate(weekStartDate);
+            setCalendarView('week');
+          }}
+          onYearClick={() => setCalendarView('year')}
+          onDateChange={setSelectedDate}
+          onBackToWeek={goToWeekView}
+        />
+      )}
+      {calendarView === 'year' && (
+        <YearView
+          dreamDates={eventDates}
+          selectedYear={selectedDate.getFullYear()}
+          onMonthClick={(monthDate: Date) => {
+            setSelectedDate(monthDate);
+            setCalendarView('month');
+          }}
+          onYearChange={(year: number) => {
+            setSelectedDate(new Date(year, selectedDate.getMonth(), 1));
+          }}
+          onBackToWeek={goToWeekView}
+        />
+      )}
+      {calendarView === 'day' && (
+        <DayView
+          dreamDates={eventDates}
+          selectedDate={selectedDate}
+          onDateClick={handleDreamDateSelect}
+          onDateChange={setSelectedDate}
+          onBackToWeek={goToWeekView}
+        />
+      )}
+    </motion.div>
+  )}
+</AnimatePresence>
         </Box>
       </Box>
 
