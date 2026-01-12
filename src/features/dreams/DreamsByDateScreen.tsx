@@ -27,6 +27,9 @@ interface DreamsByDateScreenProps {
   dreams?: NormalizedDream[];
   dailyConvos?: NormalizedDailyConvo[];
   calendarStyles?: CalendarStyles;
+  // Добавляем эти два:
+  onNotify?: (message: string, severity: 'success' | 'error') => void;
+  onRequestAddDream?: (dateStr: string) => void;
 }
 
 type TimelineItem =
@@ -73,6 +76,8 @@ export function DreamsByDateScreen({
   dreams = [],
   dailyConvos = [],
   calendarStyles = {},
+  onNotify,
+  onRequestAddDream,
 }: DreamsByDateScreenProps) {
   const params = useParams<{ date: string }>();
   const dateStr = propDate || params.date;
@@ -257,33 +262,32 @@ export function DreamsByDateScreen({
     <Typography variant="body1" sx={{ color: alpha('#ffffff', 0.82), fontWeight: 500 }}>
       В этот день ничего не записано.
     </Typography>
+
     <Typography variant="body2" sx={{ color: alpha('#ffffff', 0.6), mt: 0.5, mb: 2 }}>
       Создайте сон или тему беседы, чтобы увидеть их здесь.
     </Typography>
-    
-    {/* 👇 Кнопка добавления сна */}
+
     <Button
       variant="contained"
       startIcon={<NightlightRoundIcon />}
       onClick={() => {
-        // Парсим дату из dateStr (формат "дд.мм.гггг")
-        if (dateStr) {
-          const [day, month, year] = dateStr.split('.').map(Number);
-          const targetDate = new Date(year, month - 1, day);
-          
-          // Проверка: не будущее
-          const now = new Date();
-          now.setHours(0, 0, 0, 0);
-          targetDate.setHours(0, 0, 0, 0);
-          
-          if (targetDate.getTime() > now.getTime()) {
-            alert('Нельзя добавить сон на будущую дату');
-            return;
-          }
-          
-          // Переходим на главный экран с выбранной датой
-          navigate('/', { state: { createDreamForDate: targetDate.getTime() } });
+        if (!dateStr) return;
+
+        const [day, month, year] = dateStr.split('.').map(Number);
+        const targetDate = new Date(year, month - 1, day);
+        targetDate.setHours(0, 0, 0, 0);
+
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+
+        if (targetDate.getTime() > now.getTime()) {
+          // ✅ стеклянная нотификация от родителя
+          onNotify?.('Будущее ещё не наступило… 🌌', 'error');
+          return;
         }
+
+        // ✅ просим родителя открыть инпут
+        onRequestAddDream?.(dateStr);
       }}
       sx={{
         mt: 1,
@@ -302,7 +306,7 @@ export function DreamsByDateScreen({
       Добавить сновидение
     </Button>
   </Box>
-      ) : (
+) : (
         <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {items.map((item) => {
             const tokens = pastelGlassTokens[item.kind];

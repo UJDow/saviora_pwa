@@ -707,12 +707,21 @@ useEffect(() => {
                 transition={{ duration: 0.3 }}
               >
                 <DreamsByDateScreen
-                  date={selectedDreamDate}
-                  onBack={handleBackToCalendar}
-                  usePaper={false}
-                  dreams={filteredDreams}
-                  dailyConvos={filteredDailyConvos}
-                />
+  date={selectedDreamDate}
+  onBack={handleBackToCalendar}
+  usePaper={false}
+  dreams={filteredDreams}
+  dailyConvos={filteredDailyConvos}
+  // Прокидываем уведомления
+  onNotify={showSnackbar}
+  // Логика открытия инпута на нужную дату
+  onRequestAddDream={(dateStr) => {
+    const [day, month, year] = dateStr.split('.').map(Number);
+    const targetDate = new Date(year, month - 1, day);
+    setSelectedDate(targetDate);
+    openCreateBox('dream');
+  }}
+/>
               </motion.div>
             ) : (
               <motion.div
