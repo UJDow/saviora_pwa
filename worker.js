@@ -9889,6 +9889,577 @@ if (url.pathname === '/toggle_artwork_insight' && request.method === 'POST') {
   }
 }
 
+// === QUIZ ENDPOINTS ===
+
+// POST /generate_quiz - генерация квиза на основе глобального контекста
+if (url.pathname === '/generate_quiz' && request.method === 'POST') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 10,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const body = await request.json();
+    const { sourceType, sourceId, blockId, artworkId } = body;
+
+    if (!sourceType || !sourceId) {
+      return new Response(
+        JSON.stringify({ error: 'sourceType and sourceId required' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    const now = Date.now();
+    const threeDaysAgo = now - (3 * 24 * 60 * 60 * 1000);
+
+    // ========== 1. ОСНОВНОЙ ИСТОЧНИК ==========
+    let primaryContent = '';
+    let primaryContext = '';
+    let contextTitle = '';
+    let contextText = '';
+
+    if (sourceType === 'dream') {
+      const dream = await env.DB.prepare(
+        'SELECT dreamText, autoSummary, globalFinalInterpretation, date FROM dreams WHERE id = ? AND user = ?'
+      ).bind(sourceId, userEmail).first();
+      
+      if (!dream) {
+        return new Response(
+          JSON.stringify({ error: 'Dream not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
+      }
+
+      primaryContent = dream.dreamText || '';
+      primaryContext = `${dream.autoSummary || ''}\n${dream.globalFinalInterpretation || ''}`.trim();
+      contextTitle = 'Твой сон';
+      contextText = dream.dreamText && dream.dreamText.length > 300
+        ? dream.dreamText.substring(0, 300) + '...'
+        : (dream.dreamText || '');
+
+      // ====== Добавляем похожие произведения (dream_similar_artworks) ======
+      try {
+        const similarArtworks = await env.DB.prepare(`
+          SELECT a.title, a.author, sa.context AS similarity_reason, sa.score
+          FROM dream_similar_artworks sa
+          LEFT JOIN artworks a ON sa.artwork_id = a.id
+          WHERE sa.dream_id = ?
+          ORDER BY sa.position ASC
+          LIMIT 3
+        `).bind(sourceId).all();
+
+        if (similarArtworks && similarArtworks.results && similarArtworks.results.length > 0) {
+          const artworkContext = similarArtworks.results
+            .map(r => {
+              const title = r.title || 'Без названия';
+              const author = r.author ? `(${r.author})` : '';
+              const reason = r.similarity_reason ? ` — ${r.similarity_reason}` : '';
+              const score = typeof r.score === 'number' ? ` [score:${Number(r.score).toFixed(2)}]` : '';
+              return `- "${title}" ${author}${score}${reason}`;
+            })
+            .join('\n');
+
+          primaryContext += `\n\nПОХОЖИЕ ПРОИЗВЕДЕНИЯ ИСКУССТВА ДЛЯ ЭТОГО СНА:\n${artworkContext}`;
+        }
+      } catch (artErr) {
+        // Не критично — логируем, но продолжаем
+        console.warn('[generate_quiz] similarArtworks fetch failed:', artErr);
+      }
+
+    } else if (sourceType === 'daily') {
+      const daily = await env.DB.prepare(
+        'SELECT notes, autoSummary, createdAt FROM daily_convos WHERE id = ? AND user = ?'
+      ).bind(sourceId, userEmail).first();
+      
+      if (!daily) {
+        return new Response(
+          JSON.stringify({ error: 'Daily convo not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
+      }
+
+      primaryContent = daily.notes || '';
+      primaryContext = daily.autoSummary || '';
+      contextTitle = 'Дневная беседа';
+      contextText = daily.notes && daily.notes.length > 300
+        ? daily.notes.substring(0, 300) + '...'
+        : (daily.notes || '');
+
+    } else if (sourceType === 'block' && blockId) {
+      const messages = await env.DB.prepare(
+        'SELECT role, content FROM messages WHERE user = ? AND dream_id = ? AND block_id = ? ORDER BY created_at ASC'
+      ).bind(userEmail, sourceId, blockId).all();
+
+      primaryContent = (messages.results || []).map(m => `${m.role}: ${m.content}`).join('\n');
+      
+      const summary = await getRollingSummary(env, userEmail, sourceId, blockId, artworkId);
+      primaryContext = summary?.summary || '';
+      contextTitle = 'Фрагмент сна';
+      contextText = primaryContent.length > 300 
+        ? primaryContent.substring(0, 300) + '...' 
+        : primaryContent;
+
+    } else if (sourceType === 'artwork' && artworkId) {
+      const messages = await env.DB.prepare(
+        'SELECT role, content FROM messages WHERE user = ? AND dream_id = ? AND block_id = ? AND artwork_id = ? ORDER BY created_at ASC'
+      ).bind(userEmail, sourceId, blockId, artworkId).all();
+
+      primaryContent = (messages.results || []).map(m => `${m.role}: ${m.content}`).join('\n');
+      
+      const summary = await getRollingSummary(env, userEmail, sourceId, blockId, artworkId);
+      primaryContext = summary?.summary || '';
+      contextTitle = 'Твоё произведение';
+      contextText = primaryContent.length > 300 
+        ? primaryContent.substring(0, 300) + '...' 
+        : primaryContent;
+    }
+
+    // ========== 2. СОБИРАЕМ ГЛОБАЛЬНЫЙ КОНТЕКСТ ==========
+    
+    // 2.1 Последние сны (за 3 дня) — используем date (INTEGER timestamp)
+    const recentDreams = await env.DB.prepare(
+      'SELECT id, dreamText, autoSummary, globalFinalInterpretation, date FROM dreams WHERE user = ? AND date >= ? ORDER BY date DESC LIMIT 5'
+    ).bind(userEmail, threeDaysAgo).all();
+
+    // 2.2 Последние арт-чаты (за 3 дня) — ищем в messages с artwork_id
+    const recentArtworkMessages = await env.DB.prepare(
+      'SELECT DISTINCT dream_id, block_id, artwork_id, created_at FROM messages WHERE user = ? AND artwork_id IS NOT NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 5'
+    ).bind(userEmail, threeDaysAgo).all();
+
+    const artworkSummaries = [];
+    for (const msg of (recentArtworkMessages.results || [])) {
+      const summary = await getRollingSummary(env, userEmail, msg.dream_id, msg.block_id, msg.artwork_id);
+      if (summary?.summary) {
+        artworkSummaries.push({
+          id: msg.artwork_id,
+          summary: summary.summary,
+          created_at: msg.created_at
+        });
+      }
+    }
+
+    // 2.3 Последние дневные беседы (за 3 дня) — используем createdAt
+    const recentDaily = await env.DB.prepare(
+      'SELECT notes, autoSummary, createdAt FROM daily_convos WHERE user = ? AND createdAt >= ? ORDER BY createdAt DESC LIMIT 3'
+    ).bind(userEmail, threeDaysAgo).all();
+
+    // 2.4 Все блоки текущего сна (если sourceType === 'dream')
+    let blockSummaries = [];
+    if (sourceType === 'dream') {
+      const blocks = await env.DB.prepare(
+        'SELECT DISTINCT block_id FROM messages WHERE user = ? AND dream_id = ? AND block_id IS NOT NULL'
+      ).bind(userEmail, sourceId).all();
+
+      for (const block of (blocks.results || [])) {
+        const summary = await getRollingSummary(env, userEmail, sourceId, block.block_id, null);
+        if (summary?.summary) {
+          blockSummaries.push(summary.summary);
+        }
+      }
+    }
+
+    // 2.5 Эмоциональная траектория — используем created_at (DATETIME)
+    const recentMoods = await env.DB.prepare(
+      'SELECT context, created_at FROM moods WHERE user_email = ? AND created_at >= datetime(?, "unixepoch") ORDER BY created_at DESC LIMIT 5'
+    ).bind(userEmail, Math.floor(threeDaysAgo / 1000)).all();
+
+    // ========== 3. ФОРМИРУЕМ СУПЕР-ПРОМПТ ==========
+    
+    // СЛОВАРЬ ПЕРЕВОДА mood id -> человекочитаемая метка (вставлен прямо здесь)
+    const moodTranslation = {
+      'heaviness_sadness': 'Грусть',
+      'heaviness_fatigue': 'Усталость',
+      'heaviness_emptiness': 'Пустота',
+      'heaviness_loneliness': 'Одиночество',
+      'heaviness_powerless': 'Бессилие',
+      'storm_anxiety': 'Тревога',
+      'storm_fear': 'Страх',
+      'storm_panic': 'Паника',
+      'storm_stress': 'Стресс',
+      'storm_confusion': 'Растерянность',
+      'fire_anger': 'Злость',
+      'fire_irritation': 'Раздражение',
+      'fire_resentment': 'Обида',
+      'fire_jealousy': 'Ревность',
+      'fire_passion': 'Страсть',
+      'clarity_calm': 'Спокойствие',
+      'clarity_confidence': 'Уверенность',
+      'clarity_gratitude': 'Благодарность',
+      'clarity_hope': 'Надежда',
+      'clarity_relax': 'Расслабленность',
+      'flight_joy': 'Радость',
+      'flight_inspiration': 'Вдохновение',
+      'flight_love': 'Любовь',
+      'flight_curiosity': 'Любопытство',
+      'flight_pride': 'Гордость'
+    };
+
+    let globalContextText = '';
+
+    // Основной источник
+    globalContextText += `# ОСНОВНОЙ ФОКУС (${contextTitle}):\n`;
+    globalContextText += `${primaryContent.slice(0, 2000)}\n\n`;
+    if (primaryContext) {
+      globalContextText += `АНАЛИЗ:\n${primaryContext.slice(0, 1000)}\n\n`;
+    }
+
+    // Последние сны
+    if (recentDreams.results && recentDreams.results.length > 0) {
+      globalContextText += `# ПОСЛЕДНИЕ СНЫ (за 3 дня):\n`;
+      recentDreams.results.forEach((d, i) => {
+        const date = d.date
+          ? new Date(d.date).toLocaleDateString('ru-RU')
+          : `сон ${i + 1}`;
+        globalContextText += `${i + 1}. [${date}] ${d.dreamText.slice(0, 200)}...\n`;
+        if (d.autoSummary) {
+          globalContextText += `   Суть: ${d.autoSummary.slice(0, 150)}\n`;
+        }
+      });
+      globalContextText += '\n';
+    }
+
+    // Блоки текущего сна
+    if (blockSummaries.length > 0) {
+      globalContextText += `# ФРАГМЕНТЫ ТЕКУЩЕГО СНА:\n`;
+      blockSummaries.forEach((summary, i) => {
+        globalContextText += `${i + 1}. ${summary.slice(0, 200)}\n`;
+      });
+      globalContextText += '\n';
+    }
+
+    // Арт-чаты
+    if (artworkSummaries.length > 0) {
+      globalContextText += `# ПРОИЗВЕДЕНИЯ (за 3 дня):\n`;
+      artworkSummaries.forEach((art, i) => {
+        const date = art.created_at
+          ? new Date(art.created_at).toLocaleDateString('ru-RU')
+          : `арт ${i + 1}`;
+        globalContextText += `${i + 1}. [${date}] ${art.summary.slice(0, 200)}\n`;
+      });
+      globalContextText += '\n';
+    }
+
+    // Дневные беседы
+    if (recentDaily.results && recentDaily.results.length > 0) {
+      globalContextText += `# ДНЕВНЫЕ ЗАПИСИ (за 3 дня):\n`;
+      recentDaily.results.forEach((daily, i) => {
+        const date = daily.createdAt
+          ? new Date(daily.createdAt).toLocaleDateString('ru-RU')
+          : `запись ${i + 1}`;
+        globalContextText += `${i + 1}. [${date}] ${daily.notes.slice(0, 200)}...\n`;
+        if (daily.autoSummary) {
+          globalContextText += `   Суть: ${daily.autoSummary.slice(0, 150)}\n`;
+        }
+      });
+      globalContextText += '\n';
+    }
+
+    // Эмоциональная траектория (с переводом ID в человекочитаемую метку)
+    if (recentMoods.results && recentMoods.results.length > 0) {
+      globalContextText += `# ЭМОЦИОНАЛЬНАЯ ТРАЕКТОРИЯ:\n`;
+      recentMoods.results.forEach((mood, i) => {
+        const date = mood.created_at
+          ? new Date(mood.created_at).toLocaleDateString('ru-RU')
+          : `день ${i + 1}`;
+        // поддерживаем оба варианта названия поля: context или mood_id
+        const moodId = mood.context || mood.mood_id || mood.mood || mood.type || '';
+        const humanMood = moodTranslation[moodId] || moodId || '(эмоция)';
+        globalContextText += `${i + 1}. [${date}] Эмоция: ${humanMood}\n`;
+      });
+      globalContextText += '\n';
+    }
+
+    // ========== 4. ГЕНЕРИРУЕМ КВИЗ ЧЕРЕЗ DEEPSEEK ==========
+    
+    const quizPrompt = `
+Ты — психолог-аналитик сновидений. Перед тобой полная картина внутренней жизни человека за последние дни.
+
+${globalContextText}
+
+---
+
+ЗАДАЧА:
+Создай квиз из 5 вопросов, которые помогут человеку глубже осознать:
+- Повторяющиеся символы и образы
+- Эмоциональные переходы между днями
+- Связь между снами, дневными событиями и творчеством
+- Скрытые паттерны и внутренние конфликты
+- Динамику психологического состояния
+
+ПРАВИЛА:
+1. Вопросы НЕ про факты ("Что ты видел?"), а про СМЫСЛ ("Что это значит для тебя?")
+2. Используй материал из РАЗНЫХ источников (сны + дневник + арт + настроения)
+3. Ищи СВЯЗИ между событиями разных дней
+4. Задавай вопросы о КОНТРАСТАХ и ПОВТОРЕНИЯХ
+5. Один вопрос может быть открытым (type: "reflection"), остальные — с вариантами
+6. Пиши все вопросы и варианты ответов на живом русском языке, избегай технических терминов (например, не используй internal IDs)
+
+ФОРМАТ ОТВЕТА (строго JSON):
+{
+  "questions": [
+    {
+      "type": "choice",
+      "text": "Какой символ повторяется в твоих снах последние 3 дня?",
+      "options": ["Вода", "Свет", "Закрытые двери"],
+      "correctIndex": 1
+    },
+    {
+      "type": "reflection",
+      "text": "Как изменилось твоё внутреннее состояние с момента первого сна до сегодняшнего дня?"
+    }
+  ]
+}
+
+Генерируй вопросы, которые заставят задуматься и увидеть то, что раньше было незаметно.
+`;
+
+    const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { 
+            role: 'system', 
+            content: 'Ты — эксперт по психологии сновидений и символическому анализу. Твои вопросы помогают людям видеть глубинные паттерны своей психики.' 
+          },
+          { role: 'user', content: quizPrompt }
+        ],
+        max_tokens: 1500,
+        temperature: 0.8,
+        stream: false
+      })
+    });
+
+    const responseBody = await deepseekResponse.json();
+    let quizJson = responseBody?.choices?.[0]?.message?.content || '{}';
+    quizJson = quizJson.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+    const quizData = JSON.parse(quizJson);
+
+    const quizId = crypto.randomUUID();
+
+    await env.DB.prepare(
+      `INSERT INTO quizzes (id, user, source_type, source_id, block_id, artwork_id, questions, created_at, total_questions)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      quizId,
+      userEmail,
+      sourceType,
+      sourceId,
+      blockId || null,
+      artworkId || null,
+      JSON.stringify(quizData.questions),
+      now,
+      quizData.questions.length
+    ).run();
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 10, 60000);
+
+    return new Response(
+      JSON.stringify({
+        quizId,
+        questions: quizData.questions,
+        contextTitle,
+        contextText,
+        sourceType,
+        sourceId
+      }),
+      { status: 200, headers }
+    );
+
+  } catch (e) {
+    console.error('[POST /generate_quiz] error:', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+// POST /submit_quiz - отправка ответов на квиз
+if (url.pathname === '/submit_quiz' && request.method === 'POST') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const body = await request.json();
+    const { quizId, answers } = body; // answers = [{ questionIndex, userAnswer }]
+
+    if (!quizId || !Array.isArray(answers)) {
+      return new Response(
+        JSON.stringify({ error: 'quizId and answers required' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    // Получаем квиз
+    const quiz = await env.DB.prepare(
+      'SELECT questions, total_questions FROM quizzes WHERE id = ? AND user = ?'
+    ).bind(quizId, userEmail).first();
+
+    if (!quiz) {
+      return new Response(
+        JSON.stringify({ error: 'Quiz not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    // Безопасный парсинг questions
+    let questions;
+    try {
+      questions = typeof quiz.questions === 'string'
+        ? JSON.parse(quiz.questions)
+        : quiz.questions;
+    } catch (err) {
+      console.error('[POST /submit_quiz] JSON parse error, quiz.questions =', quiz.questions, err);
+      return new Response(
+        JSON.stringify({ error: 'invalid_questions_json' }),
+        { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    let score = 0;
+    const now = Date.now();
+
+    // Сохраняем ответы и считаем score
+    for (const answer of answers) {
+      const question = questions[answer.questionIndex];
+
+      if (!question) {
+        console.error('[POST /submit_quiz] question not found for index', answer.questionIndex);
+        continue;
+      }
+
+      const correctIndex =
+        typeof question.correctIndex === 'number'
+          ? question.correctIndex
+          : typeof question.correct_option_index === 'number'
+            ? question.correct_option_index
+            : null;
+
+      if (correctIndex === null) {
+        console.error('[POST /submit_quiz] question has no correctIndex field:', question);
+      }
+
+      const isCorrect = correctIndex === parseInt(answer.userAnswer) ? 1 : 0;
+      score += isCorrect;
+
+      const answerId = crypto.randomUUID();
+      await env.DB.prepare(
+        `INSERT INTO quiz_answers (id, quiz_id, user, question_index, question_text, user_answer, is_correct, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        answerId,
+        quizId,
+        userEmail,
+        answer.questionIndex,
+        question.text || question.question || '',
+        answer.userAnswer,
+        isCorrect,
+        now
+      ).run();
+    }
+
+    // Обновляем квиз
+    await env.DB.prepare(
+      'UPDATE quizzes SET completed_at = ?, score = ? WHERE id = ? AND user = ?'
+    ).bind(now, score, quizId, userEmail).run();
+
+    // Обновляем статистику
+    const stats = await env.DB.prepare(
+      'SELECT * FROM quiz_stats WHERE user = ?'
+    ).bind(userEmail).first();
+
+    if (stats) {
+      await env.DB.prepare(
+        `UPDATE quiz_stats SET 
+         total_completed = total_completed + 1,
+         total_score = total_score + ?,
+         last_quiz_date = ?,
+         updated_at = ?
+         WHERE user = ?`
+      ).bind(score, now, now, userEmail).run();
+    } else {
+      await env.DB.prepare(
+        `INSERT INTO quiz_stats (user, total_quizzes, total_completed, total_score, last_quiz_date, updated_at)
+         VALUES (?, 1, 1, ?, ?, ?)`
+      ).bind(userEmail, score, now, now).run();
+    }
+
+    // Начисляем depthScore (ИСПРАВЛЕНО: убрали колонку id)
+    const depthBonus = score * 10; // 10 очков за правильный ответ
+    const dayTimestamp = Math.floor(now / 1000); // конвертируем в секунды для day
+    
+    await env.DB.prepare(
+      `INSERT INTO user_depth_history (user_email, day, rating)
+       VALUES (?, ?, ?)`
+    ).bind(userEmail, dayTimestamp, depthBonus).run();
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 20, 60000);
+
+    return new Response(
+      JSON.stringify({
+        score,
+        totalQuestions: quiz.total_questions,
+        depthBonus
+      }),
+      { status: 200, headers }
+    );
+
+  } catch (e) {
+    console.error('[POST /submit_quiz] error:', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+// GET /quiz_stats - статистика квизов
+if (url.pathname === '/quiz_stats' && request.method === 'GET') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const stats = await env.DB.prepare(
+      'SELECT * FROM quiz_stats WHERE user = ?'
+    ).bind(userEmail).first();
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000);
+
+    return new Response(
+      JSON.stringify(stats || {
+        total_quizzes: 0,
+        total_completed: 0,
+        total_score: 0,
+        streak_days: 0
+      }),
+      { status: 200, headers }
+    );
+
+  } catch (e) {
+    console.error('[GET /quiz_stats] error:', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json', ...corsHeaders }

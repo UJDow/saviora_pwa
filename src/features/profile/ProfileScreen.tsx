@@ -1,5 +1,5 @@
 // src/screens/ProfileScreen.tsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -7,8 +7,13 @@ import {
   Avatar,
   CircularProgress,
   Paper,
+  Dialog,
 } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
+
+import { generateQuiz, submitQuiz } from 'src/utils/api';
+import type { Quiz, QuizAnswer, QuizResult } from 'src/utils/api';
+import { QuizModal } from 'src/screens/quiz/QuizModal';
 
 import { alpha } from '@mui/material/styles';
 
@@ -65,6 +70,10 @@ export function ProfileScreen() {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error'>('success');
+
+ const [quizData, setQuizData] = useState<Quiz | null>(null);
+const [showQuizModal, setShowQuizModal] = useState(false);
+const [isGenerating, setIsGenerating] = useState(false);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -185,6 +194,58 @@ useEffect(() => {
     setSnackbarMessage(message);
     setSnackbarSeverity(severity);
     setSnackbarOpen(true);
+  };
+
+  // --- ЛОГИКА КВИЗА ---
+
+  // Определяем, какой квиз предложить пользователю
+  const autoQuizData = useMemo(() => {
+    // 1. Если есть свежий сон с интерпретацией
+    const dreamWithInterp = dreams.find(d => d.globalFinalInterpretation);
+    if (dreamWithInterp) return { source: 'dream', id: dreamWithInterp.id, label: 'Квиз по сну' };
+
+    // 2. Если есть просто сон
+    if (dreams.length > 0) return { source: 'dream', id: dreams[0].id, label: 'Вспомни сон' };
+
+    // 3. Если есть беседа
+    if (dailyConvos.length > 0) return { source: 'daily', id: dailyConvos[0].id, label: 'Анализ беседы' };
+
+    // 4. По умолчанию
+    return { source: 'general', id: 'general', label: 'Ежедневный квиз' };
+  }, [dreams, dailyConvos]);
+
+  // Генерация квиза
+  const handleOpenQuiz = async () => {
+    setIsGenerating(true);
+    try {
+      const quiz = await generateQuiz(autoQuizData.source as any, autoQuizData.id);
+      setQuizData(quiz);
+      setShowQuizModal(true);
+    } catch (e) {
+      console.error('Quiz generation error:', e);
+      showSnackbar('Не удалось создать квиз. Попробуй ещё раз.', 'error');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Отправка ответов
+  const handleSubmitQuiz = async (quizId: string, answers: QuizAnswer[]) => {
+    return await submitQuiz(quizId, answers);
+  };
+
+  // Завершение квиза
+  const handleFinishQuiz = (result: QuizResult) => {
+    console.log('Quiz completed:', result);
+    setShowQuizModal(false);
+    
+    showSnackbar(
+      `🎉 Квиз завершён!\n\nПравильных ответов: ${result.score}/${result.totalQuestions}\nБонус глубины: +${result.depthBonus} очков`,
+      'success'
+    );
+    
+    // Здесь можно обновить depthScore на фронте или перезагрузить данные
+    // fetchUserDepthState();
   };
 
   const handleMoodSelect = async (moodId: string): Promise<void> => {
@@ -697,6 +758,77 @@ useEffect(() => {
     pb: 4,
   }}
 >
+
+  {/* КАРТОЧКА КВИЗА */}
+        {/* КАРТОЧКА КВИЗА */}
+<motion.div
+  initial={{ opacity: 0, y: 10 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ delay: 0.2 }}
+>
+  <Box
+  onClick={isGenerating ? undefined : handleOpenQuiz}
+  sx={{
+    mx: 'auto',
+    mb: 4,
+    maxWidth: 420,
+    p: 2,
+    borderRadius: 4,
+    background: 'rgba(255,255,255,0.08)',
+    backdropFilter: 'blur(10px)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
+    cursor: isGenerating ? 'not-allowed' : 'pointer',
+    transition: 'all 0.2s',
+    opacity: isGenerating ? 0.7 : 1,
+    ...(isGenerating
+      ? {}
+      : {
+          '&:active': {
+            transform: 'scale(0.98)',
+            background: 'rgba(255,255,255,0.12)',
+          },
+        }),
+  }}
+>
+    <Box
+      sx={{
+        width: 48,
+        height: 48,
+        borderRadius: 3,
+        background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '1.5rem',
+        boxShadow: '0 4px 15px rgba(255,215,0,0.3)',
+        position: 'relative',
+      }}
+    >
+      {isGenerating ? (
+        <CircularProgress size={24} thickness={5} sx={{ color: '#fff' }} />
+      ) : (
+        <>✨</>
+      )}
+    </Box>
+    <Box sx={{ flexGrow: 1 }}>
+      <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: 1 }}>
+        {autoQuizData.label}
+      </Typography>
+      <Typography variant="body1" sx={{ fontWeight: 600, color: '#fff' }}>
+        {isGenerating ? 'Создаю квиз...' : 'Проверь свою осознанность'}
+      </Typography>
+    </Box>
+    {!isGenerating && (
+      <Typography sx={{ fontSize: '0.8rem', color: '#FFD700', fontWeight: 700 }}>
+        +50 XP
+      </Typography>
+    )}
+  </Box>
+</motion.div>
+
           <AnimatePresence mode="wait">
   {selectedDreamDate && !inputOpen ? (
     <motion.div
@@ -869,6 +1001,36 @@ useEffect(() => {
           </Box>
         </Paper>
       </Snackbar>
+      {/* Модалка квиза */}
+{showQuizModal && quizData && (
+  <Dialog
+    fullScreen
+    open={showQuizModal}
+    onClose={() => setShowQuizModal(false)}
+    PaperProps={{
+      sx: { 
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        boxShadow: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        p: 2,
+      }
+    }}
+  >
+    {quizData && (
+  <QuizModal
+    quizId={quizData.quizId}
+    questions={quizData.questions}
+    contextTitle={quizData.contextTitle} // Передаем заголовок
+    contextText={quizData.contextText}   // Передаем текст
+    onClose={() => setShowQuizModal(false)}
+    onFinish={handleFinishQuiz}
+    onSubmit={handleSubmitQuiz}
+  />
+)}
+  </Dialog>
+)}
     </Box>
   );
 }

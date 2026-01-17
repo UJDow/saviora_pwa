@@ -1059,3 +1059,60 @@ export const getRollingSummary = (dreamId: string, blockId: string, artworkId?: 
     {},
     true
   );
+
+  // === QUIZ API ===
+
+export interface QuizQuestion {
+  type: 'choice' | 'reflection';
+  text: string;
+  options?: string[];
+  correctIndex?: number;
+}
+
+export interface Quiz {
+  quizId: string;
+  questions: QuizQuestion[];
+  sourceType: string;
+  sourceId: string;
+  contextTitle?: string; 
+  contextText?: string;
+}
+
+export interface QuizAnswer {
+  questionIndex: number;
+  userAnswer: string;
+}
+
+export interface QuizResult {
+  score: number;
+  totalQuestions: number;
+  depthBonus: number;
+}
+
+export interface QuizStats {
+  total_quizzes: number;
+  total_completed: number;
+  total_score: number;
+  streak_days: number;
+  last_quiz_date?: number;
+}
+
+export const generateQuiz = (
+  sourceType: 'dream' | 'block' | 'final' | 'daily' | 'artwork' | 'general',
+  sourceId: string,
+  blockId?: string,
+  artworkId?: string
+) =>
+  request<Quiz>('/generate_quiz', {
+    method: 'POST',
+    body: JSON.stringify({ sourceType, sourceId, blockId, artworkId }),
+  }, true);
+
+export const submitQuiz = (quizId: string, answers: QuizAnswer[]) =>
+  request<QuizResult>('/submit_quiz', {
+    method: 'POST',
+    body: JSON.stringify({ quizId, answers }),
+  }, true);
+
+export const getQuizStats = () =>
+  request<QuizStats>('/quiz_stats', {}, true);
