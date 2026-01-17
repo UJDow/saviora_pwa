@@ -159,12 +159,14 @@ export function QuizModal({
     <Box sx={{ 
       width: '100%', 
       maxWidth: 520, 
-      height: '100vh', // Используем vh для четкого ограничения в эмуляторе
+      // ВАЖНО: Используем 100%, чтобы не вылезать за пределы родительского Dialog
+      height: '100%', 
       display: 'flex', 
       flexDirection: 'column', 
       position: 'relative',
-      // Убираем overflow: hidden отсюда, чтобы не блокировать тач-события
-      pt: '80px', // Отступ под твой хедер Saviora
+      // ВАЖНО: Просто большой отступ сверху.
+      // 80px - база, + safe-area на всякий случай для айфонов
+      pt: 'calc(80px + env(safe-area-inset-top))', 
     }}>
       {/* Шапка модалки */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2, flexShrink: 0 }}>
@@ -180,10 +182,9 @@ export function QuizModal({
         flex: 1, 
         overflowY: 'auto', 
         px: 2, 
-        pb: '150px', // Запас для кнопки внизу
-        display: 'block', // Блочный тип лучше для нативного скролла
+        pb: '150px', 
+        display: 'block', 
         WebkitOverflowScrolling: 'touch',
-        /* Скрываем скроллбар */
         scrollbarWidth: 'none',
         '&::-webkit-scrollbar': { display: 'none' },
         '-ms-overflow-style': 'none',
