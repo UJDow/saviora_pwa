@@ -1,5 +1,5 @@
 // src/dreams/DreamsByDateScreen.tsx
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -10,12 +10,19 @@ import {
   Button,
   Stack,
   Chip,
+  Menu,
+  MenuItem,
+  IconButton,
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { alpha } from '@mui/material/styles';
 import type { CalendarStyles } from 'src/features/profile/calendar/MonthView';
 import type { Dream as ApiDream, DailyConvo as ApiDailyConvo } from 'src/utils/api';
 import NightlightRoundIcon from '@mui/icons-material/NightlightRound';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+
+import { PublishButton } from 'src/features/feed/PublishButton';
+import { useFeed } from 'src/features/feed/useFeed';
 
 type NormalizedDream = Omit<ApiDream, 'date'> & { date: number };
 type NormalizedDailyConvo = Omit<ApiDailyConvo, 'date'> & { date: number };
@@ -27,7 +34,6 @@ interface DreamsByDateScreenProps {
   dreams?: NormalizedDream[];
   dailyConvos?: NormalizedDailyConvo[];
   calendarStyles?: CalendarStyles;
-  // Добавляем эти два:
   onNotify?: (message: string, severity: 'success' | 'error') => void;
   onRequestAddDream?: (dateStr: string) => void;
 }
@@ -39,6 +45,7 @@ type TimelineItem =
       timestamp: number;
       title?: string;
       description?: string;
+      order?: number; // 🔥 добавили для сортировки
     }
   | {
       kind: 'daily';
@@ -46,13 +53,14 @@ type TimelineItem =
       timestamp: number;
       title?: string;
       description?: string;
+      order?: number; // 🔥 добавили для сортировки
     };
 
 const pastelGlassTokens = {
   dream: {
     chipBg: 'linear-gradient(135deg, rgba(255, 243, 204, 0.25), rgba(255, 224, 230, 0.22))',
     chipBorder: 'rgba(255, 243, 204, 0.3)',
-    chipColor: '#ffffff', // белый текст
+    chipColor: '#ffffff',
     cardBg: 'rgba(255, 243, 204, 0.15)',
     cardBorder: 'rgba(255, 224, 230, 0.25)',
     cardHoverBg: 'rgba(255, 243, 204, 0.22)',
@@ -61,7 +69,7 @@ const pastelGlassTokens = {
   daily: {
     chipBg: 'linear-gradient(135deg, rgba(204, 229, 255, 0.25), rgba(204, 255, 229, 0.22))',
     chipBorder: 'rgba(204, 229, 255, 0.3)',
-    chipColor: '#ffffff', // белый текст
+    chipColor: '#ffffff',
     cardBg: 'rgba(204, 229, 255, 0.15)',
     cardBorder: 'rgba(204, 255, 229, 0.25)',
     cardHoverBg: 'rgba(204, 229, 255, 0.22)',
@@ -83,6 +91,55 @@ export function DreamsByDateScreen({
   const dateStr = propDate || params.date;
   const navigate = useNavigate();
   const theme = useTheme();
+  
+  // Хук для публикации/снятия публикации
+  const { publishDream, unpublishDream } = useFeed();
+
+  // 🔥 ЛОКАЛЬНОЕ СОСТОЯНИЕ ДЛЯ СНОВ
+  const [localDreams, setLocalDreams] = useState(dreams);
+
+  // 🔥 СИНХРОНИЗАЦИЯ С ПРОПСАМИ
+  useEffect(() => {
+    setLocalDreams(dreams);
+  }, [dreams]);
+
+  // Состояние для меню
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectedDreamId, setSelectedDreamId] = useState<string | null>(null);
+
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, dreamId: string) => {
+    event.stopPropagation();
+    setAnchorEl(event.currentTarget);
+    setSelectedDreamId(dreamId);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+    setSelectedDreamId(null);
+  };
+
+  // 🔥 ОБРАБОТЧИК УСПЕШНОЙ ПУБЛИКАЦИИ/СНЯТИЯ
+  const handlePublishSuccess = (dreamId: string, isPublishing: boolean) => {
+    setLocalDreams((prev) =>
+      prev.map((d) =>
+        d.id === dreamId
+          ? {
+              ...d,
+              is_public: isPublishing,
+              published_at: isPublishing ? Date.now() : null,
+            }
+          : d
+      )
+    );
+
+    handleMenuClose();
+    onNotify?.(
+      isPublishing
+        ? 'Сон успешно опубликован! ✨'
+        : 'Сон снят с публикации',
+      'success'
+    );
+  };
 
   const mergedStyles: CalendarStyles = {
     containerBg: alpha('#ffffff', 0.06),
@@ -114,6 +171,7 @@ export function DreamsByDateScreen({
     }
   }, [dateStr]);
 
+  // 🔥 ИСПОЛЬЗУЕМ localDreams ВМЕСТО dreams + СОРТИРОВКА ПО ПОРЯДКУ
   const items = useMemo<TimelineItem[]>(() => {
     const asMs = (value: number | string): number => {
       if (typeof value === 'number') {
@@ -127,7 +185,7 @@ export function DreamsByDateScreen({
       return Number.isNaN(parsed) ? Date.now() : parsed;
     };
 
-    const mappedDreams: TimelineItem[] = (dreams ?? []).map((dream) => {
+    const mappedDreams: TimelineItem[] = (localDreams ?? []).map((dream, index) => {
       const title = dream.title?.trim() ?? '';
       const body = dream.dreamText?.trim() ?? '';
 
@@ -137,10 +195,11 @@ export function DreamsByDateScreen({
         timestamp: asMs(dream.date),
         title,
         description: body,
+        order: index, // 🔥 сохраняем порядок из массива
       };
     });
 
-    const mappedDaily: TimelineItem[] = (dailyConvos ?? []).map((convo) => {
+    const mappedDaily: TimelineItem[] = (dailyConvos ?? []).map((convo, index) => {
       const title = convo.title?.trim() ?? '';
       const notes = convo.notes?.trim() ?? '';
 
@@ -150,11 +209,18 @@ export function DreamsByDateScreen({
         timestamp: asMs(convo.date),
         title,
         description: notes,
+        order: index, // 🔥 сохраняем порядок из массива
       };
     });
 
-    return [...mappedDreams, ...mappedDaily].sort((a, b) => b.timestamp - a.timestamp);
-  }, [dreams, dailyConvos]);
+    // 🔥 Сортировка: сначала по timestamp (убывание), потом по order (возрастание)
+    return [...mappedDreams, ...mappedDaily].sort((a, b) => {
+      const timeDiff = b.timestamp - a.timestamp;
+      if (timeDiff !== 0) return timeDiff;
+      // Если timestamp одинаковый, сортируем по order (новые сверху = меньший индекс)
+      return (a.order ?? 0) - (b.order ?? 0);
+    });
+  }, [localDreams, dailyConvos]);
 
   const cardSx = useMemo(
     () =>
@@ -175,233 +241,300 @@ export function DreamsByDateScreen({
   );
 
   return (
-  <Box
-    component={usePaper ? Paper : 'div'}
-    elevation={usePaper ? 6 : undefined}
-    sx={{
-      p: { xs: 2, sm: 3 },
-      mt: usePaper ? 2 : 0,
-      maxWidth: 840,
-      width: '100%',
-      mx: 'auto',
-      borderRadius: 3,
-      ...cardSx,
-    }}
-  >
-    <Stack
-      direction={{ xs: 'column', sm: 'row' }}
-      alignItems={{ xs: 'flex-start', sm: 'center' }}
-      justifyContent="space-between"
-      spacing={1.5}
-      sx={{ mb: items.length ? 1.5 : 0.5 }}
+    <Box
+      component={usePaper ? Paper : 'div'}
+      elevation={usePaper ? 6 : undefined}
+      sx={{
+        p: { xs: 2, sm: 3 },
+        mt: usePaper ? 2 : 0,
+        maxWidth: 840,
+        width: '100%',
+        mx: 'auto',
+        borderRadius: 3,
+        ...cardSx,
+      }}
     >
-      <Typography
-        variant="h6"
-        sx={{
-          fontWeight: 600,
-          color: alpha('#ffffff', 0.95),
-          letterSpacing: 0.2,
-        }}
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        justifyContent="space-between"
+        spacing={1.5}
+        sx={{ mb: items.length ? 1.5 : 0.5 }}
       >
-        Выбранные события
-      </Typography>
-
-      <Stack direction="row" spacing={1} alignItems="center">
-        {readableDate && (
-          <Chip
-            label={readableDate}
-            size="small"
-            sx={{
-              borderColor: alpha('#ffffff', 0.22),
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.16))',
-              color: alpha('#ffffff', 0.88),
-              backdropFilter: 'blur(10px)',
-              '& .MuiChip-label': { px: 1.5, fontWeight: 500 },
-            }}
-            variant="outlined"
-          />
-        )}
-
-        {onBack && (
-          <Button
-            onClick={onBack}
-            variant="text"
-            size="small"
-            sx={{
-              color: alpha('#ffffff', 0.9),
-              textTransform: 'none',
-              fontWeight: 500,
-              backdropFilter: 'blur(6px)',
-              borderRadius: 1.5,
-              px: 1.5,
-              py: 0.5,
-              background: 'linear-gradient(135deg, rgba(120,140,255,0.08), rgba(150,110,250,0.08))',
-              '&:hover': {
-                background: 'linear-gradient(135deg, rgba(120,140,255,0.14), rgba(150,110,250,0.14))',
-              },
-            }}
-          >
-            К календарю
-          </Button>
-        )}
-      </Stack>
-    </Stack>
-
-    {!items.length ? (
-      <Box
-        sx={{
-          py: 4,
-          px: 2,
-          borderRadius: 2,
-          border: `1px dashed ${alpha('#ffffff', 0.18)}`,
-          background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(210,195,255,0.06))',
-          backdropFilter: 'blur(12px)',
-          textAlign: 'center',
-        }}
-      >
-        <Typography variant="body1" sx={{ color: alpha('#ffffff', 0.82), fontWeight: 500 }}>
-          В этот день ничего не записано.
-        </Typography>
-
-        <Typography variant="body2" sx={{ color: alpha('#ffffff', 0.6), mt: 0.5, mb: 2 }}>
-          Создайте сон или тему беседы, чтобы увидеть их здесь.
-        </Typography>
-
-        <Button
-          variant="contained"
-          startIcon={<NightlightRoundIcon />}
-          onClick={() => {
-            if (!dateStr) return;
-
-            const [day, month, year] = dateStr.split('.').map(Number);
-            const targetDate = new Date(year, month - 1, day);
-            targetDate.setHours(0, 0, 0, 0);
-
-            const now = new Date();
-            now.setHours(0, 0, 0, 0);
-
-            if (targetDate.getTime() > now.getTime()) {
-              onNotify?.('Будущее ещё не наступило… 🌌', 'error');
-              return;
-            }
-
-            onRequestAddDream?.(dateStr);
-          }}
+        <Typography
+          variant="h6"
           sx={{
-            mt: 1,
-            textTransform: 'none',
             fontWeight: 600,
-            background: 'linear-gradient(135deg, rgba(120,140,255,0.85), rgba(150,110,250,0.85))',
-            color: '#fff',
-            px: 3,
-            py: 1,
-            borderRadius: 2,
-            '&:hover': {
-              background: 'linear-gradient(135deg, rgba(120,140,255,0.95), rgba(150,110,250,0.95))',
-            },
+            color: alpha('#ffffff', 0.95),
+            letterSpacing: 0.2,
           }}
         >
-          Добавить сновидение
-        </Button>
-      </Box>
-    ) : (
-      <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-        {items.map((item) => {
-          const tokens = pastelGlassTokens[item.kind];
-          const targetRoute = item.kind === 'dream' ? `/dreams/${item.id}` : `/daily/${item.id}`;
-          const label = item.kind === 'dream' ? 'Сновидение' : 'Беседа';
+          Выбранные события
+        </Typography>
 
-          return (
-            <ListItem
-              key={`${item.kind}-${item.id}`}
-              onClick={() => navigate(targetRoute)}
+        <Stack direction="row" spacing={1} alignItems="center">
+          {readableDate && (
+            <Chip
+              label={readableDate}
+              size="small"
               sx={{
-                borderRadius: 3,
-                px: { xs: 1.45, sm: 1.85 },
-                py: { xs: 1.4, sm: 1.65 },
-                background: tokens.cardBg,
-                border: `1px solid ${tokens.cardBorder}`,
-                boxShadow: item.kind === 'dream'
-                  ? '0 0 20px 6px rgba(235, 165, 200, 0.10)'
-                  : '0 0 20px 6px rgba(160, 185, 230, 0.10)',
-                cursor: 'pointer',
-                transition: 'transform 180ms ease, background 160ms ease, box-shadow 180ms ease',
-                display: 'block',
-                backdropFilter: 'blur(20px)',
-                WebkitBackdropFilter: 'blur(20px)',
+                borderColor: alpha('#ffffff', 0.22),
+                background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(200,220,255,0.16))',
+                color: alpha('#ffffff', 0.88),
+                backdropFilter: 'blur(10px)',
+                '& .MuiChip-label': { px: 1.5, fontWeight: 500 },
+              }}
+              variant="outlined"
+            />
+          )}
+
+          {onBack && (
+            <Button
+              onClick={onBack}
+              variant="text"
+              size="small"
+              sx={{
+                color: alpha('#ffffff', 0.9),
+                textTransform: 'none',
+                fontWeight: 500,
+                backdropFilter: 'blur(6px)',
+                borderRadius: 1.5,
+                px: 1.5,
+                py: 0.5,
+                background: 'linear-gradient(135deg, rgba(120,140,255,0.08), rgba(150,110,250,0.08))',
                 '&:hover': {
-                  transform: 'translateY(-3px)',
-                  background: tokens.cardHoverBg,
-                  boxShadow: item.kind === 'dream'
-                    ? '0 0 28px 10px rgba(235, 165, 200, 0.14)'
-                    : '0 0 28px 10px rgba(160, 185, 230, 0.14)',
-                },
-                '&:focus-visible': {
-                  outline: '2px solid rgba(255, 255, 255, 0.6)',
-                  outlineOffset: 2,
+                  background: 'linear-gradient(135deg, rgba(120,140,255,0.14), rgba(150,110,250,0.14))',
                 },
               }}
             >
-              <Stack spacing={1.2}>
-                <Chip
-                  label={label}
-                  size="small"
-                  sx={{
-                    fontWeight: 600,
-                    letterSpacing: 0.3,
-                    border: `1px solid ${tokens.chipBorder}`,
-                    background: tokens.chipBg,
-                    color: '#ffffff',
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                    width: 'fit-content',
-                    borderRadius: 2.5,
-                    boxShadow: 'inset 0 -6px 18px rgba(0,0,0,0.06)',
-                    '& .MuiChip-label': {
-                      px: 2.2,
-                      py: 0.4,
-                      fontSize: 13,
-                    },
-                    '&:hover': {
-                      transform: 'translateY(-1px)',
-                      background: 'linear-gradient(135deg, rgba(255,255,255,0.095), rgba(255,255,255,0.045))',
-                    },
-                  }}
-                />
-                {item.title && (
-                  <Typography
-                    variant="body1"
+              К календарю
+            </Button>
+          )}
+        </Stack>
+      </Stack>
+
+      {!items.length ? (
+        <Box
+          sx={{
+            py: 4,
+            px: 2,
+            borderRadius: 2,
+            border: `1px dashed ${alpha('#ffffff', 0.18)}`,
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.08), rgba(210,195,255,0.06))',
+            backdropFilter: 'blur(12px)',
+            textAlign: 'center',
+          }}
+        >
+          <Typography variant="body1" sx={{ color: alpha('#ffffff', 0.82), fontWeight: 500 }}>
+            В этот день ничего не записано.
+          </Typography>
+
+          <Typography variant="body2" sx={{ color: alpha('#ffffff', 0.6), mt: 0.5, mb: 2 }}>
+            Создайте сон или тему беседы, чтобы увидеть их здесь.
+          </Typography>
+
+          <Button
+            variant="contained"
+            startIcon={<NightlightRoundIcon />}
+            onClick={() => {
+              if (!dateStr) return;
+
+              const [day, month, year] = dateStr.split('.').map(Number);
+              const targetDate = new Date(year, month - 1, day);
+              targetDate.setHours(0, 0, 0, 0);
+
+              const now = new Date();
+              now.setHours(0, 0, 0, 0);
+
+              if (targetDate.getTime() > now.getTime()) {
+                onNotify?.('Будущее ещё не наступило… 🌌', 'error');
+                return;
+              }
+
+              onRequestAddDream?.(dateStr);
+            }}
+            sx={{
+              mt: 1,
+              textTransform: 'none',
+              fontWeight: 600,
+              background: 'linear-gradient(135deg, rgba(120,140,255,0.85), rgba(150,110,250,0.85))',
+              color: '#fff',
+              px: 3,
+              py: 1,
+              borderRadius: 2,
+              '&:hover': {
+                background: 'linear-gradient(135deg, rgba(120,140,255,0.95), rgba(150,110,250,0.95))',
+              },
+            }}
+          >
+            Добавить сновидение
+          </Button>
+        </Box>
+      ) : (
+        <List disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          {items.map((item) => {
+            const tokens = pastelGlassTokens[item.kind];
+            const targetRoute = item.kind === 'dream' ? `/dreams/${item.id}` : `/daily/${item.id}`;
+            const label = item.kind === 'dream' ? 'Сновидение' : 'Беседа';
+
+            return (
+              <ListItem
+                key={`${item.kind}-${item.id}`}
+                sx={{
+                  borderRadius: 3,
+                  px: { xs: 1.45, sm: 1.85 },
+                  py: { xs: 1.4, sm: 1.65 },
+                  background: tokens.cardBg,
+                  border: `1px solid ${tokens.cardBorder}`,
+                  boxShadow: item.kind === 'dream'
+                    ? '0 0 20px 6px rgba(235, 165, 200, 0.10)'
+                    : '0 0 20px 6px rgba(160, 185, 230, 0.10)',
+                  cursor: 'pointer',
+                  transition: 'transform 180ms ease, background 160ms ease, box-shadow 180ms ease',
+                  display: 'block',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                  position: 'relative',
+                  '&:hover': {
+                    transform: 'translateY(-3px)',
+                    background: tokens.cardHoverBg,
+                    boxShadow: item.kind === 'dream'
+                      ? '0 0 28px 10px rgba(235, 165, 200, 0.14)'
+                      : '0 0 28px 10px rgba(160, 185, 230, 0.14)',
+                  },
+                  '&:focus-visible': {
+                    outline: '2px solid rgba(255, 255, 255, 0.6)',
+                    outlineOffset: 2,
+                  },
+                }}
+              >
+                {/* Кнопка меню только для снов */}
+                {item.kind === 'dream' && (
+                  <IconButton
+                    onClick={(e) => handleMenuOpen(e, item.id)}
                     sx={{
-                      fontWeight: 600,
-                      color: alpha('#ffffff', 0.94),
-                      lineHeight: 1.42,
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      color: 'rgba(255,255,255,0.7)',
+                      zIndex: 10,
+                      '&:hover': {
+                        color: 'rgba(255,255,255,1)',
+                        background: 'rgba(255,255,255,0.1)',
+                      },
                     }}
+                    size="small"
                   >
-                    {item.title}
-                  </Typography>
+                    <MoreVertIcon fontSize="small" />
+                  </IconButton>
                 )}
 
-                {item.description && item.description !== '—' && (
-                  <Typography
-                    variant="body2"
+                <Stack spacing={1.2} onClick={() => navigate(targetRoute)}>
+                  <Chip
+                    label={label}
+                    size="small"
                     sx={{
-                      color: alpha('#ffffff', 0.88),
-                      lineHeight: 1.55,
-                      display: '-webkit-box',
-                      WebkitLineClamp: { xs: 2, sm: 3 },
-                      WebkitBoxOrient: 'vertical',
-                      overflow: 'hidden',
+                      fontWeight: 600,
+                      letterSpacing: 0.3,
+                      border: `1px solid ${tokens.chipBorder}`,
+                      background: tokens.chipBg,
+                      color: '#ffffff',
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      width: 'fit-content',
+                      borderRadius: 2.5,
+                      boxShadow: 'inset 0 -6px 18px rgba(0,0,0,0.06)',
+                      '& .MuiChip-label': {
+                        px: 2.2,
+                        py: 0.4,
+                        fontSize: 13,
+                      },
+                      '&:hover': {
+                        transform: 'translateY(-1px)',
+                        background: 'linear-gradient(135deg, rgba(255,255,255,0.095), rgba(255,255,255,0.045))',
+                      },
                     }}
-                  >
-                    {item.description}
-                  </Typography>
-                )}
-              </Stack>
-            </ListItem>
-          );
-        })}
-      </List>
-    )}
-  </Box>
-);
+                  />
+                  {item.title && (
+                    <Typography
+                      variant="body1"
+                      sx={{
+                        fontWeight: 600,
+                        color: alpha('#ffffff', 0.94),
+                        lineHeight: 1.42,
+                      }}
+                    >
+                      {item.title}
+                    </Typography>
+                  )}
+
+                  {item.description && item.description !== '—' && (
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: alpha('#ffffff', 0.88),
+                        lineHeight: 1.55,
+                        display: '-webkit-box',
+                        WebkitLineClamp: { xs: 2, sm: 3 },
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {item.description}
+                    </Typography>
+                  )}
+                </Stack>
+              </ListItem>
+            );
+          })}
+        </List>
+      )}
+
+      {/* Меню публикации */}
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleMenuClose}
+        PaperProps={{
+          sx: {
+            background: 'transparent',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 2,
+            minWidth: 220,
+            boxShadow: 'none',
+          },
+        }}
+      >
+        {selectedDreamId && (
+          <MenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+            sx={{
+              p: 0,
+              '&:hover': {
+                background: 'transparent',
+              },
+            }}
+          >
+            <PublishButton
+              dreamId={selectedDreamId}
+              isPublic={
+                Boolean(localDreams.find((d) => d.id === selectedDreamId)?.is_public)
+              }
+              onPublish={async (id) => {
+                await publishDream(id);
+                handlePublishSuccess(id, true);
+              }}
+              onUnpublish={async (id) => {
+                await unpublishDream(id);
+                handlePublishSuccess(id, false);
+              }}
+            />
+          </MenuItem>
+        )}
+      </Menu>
+    </Box>
+  );
 }

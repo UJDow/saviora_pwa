@@ -10,6 +10,8 @@ import {
   Dialog,
 } from '@mui/material';
 import PersonIcon from '@mui/icons-material/Person';
+import SearchIcon from '@mui/icons-material/Search';
+
 
 import { generateQuiz, submitQuiz } from 'src/utils/api';
 import type { Quiz, QuizAnswer, QuizResult } from 'src/utils/api';
@@ -498,131 +500,159 @@ useEffect(() => {
   );
 
   const Footer = () => {
-    const [activeButton, setActiveButton] = useState<string | null>(null);
+  const [activeButton, setActiveButton] = useState<string | null>(null);
 
-    const handlePressStart = (buttonName: string) => setActiveButton(buttonName);
-    const handlePressEnd = () => setActiveButton(null);
+  const handlePressStart = (buttonName: string) => setActiveButton(buttonName);
+  const handlePressEnd = () => setActiveButton(null);
 
-    return (
+  return (
+    <Box
+      sx={{
+        position: 'fixed',
+        bottom: footerBottomStr,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '90%',
+        maxWidth: 420,
+        height: footerHeight,
+        background: 'rgba(255, 255, 255, 0.12)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderRadius: 24,
+        border: '1px solid rgba(255, 255, 255, 0.18)',
+        boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-around',
+        zIndex: 1300,
+        userSelect: 'none',
+        px: 1,
+      }}
+    >
+      {/* Беседа */}
       <Box
+        onClick={() => openCreateBox('daily')}
+        onMouseDown={() => handlePressStart('daily')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('daily')}
+        onTouchEnd={handlePressEnd}
         sx={{
-          position: 'fixed',
-          bottom: footerBottomStr,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          width: '90%',
-          maxWidth: 420,
-          height: footerHeight,
-          background: 'rgba(255, 255, 255, 0.12)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          borderRadius: 24,
-          border: '1px solid rgba(255, 255, 255, 0.18)',
-          boxShadow: '0 8px 32px rgba(88,120,255,0.12)',
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: 'space-around',
-          zIndex: 1300,
-          userSelect: 'none',
-          px: 1,
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'daily' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': { color: 'rgba(255,255,255,1)' },
         }}
       >
-        {/* Беседа */}
-        <Box
-          onClick={() => openCreateBox('daily')}
-          onMouseDown={() => handlePressStart('daily')}
-          onMouseUp={handlePressEnd}
-          onMouseLeave={handlePressEnd}
-          onTouchStart={() => handlePressStart('daily')}
-          onTouchEnd={handlePressEnd}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: 'rgba(255,255,255,0.85)',
-            transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
-            ...(activeButton === 'daily' && {
-              transform: 'scale(0.92)',
-              color: 'rgba(255,255,255,1)',
-            }),
-            '&:hover': { color: 'rgba(255,255,255,1)' },
-          }}
-        >
-          <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
-          <Typography variant="caption" sx={{ mt: 0.5 }}>
-            Беседа
-          </Typography>
-        </Box>
-
-        {/* График */}
-        <Box
-          onClick={() => navigate('/calendar/month')}
-          onMouseDown={() => handlePressStart('graph')}
-          onMouseUp={handlePressEnd}
-          onMouseLeave={handlePressEnd}
-          onTouchStart={() => handlePressStart('graph')}
-          onTouchEnd={handlePressEnd}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: 'rgba(255,255,255,0.85)',
-            transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
-            ...(activeButton === 'graph' && {
-              transform: 'scale(0.92)',
-              color: 'rgba(255,255,255,1)',
-            }),
-            '&:hover': { color: 'rgba(255,255,255,1)' },
-          }}
-        >
-          <AutoGraphIcon fontSize="medium" />
-          <Typography variant="caption" sx={{ mt: 0.5 }}>
-            График
-          </Typography>
-        </Box>
-
-        {/* Сон */}
-        <Box
-          onClick={() => {
-  // Если дата не выбрана или в будущем — ставим сегодня
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  
-  if (!selectedDate || selectedDate.getTime() > now.getTime()) {
-    setSelectedDate(new Date());
-  }
-  
-  openCreateBox('dream');
-}}
-          onMouseDown={() => handlePressStart('dream')}
-          onMouseUp={handlePressEnd}
-          onMouseLeave={handlePressEnd}
-          onTouchStart={() => handlePressStart('dream')}
-          onTouchEnd={handlePressEnd}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            cursor: 'pointer',
-            color: 'rgba(255,255,255,0.9)',
-            transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
-            ...(activeButton === 'dream' && {
-              transform: 'scale(0.92)',
-              color: 'rgba(255,255,255,1)',
-            }),
-            '&:hover': { color: 'rgba(255,255,255,1)' },
-          }}
-        >
-          <NightlightRoundIcon fontSize="medium" />
-          <Typography variant="caption" sx={{ mt: 0.5 }}>
-            Сон
-          </Typography>
-        </Box>
+        <ChatBubbleLeftRightIcon style={{ width: 22, height: 22, color: 'currentColor' }} />
+        <Typography variant="caption" sx={{ mt: 0.5, fontSize: 11 }}>
+          Беседа
+        </Typography>
       </Box>
-    );
-  };
+
+      {/* Лента (Лупа) */}
+      <Box
+        onClick={() => navigate('/feed')}
+        onMouseDown={() => handlePressStart('feed')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('feed')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'feed' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': { color: 'rgba(255,255,255,1)' },
+        }}
+      >
+        <SearchIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5, fontSize: 11 }}>
+          Лента
+        </Typography>
+      </Box>
+
+      {/* График */}
+      <Box
+        onClick={() => navigate('/calendar/month')}
+        onMouseDown={() => handlePressStart('graph')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('graph')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.85)',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'graph' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': { color: 'rgba(255,255,255,1)' },
+        }}
+      >
+        <AutoGraphIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5, fontSize: 11 }}>
+          График
+        </Typography>
+      </Box>
+
+      {/* Сон */}
+      <Box
+        onClick={() => {
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          
+          if (!selectedDate || selectedDate.getTime() > now.getTime()) {
+            setSelectedDate(new Date());
+          }
+          
+          openCreateBox('dream');
+        }}
+        onMouseDown={() => handlePressStart('dream')}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+        onTouchStart={() => handlePressStart('dream')}
+        onTouchEnd={handlePressEnd}
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          cursor: 'pointer',
+          color: 'rgba(255,255,255,0.9)',
+          transition: 'transform 0.1s ease-in-out, color 0.1s ease-in-out',
+          ...(activeButton === 'dream' && {
+            transform: 'scale(0.92)',
+            color: 'rgba(255,255,255,1)',
+          }),
+          '&:hover': { color: 'rgba(255,255,255,1)' },
+        }}
+      >
+        <NightlightRoundIcon fontSize="medium" />
+        <Typography variant="caption" sx={{ mt: 0.5, fontSize: 11 }}>
+          Сон
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+
 
   // ---------- JSX ----------
   return (

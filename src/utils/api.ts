@@ -37,6 +37,8 @@ export interface Dream {
   similarArtworks?: any[];
   category?: string | null;
   context?: string | null;
+  is_public?: boolean;
+
 }
 
 export type ChatRole = 'user' | 'assistant';

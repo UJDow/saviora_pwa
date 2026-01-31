@@ -1,4 +1,5 @@
 import { RateLimitDO } from './RateLimitDO.js';
+import { incrementView } from './viewsCounter.js';
 
 export { RateLimitDO };
 
@@ -16,6 +17,7 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
+  'https://telegram.bot',
 ];
 
 const VALID_AVATAR_ICONS = [
@@ -2904,10 +2906,12 @@ if (url.pathname === '/me' && request.method === 'GET') {
       trialEndsAt: (created || now) + trialPeriod,
       trialDaysLeft: daysLeft,
       name,
+      displayName: name, // ✅ ДОБАВЛЕНО: для совместимости с комментариями/лентой
       avatar_icon,
       avatarIcon: avatar_icon, // alias для фронтенда
       avatar_image_url,
       avatarImageUrl: avatar_image_url, // alias
+      avatar: avatar_image_url || avatar_icon, // ✅ ДОБАВЛЕНО: приоритет image → icon для комментариев
       subscription_plan_id,
       subscription_plan_title,
       subscription,
@@ -3976,7 +3980,7 @@ if (request.method === 'GET' && pathParts.length === 2 && pathParts[0] === 'drea
   }
 }
 
-    if (url.pathname.startsWith('/dreams/') && request.method === 'DELETE') {
+if (url.pathname.match(/^\/dreams\/[^/]+$/) && request.method === 'DELETE') {
   // Лимит: 20 запросов за 60 секунд на пользователя
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
     maxRequests: 20,
@@ -5040,7 +5044,7 @@ if (url.pathname.endsWith('/mood') && request.method === 'PUT') {
 }
 
     // PUT /dreams/:dreamId
-if (url.pathname.startsWith('/dreams/') && request.method === 'PUT') {
+if (url.pathname.match(/^\/dreams\/[^/]+$/) && request.method === 'PUT') {
   // Лимит: 60 запросов за 60 секунд на пользователя
   const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
     maxRequests: 60,
@@ -10459,6 +10463,1003 @@ if (url.pathname === '/quiz_stats' && request.method === 'GET') {
     );
   }
 }
+
+// ============================================
+// FEED & SOCIAL FEATURES ENDPOINTS
+// ============================================
+
+// ============================================
+// 1. GET /feed - Публичная лента снов
+// ============================================
+if (url.pathname === '/feed' && request.method === 'GET') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const d1 = env.DB;
+    
+    const page = parseInt(url.searchParams.get('page') || '1', 10);
+    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+    const offset = (page - 1) * limit;
+
+    const sort = url.searchParams.get('sort') || 'latest';
+    
+    let orderClause = 'ORDER BY published_at DESC';
+    if (sort === 'popular') {
+      orderClause = 'ORDER BY likes_count DESC, published_at DESC';
+    }
+
+    const result = await d1
+      .prepare(`
+        SELECT 
+          d.*,
+          d.views_count,
+          (SELECT COUNT(*) FROM dream_likes WHERE dream_id = d.id AND user_email = ?) as user_liked
+        FROM dreams d
+        WHERE d.is_public = 1
+        ${orderClause}
+        LIMIT ? OFFSET ?
+      `)
+      .bind(userEmail, limit, offset)
+      .all();
+
+    const dreams = await Promise.all(
+      result.results.map(async (dream) => {
+        if (dream.blocks) {
+          try {
+            dream.blocks = JSON.parse(dream.blocks);
+          } catch {
+            dream.blocks = [];
+          }
+        }
+
+        const authorKey = `user:${dream.user}`;
+        const authorRaw = await env.USERS_KV.get(authorKey);
+        let authorInfo = { email: dream.user, displayName: 'Анонимный сновидец' };
+        
+        if (authorRaw) {
+          try {
+            const author = JSON.parse(authorRaw);
+            
+            const userRow = await env.DB.prepare(
+              'SELECT name, avatar_icon, avatar_image_url FROM users WHERE email = ?'
+            )
+              .bind(dream.user)
+              .first();
+
+            const name = userRow?.name ?? author.name ?? null;
+            const avatar_icon = userRow?.avatar_icon ?? author.avatar_icon ?? null;
+            const avatar_image_url = userRow?.avatar_image_url ?? author.avatar_image_url ?? null;
+
+            authorInfo = {
+              email: author.email,
+              displayName: name || author.email.split('@')[0],
+              avatar: avatar_image_url || avatar_icon || null,
+            };
+          } catch {}
+        }
+
+        return {
+          id: dream.id,
+          title: dream.title,
+          dreamText: dream.dreamText,
+          dreamSummary: dream.dreamSummary,
+          date: dream.date,
+          published_at: dream.published_at,
+          likes_count: dream.likes_count || 0,
+          comments_count: dream.comments_count || 0,
+          views_count: dream.views_count || 0,
+          user_liked: dream.user_liked === 1,
+          author: authorInfo,
+          blocks: dream.blocks,
+        };
+      })
+    );
+
+    const totalResult = await d1
+      .prepare('SELECT COUNT(*) as total FROM dreams WHERE is_public = 1')
+      .first();
+
+    const headers = buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000);
+
+    return new Response(
+      JSON.stringify({
+        dreams,
+        pagination: {
+          page,
+          limit,
+          total: totalResult.total,
+          totalPages: Math.ceil(totalResult.total / limit),
+        },
+      }),
+      { status: 200, headers }
+    );
+  } catch (e) {
+    console.error('GET /feed error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 2. PUT /dreams/:dreamId/publish - Публикация сна
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/publish$/) && request.method === 'PUT') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare('SELECT user, is_public FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    if (!dream) {
+      return new Response(JSON.stringify({ error: 'Dream not found' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    if (dream.user !== userEmail) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    const now = Date.now();
+    await d1
+      .prepare('UPDATE dreams SET is_public = 1, published_at = ? WHERE id = ?')
+      .bind(now, dreamId)
+      .run();
+
+    return new Response(
+      JSON.stringify({ success: true, published_at: now }),
+      {
+        status: 200,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  } catch (e) {
+    console.error('PUT /dreams/:id/publish error', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 3. PUT /dreams/:dreamId/unpublish - Снятие публикации
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/unpublish$/) && request.method === 'PUT') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare('SELECT user, title, is_public FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    if (!dream || dream.user !== userEmail) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    await d1
+      .prepare('UPDATE dreams SET is_public = 0, published_at = NULL WHERE id = ?')
+      .bind(dreamId)
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+    });
+  } catch (e) {
+    console.error('PUT /dreams/:id/unpublish error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 4. PUT /dreams/:id/mark-viewed - Отметить сон как просмотренный
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/mark-viewed$/) && request.method === 'PUT') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 100,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare('SELECT id, user FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    if (!dream) {
+      return new Response(
+        JSON.stringify({ error: 'not_found', message: 'Dream not found' }),
+        { 
+          status: 404, 
+          headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000) 
+        }
+      );
+    }
+
+    if (dream.user !== userEmail) {
+      await d1
+        .prepare('UPDATE dreams SET views_count = views_count + 1 WHERE id = ?')
+        .bind(dreamId)
+        .run();
+    }
+
+    await d1
+      .prepare(`
+        INSERT OR IGNORE INTO user_viewed_dreams (user_email, dream_id, viewed_at)
+        VALUES (?, ?, ?)
+      `)
+      .bind(userEmail, dreamId, Date.now())
+      .run();
+
+    return new Response(
+      JSON.stringify({ success: true, message: 'Dream marked as viewed' }),
+      { 
+        status: 200, 
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000) 
+      }
+    );
+  } catch (e) {
+    console.error('❌ Error marking dream as viewed:', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      { 
+        status: 500, 
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000) 
+      }
+    );
+  }
+}
+
+// ============================================
+// 5. POST /dreams/:dreamId/like - Поставить лайк
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/like$/) && request.method === 'POST') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 100,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    console.log('🔍 POST /like - dreamId:', dreamId, 'userEmail:', userEmail);
+    
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare('SELECT id, is_public FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    console.log('🔍 Dream found:', dream);
+
+    if (!dream) {
+      console.log('❌ Dream not found');
+      return new Response(JSON.stringify({ error: 'Dream not found' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      });
+    }
+
+    if (dream.is_public !== 1) {
+      console.log('❌ Dream not public');
+      return new Response(JSON.stringify({ error: 'Dream not public' }), {
+        status: 403,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      });
+    }
+
+    const existingLike = await d1
+      .prepare('SELECT id FROM dream_likes WHERE dream_id = ? AND user_email = ?')
+      .bind(dreamId, userEmail)
+      .first();
+
+    console.log('🔍 Existing like:', existingLike);
+
+    if (existingLike) {
+      console.log('⚠️ Already liked');
+      const currentDream = await d1
+        .prepare('SELECT likes_count FROM dreams WHERE id = ?')
+        .bind(dreamId)
+        .first();
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          likes_count: currentDream.likes_count,
+          message: 'Already liked' 
+        }),
+        {
+          status: 200,
+          headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+        }
+      );
+    }
+
+    await d1
+      .prepare('INSERT INTO dream_likes (dream_id, user_email) VALUES (?, ?)')
+      .bind(dreamId, userEmail)
+      .run();
+
+    console.log('✅ Like added');
+
+    await d1
+      .prepare('UPDATE dreams SET likes_count = likes_count + 1 WHERE id = ?')
+      .bind(dreamId)
+      .run();
+
+    const updatedDream = await d1
+      .prepare('SELECT likes_count FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    console.log('✅ Updated likes_count:', updatedDream.likes_count);
+
+    return new Response(
+      JSON.stringify({ success: true, likes_count: updatedDream.likes_count }),
+      {
+        status: 200,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      }
+    );
+  } catch (e) {
+    console.error('❌ POST /dreams/:id/like error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 6. DELETE /dreams/:dreamId/like - Убрать лайк
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/like$/) && request.method === 'DELETE') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 100,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    
+    console.log('🔥 DELETE /like called');
+    console.log('   dreamId:', dreamId);
+    console.log('   userEmail:', userEmail);
+    
+    const d1 = env.DB;
+    
+    const dreamInfo = await d1
+      .prepare('SELECT id, user, is_public, title FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+    
+    console.log('   Dream info:', dreamInfo);
+    console.log('   Is owner:', dreamInfo?.user === userEmail);
+
+    const result = await d1
+      .prepare('DELETE FROM dream_likes WHERE dream_id = ? AND user_email = ?')
+      .bind(dreamId, userEmail)
+      .run();
+
+    console.log('   Delete result:', result.meta.changes);
+
+    if (result.meta.changes === 0) {
+      console.log('   ⚠️ Like not found');
+      
+      const currentDream = await d1
+        .prepare('SELECT likes_count FROM dreams WHERE id = ?')
+        .bind(dreamId)
+        .first();
+      
+      console.log('   Current likes_count:', currentDream?.likes_count);
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          likes_count: currentDream?.likes_count || 0,
+          message: 'Like not found' 
+        }),
+        {
+          status: 200,
+          headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+        }
+      );
+    }
+
+    await d1
+      .prepare('UPDATE dreams SET likes_count = MAX(0, likes_count - 1) WHERE id = ?')
+      .bind(dreamId)
+      .run();
+
+    const updatedDream = await d1
+      .prepare('SELECT likes_count FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    console.log('   ✅ Updated likes_count:', updatedDream?.likes_count);
+    console.log('🔥 DELETE /like completed successfully');
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        likes_count: updatedDream?.likes_count || 0
+      }),
+      {
+        status: 200,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      }
+    );
+  } catch (e) {
+    console.error('❌ DELETE /dreams/:id/like error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 7. GET /dreams/:dreamId/comments - Получить комментарии
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/comments$/) && request.method === 'GET') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare('SELECT is_public FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    if (!dream || dream.is_public !== 1) {
+      return new Response(JSON.stringify({ error: 'Dream not found or not public' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000),
+      });
+    }
+
+    const result = await d1
+      .prepare(`
+        SELECT id, user_email, comment_text, created_at
+        FROM dream_comments
+        WHERE dream_id = ?
+        ORDER BY created_at ASC
+      `)
+      .bind(dreamId)
+      .all();
+
+    const comments = await Promise.all(
+      result.results.map(async (comment) => {
+        const authorKey = `user:${comment.user_email}`;
+        const authorRaw = await env.USERS_KV.get(authorKey);
+        let authorInfo = { email: comment.user_email, displayName: 'Анонимный' };
+
+        if (authorRaw) {
+          try {
+            const author = JSON.parse(authorRaw);
+            
+            const userRow = await env.DB.prepare(
+              'SELECT name, avatar_icon, avatar_image_url FROM users WHERE email = ?'
+            )
+              .bind(comment.user_email)
+              .first();
+
+            const name = userRow?.name ?? author.name ?? null;
+            const avatar_icon = userRow?.avatar_icon ?? author.avatar_icon ?? null;
+            const avatar_image_url = userRow?.avatar_image_url ?? author.avatar_image_url ?? null;
+
+            authorInfo = {
+              email: author.email,
+              displayName: name || author.email.split('@')[0],
+              avatar: avatar_image_url || avatar_icon || null,
+            };
+          } catch {}
+        }
+
+        return {
+          id: comment.id,
+          text: comment.comment_text,
+          created_at: comment.created_at,
+          author: authorInfo,
+        };
+      })
+    );
+
+    return new Response(JSON.stringify({ comments }), {
+      status: 200,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000),
+    });
+  } catch (e) {
+    console.error('GET /dreams/:id/comments error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 8. POST /dreams/:dreamId/comments - Добавить комментарий
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+\/comments$/) && request.method === 'POST') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    const body = await request.json();
+    const { comment_text } = body;
+
+    if (!comment_text || comment_text.trim().length === 0) {
+      return new Response(JSON.stringify({ error: 'Comment text is required' }), {
+        status: 400,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    if (comment_text.length > 1000) {
+      return new Response(JSON.stringify({ error: 'Comment too long (max 1000 chars)' }), {
+        status: 400,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare('SELECT is_public FROM dreams WHERE id = ?')
+      .bind(dreamId)
+      .first();
+
+    if (!dream || dream.is_public !== 1) {
+      return new Response(JSON.stringify({ error: 'Dream not found or not public' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    const now = Date.now();
+    const result = await d1
+      .prepare(`
+        INSERT INTO dream_comments (dream_id, user_email, comment_text, created_at)
+        VALUES (?, ?, ?, ?)
+      `)
+      .bind(dreamId, userEmail, comment_text.trim(), now)
+      .run();
+
+    await d1
+      .prepare('UPDATE dreams SET comments_count = comments_count + 1 WHERE id = ?')
+      .bind(dreamId)
+      .run();
+
+    const authorKey = `user:${userEmail}`;
+    const authorRaw = await env.USERS_KV.get(authorKey);
+    let authorInfo = { email: userEmail, displayName: 'Анонимный' };
+
+    if (authorRaw) {
+      try {
+        const author = JSON.parse(authorRaw);
+        
+        const userRow = await env.DB.prepare(
+          'SELECT name, avatar_icon, avatar_image_url FROM users WHERE email = ?'
+        )
+          .bind(userEmail)
+          .first();
+
+        const name = userRow?.name ?? author.name ?? null;
+        const avatar_icon = userRow?.avatar_icon ?? author.avatar_icon ?? null;
+        const avatar_image_url = userRow?.avatar_image_url ?? author.avatar_image_url ?? null;
+
+        authorInfo = {
+          email: author.email,
+          displayName: name || author.email.split('@')[0],
+          avatar: avatar_image_url || avatar_icon || null,
+        };
+      } catch (err) {
+        console.error('Error parsing author info:', err);
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        comment: {
+          id: result.meta.last_row_id,
+          text: comment_text.trim(),
+          created_at: now,
+          author: authorInfo,
+        },
+      }),
+      {
+        status: 201,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  } catch (e) {
+    console.error('POST /dreams/:id/comments error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 9. POST /users/:email/follow - Подписаться
+// ============================================
+if (url.pathname.match(/^\/users\/[^/]+\/follow$/) && request.method === 'POST') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const targetEmail = decodeURIComponent(url.pathname.split('/')[2]);
+    
+    if (userEmail === targetEmail) {
+      return new Response(JSON.stringify({ error: 'Cannot follow yourself' }), {
+        status: 400,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    const d1 = env.DB;
+
+    const existing = await d1
+      .prepare('SELECT id FROM user_followers WHERE follower_email = ? AND following_email = ?')
+      .bind(userEmail, targetEmail)
+      .first();
+
+    if (existing) {
+      return new Response(JSON.stringify({ error: 'Already following' }), {
+        status: 400,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    await d1
+      .prepare('INSERT INTO user_followers (follower_email, following_email) VALUES (?, ?)')
+      .bind(userEmail, targetEmail)
+      .run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 201,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+    });
+  } catch (e) {
+    console.error('POST /users/:email/follow error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 10. DELETE /users/:email/follow - Отписаться
+// ============================================
+if (url.pathname.match(/^\/users\/[^/]+\/follow$/) && request.method === 'DELETE') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 30,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const targetEmail = decodeURIComponent(url.pathname.split('/')[2]);
+    const d1 = env.DB;
+
+    const result = await d1
+      .prepare('DELETE FROM user_followers WHERE follower_email = ? AND following_email = ?')
+      .bind(userEmail, targetEmail)
+      .run();
+
+    if (result.meta.changes === 0) {
+      return new Response(JSON.stringify({ error: 'Not following' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+    });
+  } catch (e) {
+    console.error('DELETE /users/:email/follow error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 30, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 11. GET /users/:email/stats - Статистика пользователя
+// ============================================
+if (url.pathname.match(/^\/users\/[^/]+\/stats$/) && request.method === 'GET') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 60,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { rateLimitResult } = authResult;
+
+  try {
+    const targetEmail = decodeURIComponent(url.pathname.split('/')[2]);
+    const d1 = env.DB;
+
+    const dreamsCount = await d1
+      .prepare('SELECT COUNT(*) as count FROM dreams WHERE user = ? AND is_public = 1')
+      .bind(targetEmail)
+      .first();
+
+    const followersCount = await d1
+      .prepare('SELECT COUNT(*) as count FROM user_followers WHERE following_email = ?')
+      .bind(targetEmail)
+      .first();
+
+    const followingCount = await d1
+      .prepare('SELECT COUNT(*) as count FROM user_followers WHERE follower_email = ?')
+      .bind(targetEmail)
+      .first();
+
+    const totalLikes = await d1
+      .prepare(`
+        SELECT SUM(d.likes_count) as total
+        FROM dreams d
+        WHERE d.user = ? AND d.is_public = 1
+      `)
+      .bind(targetEmail)
+      .first();
+
+    return new Response(
+      JSON.stringify({
+        email: targetEmail,
+        public_dreams_count: dreamsCount.count || 0,
+        followers_count: followersCount.count || 0,
+        following_count: followingCount.count || 0,
+        total_likes: totalLikes.total || 0,
+      }),
+      {
+        status: 200,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000),
+      }
+    );
+  } catch (e) {
+    console.error('GET /users/:email/stats error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 60, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 12. GET /dreams/:id - Получение одного сна
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+$/) && request.method === 'GET') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 100,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  try {
+    const dreamId = url.pathname.split('/')[2];
+    const d1 = env.DB;
+
+    const dream = await d1
+      .prepare(`
+        SELECT 
+          d.*,
+          (SELECT COUNT(*) FROM dream_likes WHERE dream_id = d.id AND user_email = ?) as user_liked
+        FROM dreams d
+        WHERE d.id = ?
+      `)
+      .bind(userEmail, dreamId)
+      .first();
+
+    if (!dream) {
+      return new Response(JSON.stringify({ error: 'Dream not found' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      });
+    }
+
+    if (dream.user !== userEmail) {
+      ctx.waitUntil(
+        incrementView(env, dreamId)
+      );
+    }
+
+    if (dream.blocks) {
+      try {
+        dream.blocks = JSON.parse(dream.blocks);
+      } catch {
+        dream.blocks = [];
+      }
+    }
+
+    return new Response(JSON.stringify(dream), {
+      status: 200,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+    });
+  } catch (e) {
+    console.error('GET /dreams/:id error', e);
+    return new Response(
+      JSON.stringify({ error: 'internal_error', message: e?.message || String(e) }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 100, 60000),
+      }
+    );
+  }
+}
+
+// ============================================
+// 13. DELETE /dreams/:id - Удаление сна (В САМОМ КОНЦЕ!)
+// ============================================
+if (url.pathname.match(/^\/dreams\/[^/]+$/) && request.method === 'DELETE') {
+  const authResult = await withAuthAndRateLimit(request, env, corsHeaders, {
+    maxRequests: 20,
+    windowMs: 60000,
+  });
+  if (authResult instanceof Response) return authResult;
+
+  const { userEmail, rateLimitResult } = authResult;
+
+  if (!(await isTrialActive(userEmail, env))) {
+    return new Response(JSON.stringify({ error: 'Trial expired' }), {
+      status: 403,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 20, 60000),
+    });
+  }
+
+  const id = url.pathname.split('/')[2];
+  if (!id) {
+    return new Response(JSON.stringify({ error: 'Missing dream id' }), {
+      status: 400,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 20, 60000),
+    });
+  }
+
+  try {
+    const d1 = env.DB;
+    const result = await d1
+      .prepare('DELETE FROM dreams WHERE id = ? AND user = ?')
+      .bind(id, userEmail)
+      .run();
+
+    if (result.changes === 0) {
+      return new Response(JSON.stringify({ error: 'Dream not found' }), {
+        status: 404,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 20, 60000),
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: buildRateHeaders(rateLimitResult, corsHeaders, 20, 60000),
+    });
+  } catch (e) {
+    console.error('Error deleting dream:', e && (e.stack || e.message || e));
+    return new Response(
+      JSON.stringify({
+        error: 'internal_error',
+        message: e?.message || String(e),
+      }),
+      {
+        status: 500,
+        headers: buildRateHeaders(rateLimitResult, corsHeaders, 20, 60000),
+      }
+    );
+  }
+}
+
 
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,

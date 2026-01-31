@@ -22,6 +22,8 @@ import { ProfileProvider } from './features/profile/ProfileContext';
 import { SimilarArtworksScreen } from './features/dreams/SimilarArtworksScreen';
 import { ArtworkChat } from './features/dreams/ArtworkChat';
 
+import { FeedScreen } from 'src/features/feed/FeedScreen';
+
 // Новые импорты для daily
 import DailyConvoScreen from './features/daily/DailyConvoScreen';
 import DailyConvoChat from './features/daily/DailyConvoChat';
@@ -94,6 +96,14 @@ function App() {
             element={
               <PrivateRoute>
                 <DreamsScreen />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/feed"
+            element={
+              <PrivateRoute>
+                <FeedScreen />
               </PrivateRoute>
             }
           />
