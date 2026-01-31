@@ -175,7 +175,7 @@ export const FeedScreen: React.FC = () => {
         overflow: 'auto',
         background: dreamPalette.background,
         color: '#fff',
-        paddingTop: 'env(safe-area-inset-top)',
+        // ✅ УБРАЛИ paddingTop — safe area теперь только на header
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
@@ -183,7 +183,7 @@ export const FeedScreen: React.FC = () => {
       <Box
         sx={{
           position: 'sticky',
-          top: 'env(safe-area-inset-top)',
+          top: 0, // ✅ ИЗМЕНЕНО: убрали env(safe-area-inset-top)
           left: 0,
           right: 0,
           zIndex: 1400,
@@ -194,6 +194,8 @@ export const FeedScreen: React.FC = () => {
           borderBottomRightRadius: 24,
           border: '1px solid rgba(255,255,255,0.14)',
           boxShadow: '0 8px 28px rgba(41, 52, 98, 0.12)',
+          // ✅ ДОБАВИЛИ: safe area теперь через padding
+          paddingTop: 'env(safe-area-inset-top)',
         }}
       >
         {/* Строка с кнопкой назад и заголовком */}
@@ -268,7 +270,7 @@ export const FeedScreen: React.FC = () => {
       <Container
         maxWidth="md"
         sx={{
-          pt: 3, // 🔥 увеличили отступ, чтобы не залазило
+          pt: 3,
           pb: 4,
         }}
       >
@@ -317,6 +319,7 @@ export const FeedScreen: React.FC = () => {
             }}
           >
             <Typography variant="h6" sx={{ color: '#fff', mb: 2 }}>
+              Пока нет снов
             </Typography>
             <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
               Будьте первым, кто поделится своим сновидением! ✨
